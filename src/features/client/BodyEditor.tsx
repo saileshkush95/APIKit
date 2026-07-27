@@ -209,6 +209,7 @@ export function BodyEditor({
           keyPlaceholder="Key"
           valuePlaceholder="Value"
           allowFiles
+          highlightVariables
         />
       )}
 
@@ -218,6 +219,7 @@ export function BodyEditor({
           onChange={(urlEncoded) => onConfigChange({ urlEncoded })}
           keyPlaceholder="Key"
           valuePlaceholder="Value"
+          highlightVariables
         />
       )}
 

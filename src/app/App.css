@@ -177,6 +177,69 @@ body {
     0 4px 6px -4px rgb(0 0 0 / 0.3);
 }
 
+/* A field whose {{variables}} are coloured. The text itself cannot be styled
+   inside an <input>, so the same string is drawn in an overlay behind a
+   transparent-text field; the two must share font, padding and box exactly. */
+.wrk-variable-field {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.wrk-variable-input {
+  position: relative;
+  background-color: transparent;
+  color: transparent;
+  /* The caret would be invisible with transparent text. */
+  caret-color: var(--color-ink);
+}
+
+.wrk-variable-input::placeholder {
+  color: transparent;
+}
+
+.wrk-variable-input::selection {
+  background: color-mix(in oklab, var(--color-brand) 35%, transparent);
+}
+
+.wrk-variable-overlay {
+  position: absolute;
+  inset: 1px; /* inside the field's border */
+  display: flex;
+  align-items: center;
+  padding: 0 0.625rem;
+  overflow: hidden;
+  white-space: pre;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+  color: var(--color-ink);
+  background-color: var(--color-panel);
+  border-radius: 0.3125rem;
+  pointer-events: none;
+}
+
+.wrk-variable-overlay.compact {
+  font-size: 0.6875rem;
+  padding: 0 0.5rem;
+}
+
+.wrk-variable-overlay.lg {
+  font-size: 0.8125rem;
+  padding: 0 0.75rem;
+}
+
+.wrk-variable-overlay.mono,
+.wrk-variable-input.mono {
+  font-family: var(--font-mono);
+}
+
+/* An undefined variable is sent as literal text, which is easy to miss. */
+.wrk-variable-unknown {
+  color: var(--color-warn);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
 select.wrk-field {
   appearance: none;
   -webkit-appearance: none;

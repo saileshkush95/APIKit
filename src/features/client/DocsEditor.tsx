@@ -109,6 +109,7 @@ export function DocsEditor({ config, onChange, requestName }: Props) {
       placeholder={"# Endpoint\n\nDescribe what this request does…"}
       className="min-h-[10rem] flex-1"
       inputRef={inputRef}
+      completeVariables={false}
     />
   );
 

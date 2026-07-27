@@ -408,6 +408,8 @@ export interface RequestTab extends RequestDraft {
   error: string | null;
   loading: boolean;
   results: AssertionResult[];
+  /** The request as sent, shown in the response's Request tab. */
+  sent: SentRequest | null;
   scriptLogs: ScriptLogEntry[];
   stream: StreamSession;
 }
@@ -590,7 +592,22 @@ export type RequestTabKey =
   | "docs"
   | "comments"
   | "connection";
-export type ResponseTabKey = "body" | "cookies" | "headers" | "tests";
+export type ResponseTabKey =
+  | "body"
+  | "cookies"
+  | "headers"
+  | "request"
+  | "tests";
+
+/** What actually went over the wire, after variables, auth and scripts. */
+export interface SentRequest {
+  method: string;
+  url: string;
+  headers: Header[];
+  body: string;
+  /** Present when the body was sent as multipart. */
+  parts?: { name: string; value: string; fileName?: string }[];
+}
 
 /** The persisted slice of a tab — response state is deliberately transient. */
 export interface StoredTab extends Omit<RequestDraft, "config"> {

@@ -1,4 +1,5 @@
 import { Autocomplete } from "./Autocomplete";
+import { VariableInput } from "./VariableInput";
 import { Input, Select } from "./Field";
 import { Toggle } from "./Toggle";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -17,6 +18,8 @@ interface Props {
   suggestName?: (query: string) => string[];
   /** Completions for the value column, given the row's key. */
   suggestValue?: (name: string, query: string) => string[];
+  /** Colour {{variables}} in the value column and complete them. */
+  highlightVariables?: boolean;
 }
 
 function fileNameOf(path: string): string {
@@ -34,6 +37,7 @@ export function KeyValueEditor({
   allowSecrets = false,
   suggestName,
   suggestValue,
+  highlightVariables = false,
 }: Props) {
   function update(index: number, patch: Partial<KeyValue>) {
     const next = rows.map((row, i) => (i === index ? { ...row, ...patch } : row));
@@ -85,6 +89,13 @@ export function KeyValueEditor({
                   suggest={suggestName}
                   onChange={(name) => update(i, { name })}
                 />
+              ) : highlightVariables ? (
+                <VariableInput
+                  value={row.name}
+                  placeholder={keyPlaceholder}
+                  mono
+                  onChange={(name) => update(i, { name })}
+                />
               ) : (
                 <Input
                   value={row.name}
@@ -130,6 +141,16 @@ export function KeyValueEditor({
               ) : (
                 (() => {
                   const secret = Boolean(allowSecrets && row.secret);
+                  if (highlightVariables && !secret) {
+                    return (
+                      <VariableInput
+                        value={row.value}
+                        placeholder={valuePlaceholder}
+                        mono
+                        onChange={(value) => update(i, { value })}
+                      />
+                    );
+                  }
                   return suggestValue && !secret ? (
                     <Autocomplete
                       value={row.value}

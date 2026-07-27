@@ -318,6 +318,7 @@ export function MockPanel() {
                   onChange={(headers) => update(selected.id, { headers })}
                   keyPlaceholder="Header"
                   valuePlaceholder="Value"
+                  highlightVariables
                 />
               </div>
 

@@ -375,6 +375,7 @@ export function MonitorPanel() {
                         }
                         keyPlaceholder="Header"
                         valuePlaceholder="Value"
+                        highlightVariables
                       />
 
                       <div className="mt-2 mb-1 text-[11px] font-semibold text-muted">

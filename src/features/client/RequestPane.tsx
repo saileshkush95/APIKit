@@ -1,4 +1,4 @@
-import { Input, Select } from "../../shared/components/Field";
+import { Select } from "../../shared/components/Field";
 import { useEffect, useRef, useState } from "react";
 import { AuthEditor } from "./AuthEditor";
 import { BodyEditor } from "./BodyEditor";
@@ -8,6 +8,7 @@ import { DocsEditor } from "./DocsEditor";
 import { ConnectionEditor } from "./ConnectionEditor";
 import { KeyValueEditor } from "../../shared/components/KeyValueEditor";
 import { ResponseViewer } from "./ResponseViewer";
+import { VariableInput } from "../../shared/components/VariableInput";
 import { ScriptsEditor } from "./ScriptsEditor";
 import { StreamConsole } from "./StreamConsole";
 import { TestsEditor } from "./TestsEditor";
@@ -149,6 +150,8 @@ export function RequestPane({
   const { vars } = useEnvironments();
   const { forRequest } = useComments();
   const containerRef = useRef<HTMLDivElement>(null);
+  /** The two resizable panes; the drag ratio is relative to this box. */
+  const splitRef = useRef<HTMLDivElement>(null);
   const [split, setSplit] = useState(0.5);
   const [dragging, setDragging] = useState(false);
   const [showCode, setShowCode] = useState(false);
@@ -193,9 +196,17 @@ export function RequestPane({
 
   useEffect(() => {
     if (!dragging) return;
+
+    // A drag is a pointer gesture, not a text gesture: without this the
+    // mousemove selects everything it sweeps over, and the cursor flickers
+    // back to a caret whenever it leaves the divider.
+    const { userSelect, cursor } = document.body.style;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "row-resize";
+
     function onMove(e: MouseEvent) {
-      const box = containerRef.current?.getBoundingClientRect();
-      if (!box) return;
+      const box = splitRef.current?.getBoundingClientRect();
+      if (!box || box.height === 0) return;
       const ratio = (e.clientY - box.top) / box.height;
       setSplit(Math.min(0.85, Math.max(0.15, ratio)));
     }
@@ -207,6 +218,8 @@ export function RequestPane({
     return () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = userSelect;
+      document.body.style.cursor = cursor;
     };
   }, [dragging]);
 
@@ -312,9 +325,8 @@ export function RequestPane({
         )}
 
         {protocol !== "webrtc" && (
-          <Input
+          <VariableInput
             value={tab.url}
-            spellCheck={false}
             placeholder={
               protocol === "mqtt"
                 ? "mqtt://broker.example.com:1883"
@@ -322,11 +334,13 @@ export function RequestPane({
                   ? "wss://example.com/socket"
                   : "https://api.example.com/endpoint"
             }
-            onChange={(e) => onChange({ url: e.target.value })}
+            onChange={(url) => onChange({ url })}
             onKeyDown={(e) =>
               e.key === "Enter" && (streaming ? onToggleConnection() : onSend())
             }
-            className="wrk-field mono lg min-w-0 flex-1"
+            mono
+            size="lg"
+            className="min-w-0 flex-1"
           />
         )}
 
@@ -381,7 +395,7 @@ export function RequestPane({
       {protocol === "webrtc" ? (
         <WebRtcPanel config={tab.config} onConfigChange={patchConfig} />
       ) : (
-        <>
+        <div ref={splitRef} className="flex min-h-0 flex-1 flex-col">
       {/* Request builder */}
       <div
         className="flex min-h-0 flex-col border-t border-edge"
@@ -442,10 +456,15 @@ export function RequestPane({
           )}
           {reqTab === "params" && (
             <KeyValueEditor
-              rows={params.length ? params : [{ name: "", value: "" }]}
+              /* Params live in the URL, and an empty one cannot be written
+                 there — so the blank row the editor adds is stripped on the way
+                 out and never comes back. It is appended here instead, or there
+                 would be nowhere to type the next parameter. */
+              rows={[...params, { name: "", value: "" }]}
               onChange={(rows) => onChange({ url: applyQuery(tab.url, rows) })}
               keyPlaceholder="Parameter"
               valuePlaceholder="Value"
+              highlightVariables
             />
           )}
           {reqTab === "auth" && (
@@ -464,6 +483,7 @@ export function RequestPane({
               valuePlaceholder="Value"
               suggestName={(query) => matchHeaders(query)}
               suggestValue={matchHeaderValues}
+              highlightVariables
             />
           )}
           {reqTab === "body" && (
@@ -503,11 +523,18 @@ export function RequestPane({
       </div>
 
       {/* Divider */}
+      {/* One rule, with a taller invisible area to grab. `border-y` here drew a
+          line on each edge of the bar, which read as two. */}
       <div
-        onMouseDown={() => setDragging(true)}
-        className="h-1 flex-none cursor-row-resize border-y border-edge bg-panel hover:bg-brand/40"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        className="group relative h-1.5 flex-none cursor-row-resize select-none"
         title="Drag to resize"
-      />
+      >
+        <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-edge group-hover:bg-brand" />
+      </div>
 
       {/* Response, or the live session for streaming protocols */}
       {streaming ? (
@@ -535,13 +562,14 @@ export function RequestPane({
           <ResponseViewer
             response={tab.response}
             results={tab.results}
+            sent={tab.sent}
             activeTab={tab.respTab}
             onTabChange={(respTab) => onChange({ respTab })}
           />
         )}
       </section>
       )}
-        </>
+        </div>
       )}
     </div>
   );

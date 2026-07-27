@@ -6,16 +6,19 @@ import {
   VIEW_MODES,
   type ViewMode,
 } from "../../shared/lib/format";
-import { formatBytes, statusColor } from "../../shared/lib/ui";
+import { formatBytes, methodColor, statusColor } from "../../shared/lib/ui";
 import type {
   AssertionResult,
   HttpResponseData,
   ResponseTabKey,
+  SentRequest,
 } from "../../shared/types";
 
 interface Props {
   response: HttpResponseData;
   results: AssertionResult[];
+  /** What actually went over the wire, for the Request tab. */
+  sent: SentRequest | null;
   activeTab: ResponseTabKey;
   onTabChange: (tab: ResponseTabKey) => void;
 }
@@ -79,6 +82,7 @@ function highlight(line: string, needle: string): React.ReactNode {
 export function ResponseViewer({
   response,
   results,
+  sent,
   activeTab,
   onTabChange,
 }: Props) {
@@ -175,6 +179,19 @@ export function ResponseViewer({
             }
           >
             Cookies
+          </Tab>
+          <Tab
+            active={activeTab === "request"}
+            onClick={() => onTabChange("request")}
+            badge={
+              sent ? (
+                <span className="text-[10px] text-muted">
+                  {sent.headers.length}
+                </span>
+              ) : null
+            }
+          >
+            Request
           </Tab>
           <Tab
             active={activeTab === "headers"}
@@ -421,6 +438,100 @@ export function ResponseViewer({
             </tbody>
           </table>
         )}
+
+        {activeTab === "request" &&
+          (sent ? (
+            <div className="flex flex-col gap-4 p-3 text-xs">
+              <div>
+                <div className="mb-1 text-[11px] font-semibold text-muted">
+                  Sent
+                </div>
+                <div className="rounded border border-edge bg-panel p-2 font-mono break-all">
+                  <span className={`font-bold ${methodColor(sent.method)}`}>
+                    {sent.method}
+                  </span>{" "}
+                  {sent.url}
+                </div>
+                {response.finalUrl !== sent.url && (
+                  <div className="mt-1 text-[11px] text-muted">
+                    Redirected to{" "}
+                    <span className="font-mono">{response.finalUrl}</span>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="mb-1 text-[11px] font-semibold text-muted">
+                  Headers — as sent, including any added by auth
+                </div>
+                {sent.headers.length === 0 ? (
+                  <p className="text-muted">No headers.</p>
+                ) : (
+                  <table className="w-full border-collapse">
+                    <tbody>
+                      {sent.headers.map((header, i) => (
+                        <tr key={i} className="border-b border-edge align-top">
+                          <td className="whitespace-nowrap px-2 py-1 font-mono text-brand">
+                            {header.name}
+                          </td>
+                          <td className="px-2 py-1 font-mono break-all">
+                            {header.value}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              {sent.parts && sent.parts.length > 0 && (
+                <div>
+                  <div className="mb-1 text-[11px] font-semibold text-muted">
+                    Body — multipart
+                  </div>
+                  <table className="w-full border-collapse">
+                    <tbody>
+                      {sent.parts.map((part, i) => (
+                        <tr key={i} className="border-b border-edge align-top">
+                          <td className="whitespace-nowrap px-2 py-1 font-mono text-brand">
+                            {part.name}
+                          </td>
+                          <td className="px-2 py-1 font-mono break-all">
+                            {part.fileName ? (
+                              <span className="text-muted">
+                                file: {part.fileName}
+                              </span>
+                            ) : (
+                              part.value
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {!sent.parts && (
+                <div>
+                  <div className="mb-1 text-[11px] font-semibold text-muted">
+                    Body
+                  </div>
+                  {sent.body.trim() === "" ? (
+                    <p className="text-muted">No body.</p>
+                  ) : (
+                    <pre className="overflow-auto rounded border border-edge bg-panel p-2 font-mono text-[12px] leading-relaxed whitespace-pre-wrap">
+                      {sent.body}
+                    </pre>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="p-6 text-center text-muted">
+              Nothing sent yet.
+            </p>
+          ))}
 
         {activeTab === "tests" && (
           <div className="flex flex-col gap-1 p-3">

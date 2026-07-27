@@ -1,4 +1,5 @@
 import { Input, Select } from "../../shared/components/Field";
+import { VariableInput } from "../../shared/components/VariableInput";
 import type { Auth, AuthType } from "../../shared/types";
 
 interface Props {
@@ -55,12 +56,11 @@ export function AuthEditor({ auth, onChange }: Props) {
 
       {auth.type === "bearer" && (
         <Field label="Token">
-          <Input
+          <VariableInput
             value={auth.token}
-            spellCheck={false}
             placeholder="{{accessToken}}"
-            onChange={(e) => onChange({ token: e.target.value })}
-            className="wrk-field"
+            mono
+            onChange={(token) => onChange({ token })}
           />
         </Field>
       )}
@@ -68,11 +68,10 @@ export function AuthEditor({ auth, onChange }: Props) {
       {auth.type === "basic" && (
         <>
           <Field label="Username">
-            <Input
+            <VariableInput
               value={auth.username}
-              spellCheck={false}
-              onChange={(e) => onChange({ username: e.target.value })}
-              className="wrk-field"
+              mono
+              onChange={(username) => onChange({ username })}
             />
           </Field>
           <Field label="Password">
@@ -90,21 +89,19 @@ export function AuthEditor({ auth, onChange }: Props) {
       {auth.type === "apiKey" && (
         <>
           <Field label="Key">
-            <Input
+            <VariableInput
               value={auth.key}
-              spellCheck={false}
               placeholder="X-API-Key"
-              onChange={(e) => onChange({ key: e.target.value })}
-              className="wrk-field"
+              mono
+              onChange={(key) => onChange({ key })}
             />
           </Field>
           <Field label="Value">
-            <Input
+            <VariableInput
               value={auth.value}
-              spellCheck={false}
               placeholder="{{apiKey}}"
-              onChange={(e) => onChange({ value: e.target.value })}
-              className="wrk-field"
+              mono
+              onChange={(value) => onChange({ value })}
             />
           </Field>
           <Field label="Add to">

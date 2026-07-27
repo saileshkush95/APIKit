@@ -50,6 +50,7 @@ import {
   type RequestTab,
   type SavedRequest,
   type ScriptLogEntry,
+  type SentRequest,
   type StoredTab,
   type TreeNode,
 } from "../../shared/types";
@@ -72,6 +73,7 @@ function blankTab(overrides: Partial<RequestTab> = {}): RequestTab {
     error: null,
     loading: false,
     results: [],
+    sent: null,
     scriptLogs: [],
     stream: emptySession(),
     ...overrides,
@@ -106,6 +108,7 @@ function hydrate(stored: StoredTab): RequestTab {
     error: null,
     loading: false,
     results: [],
+    sent: null,
     scriptLogs: [],
     stream: emptySession(),
   };
@@ -367,11 +370,25 @@ export function ApiClient({ intent }: ApiClientProps) {
     setVariables(pre.outcome.variables);
 
     const wire = pre.request;
+    const sentUrl = enforceSecureUrl(wire.url, settings.enforceSecure);
+    const sentHeaders = wire.headers.filter((h) => h.name.trim() !== "");
+    const sent: SentRequest = {
+      method: wire.method,
+      url: sentUrl,
+      headers: sentHeaders,
+      body: wire.body,
+      parts: built.multipart?.map((part) => ({
+        name: part.name,
+        value: part.value,
+        fileName: part.filePath ?? undefined,
+      })),
+    };
+
     try {
       const response = await sendRequest({
         method: wire.method,
-        url: enforceSecureUrl(wire.url, settings.enforceSecure),
-        headers: wire.headers.filter((h) => h.name.trim() !== ""),
+        url: sentUrl,
+        headers: sentHeaders,
         body: wire.body || null,
         timeoutMs: settings.defaultTimeoutMs,
         httpVersion: tab.config.httpVersion,
@@ -397,6 +414,7 @@ export function ApiClient({ intent }: ApiClientProps) {
       updateTab(tab.id, {
         response,
         results,
+        sent,
         scriptLogs: logs,
         error: null,
         loading: false,
@@ -407,6 +425,8 @@ export function ApiClient({ intent }: ApiClientProps) {
         error: String(e),
         response: null,
         results: [],
+        // Kept on failure too: seeing what was sent is how you find out why.
+        sent,
         scriptLogs: logs,
         loading: false,
       });

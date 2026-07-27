@@ -143,6 +143,26 @@ pub struct Monitor {
     pub expected_status: u16,
 }
 
+/// One sent request. History is per machine — it records what *you* did, so it
+/// is deliberately not part of sync.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEntry {
+    pub id: String,
+    pub at_ms: i64,
+    pub name: String,
+    pub method: String,
+    pub url: String,
+    pub status: Option<i64>,
+    #[serde(default)]
+    pub status_text: String,
+    pub time_ms: i64,
+    pub size_bytes: i64,
+    /// The request as sent, so it can be reopened or saved to the collection.
+    pub request: serde_json::Value,
+    pub error: Option<String>,
+}
+
 /// A note on a request. `parent_id` makes it a reply, so threads are one deep
 /// plus replies — enough for review conversations without a tree UI.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -312,6 +332,21 @@ CREATE TABLE IF NOT EXISTS comments (
     sig          TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS history (
+    id           TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    at_ms        INTEGER NOT NULL,
+    name         TEXT NOT NULL,
+    method       TEXT NOT NULL,
+    url          TEXT NOT NULL,
+    status       INTEGER,
+    status_text  TEXT NOT NULL DEFAULT '',
+    time_ms      INTEGER NOT NULL DEFAULT 0,
+    size_bytes   INTEGER NOT NULL DEFAULT 0,
+    request      TEXT NOT NULL,
+    error        TEXT
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     scope TEXT NOT NULL,
     key   TEXT NOT NULL,
@@ -335,6 +370,7 @@ CREATE INDEX IF NOT EXISTS idx_monitors_ws       ON monitors(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_monitor_runs_id   ON monitor_runs(monitor_id, at_ms);
 CREATE INDEX IF NOT EXISTS idx_comments_ws       ON comments(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_comments_request  ON comments(request_id);
+CREATE INDEX IF NOT EXISTS idx_history_ws        ON history(workspace_id, at_ms DESC);
 "#;
 
 const DEFAULT_WORKSPACE_NAME: &str = "My Workspace";
@@ -1491,6 +1527,105 @@ pub fn delete_comment(db: State<Db>, comment_id: String) -> Result<(), String> {
     conn.execute(
         "UPDATE comments SET deleted = 1, updated_at = ?2 WHERE id = ?1",
         params![comment_id, now_ms()],
+    )
+    .map_err(to_err)?;
+    Ok(())
+}
+
+/// Newest entries first. History is capped on write, so this is bounded.
+#[tauri::command]
+pub fn load_history(
+    db: State<Db>,
+    workspace_id: String,
+    limit: Option<i64>,
+) -> Result<Vec<HistoryEntry>, String> {
+    let conn = db.0.lock().map_err(to_err)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, at_ms, name, method, url, status, status_text, time_ms,
+                    size_bytes, request, error
+             FROM history WHERE workspace_id = ?1
+             ORDER BY at_ms DESC LIMIT ?2",
+        )
+        .map_err(to_err)?;
+    let rows = stmt
+        .query_map(params![workspace_id, limit.unwrap_or(300)], |row| {
+            let request: String = row.get(9)?;
+            Ok(HistoryEntry {
+                id: row.get(0)?,
+                at_ms: row.get(1)?,
+                name: row.get(2)?,
+                method: row.get(3)?,
+                url: row.get(4)?,
+                status: row.get(5)?,
+                status_text: row.get(6)?,
+                time_ms: row.get(7)?,
+                size_bytes: row.get(8)?,
+                request: parse_json(&request, empty_object()),
+                error: row.get(10)?,
+            })
+        })
+        .map_err(to_err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(to_err)?;
+    Ok(rows)
+}
+
+/// Records one send and trims the workspace to its newest entries.
+#[tauri::command]
+pub fn record_history(
+    db: State<Db>,
+    workspace_id: String,
+    entry: HistoryEntry,
+) -> Result<(), String> {
+    let conn = db.0.lock().map_err(to_err)?;
+    conn.execute(
+        "INSERT INTO history
+           (id, workspace_id, at_ms, name, method, url, status, status_text,
+            time_ms, size_bytes, request, error)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            entry.id,
+            workspace_id,
+            entry.at_ms,
+            entry.name,
+            entry.method,
+            entry.url,
+            entry.status,
+            entry.status_text,
+            entry.time_ms,
+            entry.size_bytes,
+            json_text(&entry.request, "{}"),
+            entry.error
+        ],
+    )
+    .map_err(to_err)?;
+
+    // Unbounded history would grow the database forever.
+    conn.execute(
+        "DELETE FROM history WHERE workspace_id = ?1 AND id NOT IN
+           (SELECT id FROM history WHERE workspace_id = ?1
+            ORDER BY at_ms DESC LIMIT 500)",
+        params![workspace_id],
+    )
+    .map_err(to_err)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_history_entry(db: State<Db>, id: String) -> Result<(), String> {
+    let conn = db.0.lock().map_err(to_err)?;
+    conn.execute("DELETE FROM history WHERE id = ?1", params![id])
+        .map_err(to_err)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn clear_history(db: State<Db>, workspace_id: String) -> Result<(), String> {
+    let conn = db.0.lock().map_err(to_err)?;
+    conn.execute(
+        "DELETE FROM history WHERE workspace_id = ?1",
+        params![workspace_id],
     )
     .map_err(to_err)?;
     Ok(())
