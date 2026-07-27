@@ -19,6 +19,33 @@ export function findNode(nodes: TreeNode[], id: string): TreeNode | null {
   return null;
 }
 
+/** The ancestor folders of a node, outermost first; null when id is unknown. */
+export function folderPathTo(
+  nodes: TreeNode[],
+  id: string,
+  trail: Folder[] = [],
+): Folder[] | null {
+  for (const node of nodes) {
+    if (node.id === id) return trail;
+    if (isFolder(node)) {
+      const found = folderPathTo(node.children, id, [...trail, node]);
+      if (found !== null) return found;
+    }
+  }
+  return null;
+}
+
+export function findFolder(nodes: TreeNode[], id: string): Folder | null {
+  for (const node of nodes) {
+    if (isFolder(node)) {
+      if (node.id === id) return node;
+      const found = findFolder(node.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 export function findRequest(
   nodes: TreeNode[],
   id: string,

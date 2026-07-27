@@ -1,10 +1,18 @@
 import { Select } from "../../shared/components/Field";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { CodeEditor } from "../../shared/components/CodeEditor";
+import { CodeEditor, type Suggestion } from "../../shared/components/CodeEditor";
 import { fieldSnippet, GraphqlSchemaPanel } from "./GraphqlSchemaPanel";
 import { KeyValueEditor } from "../../shared/components/KeyValueEditor";
-import { introspect, schemaToMarkdown, type GraphqlSchema } from "../../shared/lib/graphql";
+import { jsonToRows, rowsToJson } from "../../shared/lib/bodyConvert";
+import type { HighlightLanguage } from "../../shared/lib/highlight";
+import {
+  beautifyGraphql,
+  introspect,
+  schemaToMarkdown,
+  type GraphqlSchema,
+} from "../../shared/lib/graphql";
+import { notify, notifyError } from "../../shared/lib/notify";
 import { beautify } from "../../shared/lib/request";
 import { useSettings } from "../../shared/state/settings";
 import type { BodyMode, Header, RawLanguage, RequestConfig } from "../../shared/types";
@@ -39,6 +47,14 @@ const LANGUAGES: { value: RawLanguage; label: string }[] = [
   { value: "html", label: "HTML" },
   { value: "javascript", label: "JavaScript" },
 ];
+
+const EDITOR_LANGUAGE: Record<RawLanguage, HighlightLanguage> = {
+  json: "json",
+  text: "none",
+  xml: "markup",
+  html: "markup",
+  javascript: "javascript",
+};
 
 /**
  * A single file sent as the entire request body.
@@ -202,8 +218,10 @@ export function BodyEditor({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* Mode selector */}
-      <div className="flex flex-none flex-wrap items-center gap-x-4 gap-y-1.5 pb-2">
+      {/* Mode selector and mode-specific controls on one line. min-h matches
+          the compact dropdown only raw mode shows, so the height is the same
+          whatever mode is selected. */}
+      <div className="flex min-h-7 flex-none flex-wrap items-center gap-x-4 gap-y-1 pb-1.5">
         {MODES.map((mode) => (
           <label
             key={mode.value}
@@ -245,13 +263,57 @@ export function BodyEditor({
                 </option>
               ))}
             </Select>
+            {config.rawLanguage === "json" && (
+              <button
+                onClick={() => {
+                  try {
+                    onConfigChange({
+                      bodyMode: "formData",
+                      formData: jsonToRows(body),
+                    });
+                  } catch (e) {
+                    notifyError("Could not convert to form-data", e);
+                  }
+                }}
+                className="ml-auto text-xs text-brand hover:underline"
+                title="Turn the JSON object's fields into form-data rows"
+              >
+                To form-data
+              </button>
+            )}
             <button
               onClick={() => onBodyChange(beautify(body, config.rawLanguage))}
-              className="ml-auto text-xs text-brand hover:underline"
+              className={`text-xs text-brand hover:underline ${
+                config.rawLanguage === "json" ? "" : "ml-auto"
+              }`}
             >
               Beautify
             </button>
           </>
+        )}
+
+        {(config.bodyMode === "formData" || config.bodyMode === "urlEncoded") && (
+          <button
+            onClick={() => {
+              const rows =
+                config.bodyMode === "formData"
+                  ? config.formData
+                  : config.urlEncoded;
+              const { json, skippedFiles } = rowsToJson(rows);
+              onBodyChange(json);
+              onConfigChange({ bodyMode: "raw", rawLanguage: "json" });
+              if (skippedFiles > 0) {
+                notify(
+                  "info",
+                  `${skippedFiles} file ${skippedFiles === 1 ? "row" : "rows"} left out — a file cannot be a JSON value`,
+                );
+              }
+            }}
+            className="ml-auto text-xs text-brand hover:underline"
+            title="Turn these rows into a raw JSON body"
+          >
+            To JSON
+          </button>
         )}
       </div>
 
@@ -289,6 +351,7 @@ export function BodyEditor({
           onChange={onBodyChange}
           placeholder='{ "key": "value" }'
           className="min-h-[10rem] flex-1"
+          language={EDITOR_LANGUAGE[config.rawLanguage]}
         />
       )}
 
@@ -321,6 +384,58 @@ function GraphqlBody({
   const [error, setError] = useState<string | null>(null);
   const queryRef = useRef<HTMLTextAreaElement | null>(null);
   const lastFetched = useRef<string>("");
+
+  // Field names from the introspected schema, offered while typing the query.
+  // Deliberately flat — real cursor-context resolution needs a GraphQL parser,
+  // and a filtered flat list is already most of the value.
+  const suggestQuery = useMemo(() => {
+    if (!schema) return undefined;
+    const entries: Suggestion[] = [];
+    const seen = new Set<string>();
+    for (const type of schema.types) {
+      if (type.name.startsWith("__")) continue;
+      for (const field of type.fields) {
+        if (seen.has(field.name)) continue;
+        seen.add(field.name);
+        entries.push({ name: field.name, detail: field.type });
+      }
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const keyword of ["query", "mutation", "subscription", "fragment"]) {
+      if (!seen.has(keyword)) entries.push({ name: keyword });
+    }
+    return (value: string, caret: number) => {
+      const match = /[A-Za-z_][A-Za-z0-9_]*$/.exec(value.slice(0, caret));
+      if (!match) return null;
+      const query = match[0].toLowerCase();
+      const items = entries.filter(
+        (entry) =>
+          entry.name.toLowerCase().startsWith(query) &&
+          entry.name !== match[0],
+      );
+      return items.length > 0
+        ? { items, start: caret - match[0].length }
+        : null;
+    };
+  }, [schema]);
+
+  // Inside the variables JSON, a key completes to a variable the query
+  // declares — `query ($id: ID!)` offers `"id"`.
+  function suggestVariables(value: string, caret: number) {
+    const declared = [
+      ...config.graphqlQuery.matchAll(
+        /\$([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([^,)\s]+)/g,
+      ),
+    ].map((match) => ({ name: match[1], detail: match[2] }));
+    if (declared.length === 0) return null;
+    const match = /"([A-Za-z0-9_]*)$/.exec(value.slice(0, caret));
+    if (!match) return null;
+    const query = match[1].toLowerCase();
+    const items = declared.filter((entry) =>
+      entry.name.toLowerCase().startsWith(query),
+    );
+    return items.length > 0 ? { items, start: caret - match[1].length } : null;
+  }
 
   async function fetchSchema(target: string) {
     if (target.trim() === "") return;
@@ -374,6 +489,17 @@ function GraphqlBody({
             {loading && (
               <span className="text-[10px] text-muted">fetching schema…</span>
             )}
+            <button
+              type="button"
+              onClick={() =>
+                onConfigChange({
+                  graphqlQuery: beautifyGraphql(config.graphqlQuery),
+                })
+              }
+              className="ml-auto text-xs text-brand hover:underline"
+            >
+              Beautify
+            </button>
           </div>
           <CodeEditor
             value={config.graphqlQuery}
@@ -381,6 +507,8 @@ function GraphqlBody({
             placeholder={"query {\n  viewer { id }\n}"}
             className="min-h-[8rem] flex-1"
             inputRef={queryRef}
+            language="graphql"
+            suggest={suggestQuery}
           />
         </div>
         <div className="flex min-h-0 flex-col">
@@ -392,6 +520,8 @@ function GraphqlBody({
             onChange={(graphqlVariables) => onConfigChange({ graphqlVariables })}
             placeholder="{}"
             className="h-20"
+            language="json"
+            suggest={suggestVariables}
           />
         </div>
         <GraphqlFiles config={config} onConfigChange={onConfigChange} />

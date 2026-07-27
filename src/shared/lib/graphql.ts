@@ -187,6 +187,75 @@ export function suggestionIndex(schema: GraphqlSchema): SchemaField[] {
 }
 
 /** Markdown summary of the schema, used to seed a request's Docs tab. */
+/**
+ * Formats a query: every brace boundary on its own line, two-space indent.
+ * Strings, comments and argument lists are left untouched, and fields the
+ * user grouped on one line stay grouped — only the structure is normalized.
+ */
+export function beautifyGraphql(source: string): string {
+  // Pass 1: give each brace its own line.
+  let exploded = "";
+  let inString = false;
+  let inComment = false;
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    if (inComment) {
+      exploded += ch;
+      if (ch === "\n") inComment = false;
+      continue;
+    }
+    if (inString) {
+      exploded += ch;
+      if (ch === "\\") exploded += source[++i] ?? "";
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      exploded += ch;
+    } else if (ch === "#") {
+      inComment = true;
+      exploded += ch;
+    } else if (ch === "{") {
+      exploded += `${/(^|[\s(])$/.test(exploded.slice(-1)) ? "" : " "}{\n`;
+    } else if (ch === "}") {
+      exploded += "\n}\n";
+    } else if (ch === " " || ch === "\t") {
+      // Runs of blanks collapse to one space.
+      if (!/[\s]$/.test(exploded.slice(-1)) && exploded !== "") exploded += " ";
+    } else {
+      exploded += ch;
+    }
+  }
+
+  // Pass 2: trim and re-indent by bracket depth. Parentheses count too, so a
+  // multi-line argument list indents like a block.
+  let depth = 0;
+  const lines: string[] = [];
+  for (const raw of exploded.split("\n")) {
+    const line = raw.trim();
+    if (line === "") continue;
+    const leadingClosers = /^[}\])]+/.exec(line)?.[0].length ?? 0;
+    lines.push("  ".repeat(Math.max(0, depth - leadingClosers)) + line);
+    let net = 0;
+    let str = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (str) {
+        if (ch === "\\") i++;
+        else if (ch === '"') str = false;
+        continue;
+      }
+      if (ch === '"') str = true;
+      else if (ch === "#") break;
+      else if (ch === "{" || ch === "(" || ch === "[") net++;
+      else if (ch === "}" || ch === ")" || ch === "]") net--;
+    }
+    depth = Math.max(0, depth + net);
+  }
+  return lines.join("\n");
+}
+
 export function schemaToMarkdown(schema: GraphqlSchema): string {
   const lines: string[] = ["# Schema", ""];
   for (const { label, type } of rootTypes(schema)) {

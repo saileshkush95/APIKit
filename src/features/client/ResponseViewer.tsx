@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { save } from "@tauri-apps/plugin-dialog";
+import { saveBinaryFile, writeTextFile } from "../../shared/lib/api";
 import {
+  extensionForContentType,
   guessViewMode,
+  mapJsonLines,
   parseCookies,
   renderBody,
   VIEW_MODES,
   type ViewMode,
 } from "../../shared/lib/format";
+import { renderLine, type HighlightLanguage } from "../../shared/lib/highlight";
+import { notifyError, notifySuccess } from "../../shared/lib/notify";
 import { formatBytes, methodColor, statusColor } from "../../shared/lib/ui";
 import type {
   AssertionResult,
@@ -54,30 +60,14 @@ const OVERSCAN = 20;
 /** Past this, the body is treated as "large": no auto-format, no auto-render. */
 const LARGE_BODY_BYTES = 2_000_000;
 
-/** Splits a line around search matches so they can be highlighted. */
-function highlight(line: string, needle: string): React.ReactNode {
-  if (needle === "") return line;
-  const parts: React.ReactNode[] = [];
-  const lower = line.toLowerCase();
-  const target = needle.toLowerCase();
-  let index = 0;
-  let key = 0;
-  while (index < line.length) {
-    const hit = lower.indexOf(target, index);
-    if (hit === -1) {
-      parts.push(line.slice(index));
-      break;
-    }
-    if (hit > index) parts.push(line.slice(index, hit));
-    parts.push(
-      <mark key={key++} className="rounded bg-warn/40 text-ink">
-        {line.slice(hit, hit + needle.length)}
-      </mark>,
-    );
-    index = hit + needle.length;
-  }
-  return parts;
-}
+/** View modes that have a syntax colouring, mapped to their tokenizer. */
+const MODE_LANGUAGE: Partial<Record<ViewMode, HighlightLanguage>> = {
+  json: "json",
+  xml: "markup",
+  html: "markup",
+  yaml: "yaml",
+  javascript: "javascript",
+};
 
 export function ResponseViewer({
   response,
@@ -105,10 +95,31 @@ export function ResponseViewer({
   const isLarge = response.body.length > LARGE_BODY_BYTES;
   const [formatLarge, setFormatLarge] = useState(false);
 
+  // An image body renders as an actual image. Binary formats use the exact
+  // bytes; SVG arrives as text and is encoded on the spot.
+  const imageSrc = useMemo(() => {
+    const mime = contentType?.split(";")[0].trim().toLowerCase() ?? "";
+    if (!mime.startsWith("image/")) return null;
+    if (response.bodyBase64) return `data:${mime};base64,${response.bodyBase64}`;
+    try {
+      const bytes = new TextEncoder().encode(response.body);
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return `data:${mime};base64,${btoa(binary)}`;
+    } catch {
+      return null;
+    }
+  }, [contentType, response]);
+
   // A new response may be a different content type than the last one.
+  // Images open straight into their preview.
   useEffect(() => {
     setMode(guessViewMode(contentType, response.body));
-    setPreview(false);
+    setPreview(
+      (contentType?.split(";")[0].trim().toLowerCase() ?? "").startsWith(
+        "image/",
+      ),
+    );
     setFormatLarge(false);
   }, [response]);
 
@@ -129,6 +140,41 @@ export function ResponseViewer({
     [response.body, mode, isLarge, formatLarge],
   );
   const lines = useMemo(() => rendered.split("\n"), [rendered]);
+
+  const unformatted = isLarge && !formatLarge;
+  const lang: HighlightLanguage = unformatted
+    ? "none"
+    : (MODE_LANGUAGE[mode] ?? "none");
+
+  // Line → JSON subtree, so a click on a line can copy that node and a
+  // container line can collapse. Only when the shown text really is our own
+  // re-serialization of a successful parse.
+  const jsonMap = useMemo(() => {
+    if (mode !== "json" || unformatted) return null;
+    try {
+      return mapJsonLines(JSON.parse(response.body));
+    } catch {
+      return null;
+    }
+  }, [response.body, mode, unformatted]);
+  // Any drift between the mapper and the serializer must fail safe.
+  const copyMap =
+    jsonMap && jsonMap.nodes.length === lines.length ? jsonMap : null;
+
+  async function copyNode(line: number) {
+    if (!copyMap) return;
+    const node = copyMap.nodes[line];
+    const text =
+      typeof node === "string" ? node : JSON.stringify(node, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+      notifySuccess(
+        `Copied ${text.length > 40 ? `${text.slice(0, 40)}…` : text}`,
+      );
+    } catch {
+      /* clipboard access can be denied; the click simply does nothing */
+    }
+  }
   const matches = useMemo(() => {
     if (search === "") return 0;
     return lines.reduce(
@@ -144,7 +190,8 @@ export function ResponseViewer({
   );
   const passed = results.filter((r) => r.passed).length;
   const failed = results.length - passed;
-  const previewable = mode === "html" || mode === "markdown";
+  const previewable =
+    mode === "html" || mode === "markdown" || imageSrc !== null;
 
   async function copy() {
     try {
@@ -153,6 +200,50 @@ export function ResponseViewer({
       setTimeout(() => setCopied(false), 1200);
     } catch {
       /* clipboard access can be denied; the button simply does nothing */
+    }
+  }
+
+  /** Best filename to offer: the server's, else from the URL, else by type. */
+  function suggestedFileName(): string {
+    const disposition = response.headers.find(
+      (h) => h.name.toLowerCase() === "content-disposition",
+    )?.value;
+    const fromServer = disposition
+      ? /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(disposition)?.[1]
+      : undefined;
+    if (fromServer) {
+      try {
+        return decodeURIComponent(fromServer.replace(/"/g, "").trim());
+      } catch {
+        return fromServer.replace(/"/g, "").trim();
+      }
+    }
+    try {
+      const last = new URL(response.finalUrl).pathname
+        .split("/")
+        .filter(Boolean)
+        .pop();
+      if (last && /\.[a-z0-9]{1,5}$/i.test(last)) return last;
+    } catch {
+      /* not a parseable URL; fall through to the content type */
+    }
+    return `response${extensionForContentType(contentType, Boolean(response.bodyBase64))}`;
+  }
+
+  async function saveBody() {
+    try {
+      const path = await save({
+        defaultPath: suggestedFileName(),
+        title: "Save response body",
+      });
+      if (!path) return;
+      // Binary bodies are written from their original bytes; the displayed
+      // text is a lossy rendering and would corrupt a PDF or spreadsheet.
+      if (response.bodyBase64) await saveBinaryFile(path, response.bodyBase64);
+      else await writeTextFile(path, response.body);
+      notifySuccess(`Saved ${path.split(/[\\/]/).pop()}`);
+    } catch (e) {
+      notifyError("Could not save the response", e);
     }
   }
 
@@ -339,6 +430,13 @@ export function ResponseViewer({
             >
               {copied ? "✓" : "⧉"}
             </button>
+            <button
+              onClick={saveBody}
+              className="rounded px-1.5 py-1 text-xs text-muted hover:bg-elevated hover:text-ink"
+              title="Save response to a file"
+            >
+              ⭳
+            </button>
           </div>
         </div>
       )}
@@ -361,7 +459,15 @@ export function ResponseViewer({
       {/* Content */}
       <div className="min-h-0 flex-1 overflow-auto border-t border-edge">
         {activeTab === "body" &&
-          (preview ? (
+          (preview && imageSrc ? (
+            <div className="flex h-full items-center justify-center overflow-auto p-4">
+              <img
+                src={imageSrc}
+                alt="Response image"
+                className="max-h-full max-w-full object-contain"
+              />
+            </div>
+          ) : preview ? (
             <iframe
               // Sandboxed with no allow-scripts: previewing a response must
               // never execute code from the server under test.
@@ -371,7 +477,15 @@ export function ResponseViewer({
               className="h-full w-full border-0 bg-white"
             />
           ) : (
-            <VirtualBody lines={lines} wrap={wrap} search={search} />
+            <VirtualBody
+              lines={lines}
+              wrap={wrap}
+              search={search}
+              lang={lang}
+              spans={copyMap?.spans ?? null}
+              canCopyNodes={copyMap !== null}
+              onCopyNode={copyNode}
+            />
           ))}
 
         {activeTab === "cookies" &&
@@ -577,14 +691,26 @@ function VirtualBody({
   lines,
   wrap,
   search,
+  lang,
+  spans,
+  canCopyNodes,
+  onCopyNode,
 }: {
   lines: string[];
   wrap: boolean;
   search: string;
+  lang: HighlightLanguage;
+  /** JSON bodies: for a container-opening line, its closing line. */
+  spans: (number | null)[] | null;
+  /** JSON bodies: clicking a line copies the node on it. */
+  canCopyNodes: boolean;
+  onCopyNode: (line: number) => void;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(400);
+  // Opening lines whose container is folded away.
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     const element = viewportRef.current;
@@ -595,17 +721,52 @@ function VirtualBody({
     return () => observer.disconnect();
   }, []);
 
+  // A new response (or view mode) is a new set of lines; nothing it shows
+  // corresponds to the previous folds.
+  useEffect(() => {
+    setCollapsed(new Set());
+  }, [lines]);
+
+  function toggle(line: number) {
+    setCollapsed((previous) => {
+      const next = new Set(previous);
+      if (next.has(line)) next.delete(line);
+      else next.add(line);
+      return next;
+    });
+  }
+
+  // Actual line index of each visible row; null while nothing is collapsed,
+  // so the common case stays allocation-free.
+  const visible = useMemo(() => {
+    if (!spans || collapsed.size === 0) return null;
+    const result: number[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      result.push(i);
+      const close = spans[i];
+      // Jumping to the closing line hides it and everything in between —
+      // the folded row shows the closer inline instead.
+      if (close !== null && collapsed.has(i)) i = close;
+    }
+    return result;
+  }, [lines, spans, collapsed]);
+
+  const rowCount = visible ? visible.length : lines.length;
+
   // Wrapped lines can exceed one row, so wrapping falls back to plain layout
   // for bodies small enough to afford it.
-  const canVirtualize = !wrap || lines.length > 500;
+  const canVirtualize = !wrap || rowCount > 500;
 
   const first = canVirtualize
     ? Math.max(0, Math.floor(scrollTop / LINE_HEIGHT) - OVERSCAN)
     : 0;
   const visibleCount = canVirtualize
     ? Math.ceil(height / LINE_HEIGHT) + OVERSCAN * 2
-    : lines.length;
-  const slice = lines.slice(first, first + visibleCount);
+    : rowCount;
+  const rows = Array.from(
+    { length: Math.min(visibleCount, rowCount - first) },
+    (_, i) => (visible ? visible[first + i] : first + i),
+  );
   const gutterWidth = `${String(lines.length).length + 1}ch`;
 
   return (
@@ -617,7 +778,7 @@ function VirtualBody({
     >
       <div
         style={{
-          height: canVirtualize ? lines.length * LINE_HEIGHT : undefined,
+          height: canVirtualize ? rowCount * LINE_HEIGHT : undefined,
           position: "relative",
         }}
       >
@@ -634,8 +795,8 @@ function VirtualBody({
             style={{ width: gutterWidth }}
             className="flex-none border-r border-edge bg-elevated/40 px-2 text-right text-muted select-none"
           >
-            {slice.map((_, i) => (
-              <div key={first + i}>{first + i + 1}</div>
+            {rows.map((actual) => (
+              <div key={actual}>{actual + 1}</div>
             ))}
           </div>
           <div
@@ -645,11 +806,48 @@ function VirtualBody({
                 : "whitespace-pre"
             }`}
           >
-            {slice.map((line, i) => (
-              <div key={first + i} style={{ height: LINE_HEIGHT }}>
-                {highlight(line, search) || " "}
-              </div>
-            ))}
+            {rows.map((actual) => {
+              const close = spans?.[actual] ?? null;
+              const isCollapsed = close !== null && collapsed.has(actual);
+              return (
+                <div
+                  key={actual}
+                  style={{ height: LINE_HEIGHT }}
+                  className={`relative ${
+                    canCopyNodes ? "cursor-pointer hover:bg-elevated/60" : ""
+                  }`}
+                  title={canCopyNodes ? "Click to copy this node" : undefined}
+                  onClick={() => {
+                    if (!canCopyNodes) return;
+                    // A drag to select text must never trigger a copy.
+                    const selection = window.getSelection();
+                    if (selection && !selection.isCollapsed) return;
+                    onCopyNode(actual);
+                  }}
+                >
+                  {close !== null && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggle(actual);
+                      }}
+                      style={{ height: LINE_HEIGHT, lineHeight: `${LINE_HEIGHT}px` }}
+                      className="absolute top-0 left-0 w-3 text-center text-[9px] text-muted select-none hover:text-ink"
+                      title={isCollapsed ? "Expand" : "Collapse"}
+                    >
+                      {isCollapsed ? "▸" : "▾"}
+                    </button>
+                  )}
+                  {renderLine(lines[actual], lang, search)}
+                  {isCollapsed && (
+                    <span className="text-muted select-none">
+                      {" … "}
+                      {lines[close].trim()}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

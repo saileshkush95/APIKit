@@ -132,6 +132,83 @@ export function renderBody(body: string, mode: ViewMode): string {
   }
 }
 
+export interface JsonLineMap {
+  /** The node whose serialization begins (or ends) on each line. */
+  nodes: unknown[];
+  /** For a line that opens a multi-line container, its closing line. */
+  spans: (number | null)[];
+}
+
+/**
+ * Per-line structure of `JSON.stringify(root, null, 2)`, for click-to-copy
+ * and collapsing. Mirrors the serializer's line layout exactly: a primitive
+ * is one line; a non-empty container is an opening line, one walk per child —
+ * whose first line is the `"key": value` line — and a closing line.
+ */
+export function mapJsonLines(root: unknown): JsonLineMap {
+  const nodes: unknown[] = [];
+  const spans: (number | null)[] = [];
+  function push(node: unknown): number {
+    nodes.push(node);
+    spans.push(null);
+    return nodes.length - 1;
+  }
+  function walk(value: unknown): void {
+    if (value !== null && typeof value === "object") {
+      const children = Array.isArray(value)
+        ? value
+        : Object.values(value as Record<string, unknown>);
+      const open = push(value);
+      if (children.length === 0) return; // "[]" / "{}" render on one line
+      for (const child of children) walk(child);
+      spans[open] = push(value);
+    } else {
+      push(value);
+    }
+  }
+  walk(root);
+  return { nodes, spans };
+}
+
+/** File extension for a response body, from its content type. */
+const EXTENSIONS: [string, string][] = [
+  ["application/pdf", ".pdf"],
+  ["spreadsheetml.sheet", ".xlsx"],
+  ["vnd.ms-excel", ".xls"],
+  ["wordprocessingml.document", ".docx"],
+  ["presentationml.presentation", ".pptx"],
+  ["text/csv", ".csv"],
+  ["application/json", ".json"],
+  ["text/html", ".html"],
+  ["application/xml", ".xml"],
+  ["text/xml", ".xml"],
+  ["image/png", ".png"],
+  ["image/jpeg", ".jpg"],
+  ["image/gif", ".gif"],
+  ["image/webp", ".webp"],
+  ["image/svg", ".svg"],
+  ["image/x-icon", ".ico"],
+  ["application/zip", ".zip"],
+  ["gzip", ".gz"],
+  ["javascript", ".js"],
+  ["yaml", ".yaml"],
+  ["audio/mpeg", ".mp3"],
+  ["video/mp4", ".mp4"],
+  ["font/woff2", ".woff2"],
+  ["text/plain", ".txt"],
+];
+
+export function extensionForContentType(
+  contentType: string | undefined,
+  isBinary: boolean,
+): string {
+  const type = contentType?.toLowerCase() ?? "";
+  for (const [needle, extension] of EXTENSIONS) {
+    if (type.includes(needle)) return extension;
+  }
+  return isBinary ? ".bin" : ".txt";
+}
+
 export interface Cookie {
   name: string;
   value: string;

@@ -215,12 +215,20 @@ pub fn write_text_file(path: String, contents: String) -> Result<(), String> {
     std::fs::write(&path, contents).map_err(|e| format!("cannot write {path}: {e}"))
 }
 
+/// Writes a base64-encoded body to disk, byte-exact — how binary responses
+/// (PDFs, spreadsheets, images) are saved.
+#[tauri::command]
+pub fn save_binary_file(path: String, contents_base64: String) -> Result<(), String> {
+    let bytes = base64_decode(&contents_base64)?;
+    std::fs::write(&path, bytes).map_err(|e| format!("cannot write {path}: {e}"))
+}
+
 // --- base64 -------------------------------------------------------------------
 // Small enough not to justify a dependency, and only ever used on our own JSON.
 
 const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-fn base64_encode(input: &[u8]) -> String {
+pub(crate) fn base64_encode(input: &[u8]) -> String {
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     for chunk in input.chunks(3) {
         let b = [
@@ -258,7 +266,7 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
         for (index, byte) in chunk.iter().enumerate() {
             let value = lookup[*byte as usize];
             if value == 255 {
-                return Err("the document from GitHub was not valid base64".into());
+                return Err("not valid base64".into());
             }
             n |= (value as u32) << (18 - 6 * index);
         }

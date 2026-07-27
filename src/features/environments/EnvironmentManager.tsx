@@ -14,6 +14,22 @@ export function EnvironmentManager({ onClose }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(
     activeId ?? environments[0]?.id ?? null,
   );
+  // Inline rename in the list. The header input renames too; this makes the
+  // action discoverable without selecting first.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState("");
+
+  function commitRename() {
+    if (renamingId && draftName.trim() !== "") {
+      update(renamingId, { name: draftName.trim() });
+    }
+    setRenamingId(null);
+  }
+
+  function duplicateAndSelect(id: string) {
+    const copy = duplicate(id);
+    if (copy) setSelectedId(copy.id);
+  }
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -56,20 +72,67 @@ export function EnvironmentManager({ onClose }: Props) {
               </p>
             )}
             {environments.map((env) => (
-              <button
+              <div
                 key={env.id}
                 onClick={() => setSelectedId(env.id)}
-                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${
+                onDoubleClick={() => {
+                  setRenamingId(env.id);
+                  setDraftName(env.name);
+                }}
+                className={`group flex w-full cursor-pointer items-center gap-1.5 px-3 py-1.5 text-left text-xs ${
                   selected?.id === env.id
                     ? "bg-elevated text-ink"
                     : "text-muted hover:bg-elevated/60 hover:text-ink"
                 }`}
               >
-                <span className="truncate">{env.name}</span>
-                {env.id === activeId && (
-                  <span className="ml-auto text-[10px] text-brand">active</span>
+                {renamingId === env.id ? (
+                  <input
+                    autoFocus
+                    value={draftName}
+                    spellCheck={false}
+                    onChange={(e) => setDraftName(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitRename();
+                      if (e.key === "Escape") setRenamingId(null);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="min-w-0 flex-1 rounded border border-brand bg-panel px-1 py-0.5 text-xs text-ink outline-none"
+                  />
+                ) : (
+                  <>
+                    <span className="truncate">{env.name}</span>
+                    <span className="ml-auto flex flex-none items-center gap-0.5">
+                      {env.id === activeId && (
+                        <span className="text-[10px] text-brand group-hover:hidden">
+                          active
+                        </span>
+                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRenamingId(env.id);
+                          setDraftName(env.name);
+                        }}
+                        className="hidden rounded px-1 text-[11px] text-muted group-hover:block hover:bg-panel hover:text-ink"
+                        title="Rename"
+                      >
+                        ✎
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          duplicateAndSelect(env.id);
+                        }}
+                        className="hidden rounded px-1 text-[11px] text-muted group-hover:block hover:bg-panel hover:text-ink"
+                        title="Duplicate"
+                      >
+                        ⧉
+                      </button>
+                    </span>
+                  </>
                 )}
-              </button>
+              </div>
             ))}
           </div>
         </div>
@@ -82,11 +145,12 @@ export function EnvironmentManager({ onClose }: Props) {
                 <input
                   value={selected.name}
                   spellCheck={false}
+                  title="Click to rename"
                   onChange={(e) => update(selected.id, { name: e.target.value })}
                   className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1.5 py-1 font-semibold text-ink outline-none hover:border-edge focus:border-brand"
                 />
                 <button
-                  onClick={() => duplicate(selected.id)}
+                  onClick={() => duplicateAndSelect(selected.id)}
                   className="rounded px-2 py-1 text-xs text-muted hover:bg-elevated hover:text-ink"
                 >
                   Duplicate

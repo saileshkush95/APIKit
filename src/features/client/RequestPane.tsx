@@ -7,6 +7,7 @@ import { CommentsPanel } from "./CommentsPanel";
 import { DocsEditor } from "./DocsEditor";
 import { ConnectionEditor } from "./ConnectionEditor";
 import { KeyValueEditor } from "../../shared/components/KeyValueEditor";
+import { RequestSettingsPanel } from "./RequestSettingsPanel";
 import { ResponseViewer } from "./ResponseViewer";
 import { VariableInput } from "../../shared/components/VariableInput";
 import { ScriptsEditor } from "./ScriptsEditor";
@@ -39,6 +40,7 @@ interface Props {
   tab: RequestTab;
   onChange: (patch: Partial<RequestTab>) => void;
   onSend: () => void;
+  onCancel: () => void;
   onSave: () => void;
   onRename: (name: string) => void;
   onToggleConnection: () => void;
@@ -73,7 +75,16 @@ function tabsFor(protocol: Protocol): RequestTabKey[] {
     return ["headers", "connection", "docs", "comments"];
   }
   if (protocol === "graphql") {
-    return ["auth", "headers", "body", "scripts", "tests", "docs", "comments"];
+    return [
+      "auth",
+      "headers",
+      "body",
+      "scripts",
+      "tests",
+      "settings",
+      "docs",
+      "comments",
+    ];
   }
   return [
     "params",
@@ -82,6 +93,7 @@ function tabsFor(protocol: Protocol): RequestTabKey[] {
     "body",
     "scripts",
     "tests",
+    "settings",
     "docs",
     "comments",
   ];
@@ -97,6 +109,7 @@ const TAB_LABELS: Record<RequestTabKey, string> = {
   docs: "Docs",
   comments: "Comments",
   connection: "Connection",
+  settings: "Settings",
 };
 
 function PaneTab({
@@ -135,10 +148,38 @@ function Count({ count }: { count: number }) {
   return <span className="text-[10px] text-muted">{count}</span>;
 }
 
+/** Shown in the response pane while a request is in flight. */
+function LoadingResponse({ onCancel }: { onCancel: () => void }) {
+  const [elapsedMs, setElapsedMs] = useState(0);
+
+  useEffect(() => {
+    const started = Date.now();
+    const timer = setInterval(() => setElapsedMs(Date.now() - started), 100);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6">
+      <div className="h-6 w-6 animate-spin rounded-full border-2 border-edge border-t-brand" />
+      <div className="text-xs text-muted">
+        Waiting for response… <span className="font-mono">{(elapsedMs / 1000).toFixed(1)}s</span>
+      </div>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="rounded-md border border-edge px-3 py-1 text-xs text-muted hover:border-err hover:text-err"
+      >
+        Cancel request
+      </button>
+    </div>
+  );
+}
+
 export function RequestPane({
   tab,
   onChange,
   onSend,
+  onCancel,
   onSave,
   onRename,
   onToggleConnection,
@@ -373,12 +414,14 @@ export function RequestPane({
           </button>
         ) : protocol === "webrtc" ? null : (
           <button
-            onClick={onSend}
-            disabled={tab.loading || !tab.url}
-            className="whitespace-nowrap rounded-md bg-brand px-5 py-2 font-semibold text-white hover:bg-brand-bright disabled:cursor-default disabled:opacity-50"
-            title="Send (⌘↵)"
+            onClick={tab.loading ? onCancel : onSend}
+            disabled={!tab.loading && !tab.url}
+            className={`whitespace-nowrap rounded-md px-5 py-2 font-semibold text-white disabled:cursor-default disabled:opacity-50 ${
+              tab.loading ? "bg-err hover:bg-err/80" : "bg-brand hover:bg-brand-bright"
+            }`}
+            title={tab.loading ? "Cancel the request" : "Send (⌘↵)"}
           >
-            {tab.loading ? "Sending…" : "Send"}
+            {tab.loading ? "Cancel" : "Send"}
           </button>
         )}
       </div>
@@ -496,6 +539,9 @@ export function RequestPane({
               headers={tab.headers}
             />
           )}
+          {reqTab === "settings" && (
+            <RequestSettingsPanel config={tab.config} onChange={patchConfig} />
+          )}
           {reqTab === "docs" && (
             <DocsEditor
               config={tab.config}
@@ -548,17 +594,18 @@ export function RequestPane({
         />
       ) : (
       <section className="flex min-h-0 flex-1 flex-col">
-        {tab.error && (
+        {tab.loading && <LoadingResponse onCancel={onCancel} />}
+        {!tab.loading && tab.error && (
           <div className="m-3 whitespace-pre-wrap rounded-md border border-err bg-err/10 p-3 font-mono text-xs text-err">
             {tab.error}
           </div>
         )}
-        {!tab.error && !tab.response && (
+        {!tab.loading && !tab.error && !tab.response && (
           <div className="flex flex-1 items-center justify-center p-6 text-center text-muted">
             Send a request to see the response.
           </div>
         )}
-        {tab.response && (
+        {!tab.loading && tab.response && (
           <ResponseViewer
             response={tab.response}
             results={tab.results}

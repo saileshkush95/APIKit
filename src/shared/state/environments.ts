@@ -24,7 +24,8 @@ interface EnvironmentsStore {
   setActiveId: (id: string | null) => void;
   create: (name?: string) => Environment;
   update: (id: string, patch: Partial<Omit<Environment, "id">>) => void;
-  duplicate: (id: string) => void;
+  /** Returns the copy so the caller can select it. */
+  duplicate: (id: string) => Environment | null;
   remove: (id: string) => void;
   setVariables: (updates: Record<string, string>) => void;
 }
@@ -87,7 +88,7 @@ export const useEnvironmentsStore = create<EnvironmentsStore>()((set, get) => {
     duplicate: (id) => {
       const list = get().environments;
       const source = list.find((env) => env.id === id);
-      if (!source) return;
+      if (!source) return null;
       const copy: Environment = {
         id: newId(),
         name: `${source.name} copy`,
@@ -96,6 +97,7 @@ export const useEnvironmentsStore = create<EnvironmentsStore>()((set, get) => {
       const next = [...list];
       next.splice(list.findIndex((env) => env.id === id) + 1, 0, copy);
       commit(next);
+      return copy;
     },
 
     remove: (id) => {

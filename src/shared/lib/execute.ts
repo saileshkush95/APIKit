@@ -4,7 +4,7 @@
 
 import { sendRequest } from "./api";
 import { runAssertions } from "./assertions";
-import { buildWireRequest, enforceSecureUrl } from "./request";
+import { buildWireRequest, enforceSecureUrl, resolveAuth } from "./request";
 import { runPostScript, runPreScript } from "./scripts";
 import type { VarMap } from "./vars";
 import {
@@ -12,6 +12,7 @@ import {
   type AppSettings,
   type AssertionResult,
   type SavedRequest,
+  type TreeNode,
 } from "../types";
 
 export interface ExecuteContext {
@@ -19,6 +20,8 @@ export interface ExecuteContext {
   settings: AppSettings;
   /** Receives variables written by scripts (`wrk.env.set`). */
   onVariables?: (updates: Record<string, string>) => void;
+  /** Lets "inherit from parent" auth resolve; omitted, it becomes "none". */
+  tree?: TreeNode[];
 }
 
 export interface ExecuteResult {
@@ -31,9 +34,10 @@ export interface ExecuteResult {
 
 export async function executeRequest(
   request: SavedRequest,
-  { vars, settings, onVariables }: ExecuteContext,
+  { vars, settings, onVariables, tree }: ExecuteContext,
 ): Promise<ExecuteResult> {
   const config = normalizeConfig(request.config);
+  config.auth = resolveAuth(tree ?? [], request.id, config.auth);
   const built = buildWireRequest({ ...request, config }, vars);
 
   const pre = runPreScript(config.preScript, built, vars);
@@ -48,10 +52,13 @@ export async function executeRequest(
       url: enforceSecureUrl(wire.url, settings.enforceSecure),
       headers: wire.headers.filter((h) => h.name.trim() !== ""),
       body: wire.body || null,
-      timeoutMs: settings.defaultTimeoutMs,
+      timeoutMs: config.timeoutMs ?? settings.defaultTimeoutMs,
       httpVersion: config.httpVersion,
-      verifyTls: settings.verifyTls,
-      followRedirects: settings.followRedirects,
+      verifyTls: config.verifyTls ?? settings.verifyTls,
+      followRedirects: config.followRedirects ?? settings.followRedirects,
+      maxRedirects: config.maxRedirects,
+      noReferer: config.noReferer,
+      noCookieJar: config.noCookieJar,
       multipart: built.multipart ?? null,
     });
 

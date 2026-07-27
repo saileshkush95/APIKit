@@ -16,6 +16,14 @@ function ago(ms: number | null): string {
   return `${Math.round(seconds / 3600)}h ago`;
 }
 
+type SyncSection = "lan" | "github" | "about";
+
+const SECTIONS: { key: SyncSection; label: string; icon: string }[] = [
+  { key: "lan", label: "Local network", icon: "⇄" },
+  { key: "github", label: "GitHub", icon: "⎇" },
+  { key: "about", label: "How it works", icon: "ⓘ" },
+];
+
 export function SyncPanel() {
   const {
     peers,
@@ -41,6 +49,7 @@ export function SyncPanel() {
   } = useSync();
   const { active } = useWorkspaces();
 
+  const [section, setSection] = useState<SyncSection>("lan");
   const [error, setError] = useState<string | null>(null);
   const [probing, setProbing] = useState<string | null>(null);
   const [probeResult, setProbeResult] = useState<Record<string, string>>({});
@@ -88,14 +97,41 @@ export function SyncPanel() {
   }
 
   return (
-    <div className="min-h-0 w-full overflow-auto">
+    <div className="flex min-h-0 w-full">
+      {/* Section list */}
+      <nav className="flex w-52 flex-none flex-col border-r border-edge p-3">
+        <h1 className="px-2 pb-3 text-base font-semibold">Sync</h1>
+        {SECTIONS.map((entry) => (
+          <button
+            key={entry.key}
+            onClick={() => setSection(entry.key)}
+            className={`flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-xs ${
+              section === entry.key
+                ? "bg-elevated font-medium text-ink"
+                : "text-muted hover:bg-elevated/60 hover:text-ink"
+            }`}
+          >
+            <span className="w-4 flex-none text-center text-[13px]">
+              {entry.icon}
+            </span>
+            {entry.label}
+          </button>
+        ))}
+        <p className="mt-auto px-2 text-[11px] leading-relaxed text-muted">
+          Syncing “{active?.name ?? "this workspace"}”.
+        </p>
+      </nav>
+
+      <div className="min-h-0 min-w-0 flex-1 overflow-auto">
       <div className="mx-auto flex max-w-3xl flex-col gap-4 p-5">
+        {section === "lan" && (
+        <>
         <div>
           <h1 className="text-base font-semibold">Local network sync</h1>
           <p className="text-xs text-muted">
             Each machine keeps its own database and works offline. Syncing
             exchanges only what changed, and the newer edit of a given request
-            wins. Syncing “{active?.name ?? "this workspace"}”.
+            wins.
           </p>
         </div>
 
@@ -388,9 +424,23 @@ export function SyncPanel() {
             })
           )}
         </section>
+        </>
+        )}
 
-        <GithubPanel />
+        {section === "github" && (
+          <>
+            <div>
+              <h1 className="text-base font-semibold">GitHub sync</h1>
+              <p className="text-xs text-muted">
+                Back the workspace with a repository, for teams that already
+                live in pull requests.
+              </p>
+            </div>
+            <GithubPanel />
+          </>
+        )}
 
+        {section === "about" && (
         <div className="rounded-lg border border-edge bg-panel p-4">
           <h3 className="text-xs font-semibold text-ink">How it works</h3>
           <ul className="mt-2 flex list-disc flex-col gap-1 pl-4 text-[11px] leading-relaxed text-muted">
@@ -427,6 +477,8 @@ export function SyncPanel() {
             </li>
           </ul>
         </div>
+        )}
+      </div>
       </div>
     </div>
   );

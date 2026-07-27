@@ -8,6 +8,7 @@ interface Props {
 }
 
 const TYPES: { value: AuthType; label: string }[] = [
+  { value: "inherit", label: "Inherit from parent" },
   { value: "none", label: "No Auth" },
   { value: "bearer", label: "Bearer Token" },
   { value: "basic", label: "Basic Auth" },
@@ -51,6 +52,14 @@ export function AuthEditor({ auth, onChange }: Props) {
       {auth.type === "none" && (
         <p className="text-xs text-muted">
           This request does not use any authorization.
+        </p>
+      )}
+
+      {auth.type === "inherit" && (
+        <p className="text-xs leading-relaxed text-muted">
+          Uses the authorization of the nearest parent folder that defines one
+          (right-click a folder → Edit Authorization). Without one, no auth is
+          applied.
         </p>
       )}
 

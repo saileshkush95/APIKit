@@ -102,6 +102,7 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
         vars,
         settings,
         onVariables: setVariables,
+        tree,
       });
       setResults((prev) => [
         ...prev,

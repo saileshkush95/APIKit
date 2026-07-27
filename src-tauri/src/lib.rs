@@ -34,6 +34,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .manage(http_client::CancelState::default())
         .manage(ProxyState::default())
         .manage(MockState::default())
         .manage(StreamState::default())
@@ -98,6 +99,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             http_client::send_request,
+            http_client::cancel_request,
             cookies::list_cookies,
             cookies::cookies_enabled,
             cookies::set_cookies_enabled,
@@ -139,6 +141,7 @@ pub fn run() {
             github::github_push,
             github::github_check,
             github::write_text_file,
+            github::save_binary_file,
             secrets::secret_set,
             secrets::secret_get,
             secrets::secret_delete,

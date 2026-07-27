@@ -8,6 +8,7 @@ import { RequestPane } from "./RequestPane";
 import { SIDEBAR_DEFAULT, SidebarShell } from "./SidebarShell";
 import { TabStrip } from "./TabStrip";
 import {
+  cancelRequest,
   onStreamEvent,
   onStreamStatus,
   saveTabs,
@@ -20,7 +21,11 @@ import {
 } from "../../shared/lib/api";
 import { runAssertions } from "../../shared/lib/assertions";
 import { usePersist } from "../../shared/lib/persist";
-import { buildWireRequest, enforceSecureUrl } from "../../shared/lib/request";
+import {
+  buildWireRequest,
+  enforceSecureUrl,
+  resolveAuth,
+} from "../../shared/lib/request";
 import { runPostScript, runPreScript } from "../../shared/lib/scripts";
 import {
   buildExport,
@@ -412,7 +417,13 @@ export function ApiClient({ intent }: ApiClientProps) {
     updateTab(tab.id, { loading: true, error: null, scriptLogs: [] });
 
     const logs: ScriptLogEntry[] = [];
-    const built = buildWireRequest(tab, vars);
+    // "Inherit from parent" resolves against the folder tree at send time,
+    // so moving a request re-resolves without touching the request itself.
+    const config = {
+      ...tab.config,
+      auth: resolveAuth(tree, tab.sourceId, tab.config.auth),
+    };
+    const built = buildWireRequest({ ...tab, config }, vars);
 
     // Pre-request script may rewrite anything about the request.
     const pre = runPreScript(tab.config.preScript, built, vars);
@@ -447,12 +458,19 @@ export function ApiClient({ intent }: ApiClientProps) {
         url: sentUrl,
         headers: sentHeaders,
         body: wire.body || null,
-        timeoutMs: settings.defaultTimeoutMs,
-        httpVersion: tab.config.httpVersion,
-        verifyTls: settings.verifyTls,
-        followRedirects: settings.followRedirects,
+        // Per-request settings win over the global defaults.
+        timeoutMs: config.timeoutMs ?? settings.defaultTimeoutMs,
+        httpVersion: config.httpVersion,
+        verifyTls: config.verifyTls ?? settings.verifyTls,
+        followRedirects: config.followRedirects ?? settings.followRedirects,
+        maxRedirects: config.maxRedirects,
+        noReferer: config.noReferer,
+        noCookieJar: config.noCookieJar,
         multipart: built.multipart ?? null,
         bodyFilePath: built.bodyFilePath ?? null,
+        // The tab id doubles as the cancel handle: one in-flight request per
+        // tab is all the UI allows.
+        cancelId: tab.id,
       });
 
       // Post-response script runs alongside the declarative assertions.
@@ -481,11 +499,15 @@ export function ApiClient({ intent }: ApiClientProps) {
         respTab: results.some((r) => !r.passed) ? "tests" : "body",
       });
     } catch (e) {
-      record(tab.name ?? requestLabel(tab.url), draftOf(tab), {
-        error: String(e),
-      });
+      const message = String(e);
+      // A cancel is the user's own doing, not something to keep in history.
+      if (message !== "Request canceled") {
+        record(tab.name ?? requestLabel(tab.url), draftOf(tab), {
+          error: message,
+        });
+      }
       updateTab(tab.id, {
-        error: String(e),
+        error: message,
         response: null,
         results: [],
         // Kept on failure too: seeing what was sent is how you find out why.
@@ -494,6 +516,12 @@ export function ApiClient({ intent }: ApiClientProps) {
         loading: false,
       });
     }
+  }
+
+  function cancelSend(tab: RequestTab) {
+    // The backend resolves the pending send with "Request canceled";
+    // the normal error path then clears the loading state.
+    cancelRequest(tab.id).catch(() => {});
   }
 
   // --- Streaming protocols ---------------------------------------------------
@@ -808,6 +836,7 @@ export function ApiClient({ intent }: ApiClientProps) {
         />
         {activeTab && (
           <RequestPane
+            onCancel={() => activeTab && cancelSend(activeTab)}
             tab={activeTab}
             onChange={(patch) => updateTab(activeTab.id, patch)}
             onSend={() => send(activeTab)}

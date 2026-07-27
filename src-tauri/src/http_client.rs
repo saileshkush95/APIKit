@@ -4,13 +4,29 @@
 //! HTTP request and returns a structured response (status, headers, body,
 //! timing and size) back to the frontend.
 
+use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::Instant;
 
+use futures::future::{AbortHandle, Abortable};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::cookies::CookieState;
 use crate::store::Db;
+
+/// Abort handles for in-flight requests, keyed by the caller's cancel id.
+#[derive(Default)]
+pub struct CancelState(pub Mutex<HashMap<String, AbortHandle>>);
+
+/// Aborts an in-flight `send_request` carrying this cancel id. A miss is fine:
+/// the request may have just finished.
+#[tauri::command]
+pub fn cancel_request(id: String, cancels: State<'_, CancelState>) {
+    if let Some(handle) = cancels.0.lock().unwrap().remove(&id) {
+        handle.abort();
+    }
+}
 
 /// A single header entry. Kept as a list (rather than a map) so the UI can
 /// preserve ordering and allow duplicate header names.
@@ -67,6 +83,18 @@ pub struct HttpRequestSpec {
     /// same reason as multipart parts: the webview would have to base64 it.
     #[serde(default)]
     pub body_file_path: Option<String>,
+    /// When set, `cancel_request` with the same id aborts this request.
+    #[serde(default)]
+    pub cancel_id: Option<String>,
+    /// Cap on redirects to follow; only used when redirects are followed.
+    #[serde(default)]
+    pub max_redirects: Option<u32>,
+    /// Do not send a Referer header when following redirects.
+    #[serde(default)]
+    pub no_referer: Option<bool>,
+    /// Skip the shared cookie jar for this request, both directions.
+    #[serde(default)]
+    pub no_cookie_jar: Option<bool>,
 }
 
 /// Response returned to the frontend.
@@ -77,6 +105,10 @@ pub struct HttpResponseData {
     pub status_text: String,
     pub headers: Vec<Header>,
     pub body: String,
+    /// The original bytes when they are not valid UTF-8 (a PDF, an image…):
+    /// `body` is then a lossy rendering for display and this is what "Save
+    /// response" writes to disk.
+    pub body_base64: Option<String>,
     /// Total round-trip time in milliseconds.
     pub time_ms: u128,
     /// Size of the response body in bytes.
@@ -93,15 +125,26 @@ pub async fn send_request(
     spec: HttpRequestSpec,
     cookies: State<'_, CookieState>,
     db: State<'_, Db>,
+    cancels: State<'_, CancelState>,
 ) -> Result<HttpResponseData, String> {
     let method = reqwest::Method::from_bytes(spec.method.to_uppercase().as_bytes())
         .map_err(|e| format!("invalid HTTP method: {e}"))?;
 
+    let skip_cookie_jar = spec.no_cookie_jar == Some(true);
+
     let mut builder = reqwest::Client::builder()
-        .user_agent(concat!("APIKit/", env!("CARGO_PKG_VERSION")))
-        // The jar is shared, so a login in one tab authenticates the next
-        // request — and reqwest applies it across redirects for us.
-        .cookie_provider(cookies.0.clone());
+        .user_agent(concat!("APIKit/", env!("CARGO_PKG_VERSION")));
+
+    // The jar is shared, so a login in one tab authenticates the next
+    // request — and reqwest applies it across redirects for us. Left out
+    // entirely when this request opts out of the jar.
+    if !skip_cookie_jar {
+        builder = builder.cookie_provider(cookies.0.clone());
+    }
+
+    if spec.no_referer == Some(true) {
+        builder = builder.referer(false);
+    }
 
     if let Some(ms) = spec.timeout_ms {
         builder = builder.timeout(std::time::Duration::from_millis(ms));
@@ -120,6 +163,8 @@ pub async fn send_request(
     }
     if spec.follow_redirects == Some(false) {
         builder = builder.redirect(reqwest::redirect::Policy::none());
+    } else if let Some(max) = spec.max_redirects {
+        builder = builder.redirect(reqwest::redirect::Policy::limited(max as usize));
     }
 
     let client = builder
@@ -159,49 +204,86 @@ pub async fn send_request(
     }
 
     let started = Instant::now();
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("request failed: {e}"))?;
+    let work = async move {
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("request failed: {e}"))?;
 
-    let status = resp.status();
-    let final_url = resp.url().to_string();
-    let http_version = format!("{:?}", resp.version());
+        let status = resp.status();
+        let final_url = resp.url().to_string();
+        let http_version = format!("{:?}", resp.version());
 
-    let headers: Vec<Header> = resp
-        .headers()
-        .iter()
-        .map(|(k, v)| Header {
-            name: k.to_string(),
-            value: v.to_str().unwrap_or("<binary>").to_string(),
+        let headers: Vec<Header> = resp
+            .headers()
+            .iter()
+            .map(|(k, v)| Header {
+                name: k.to_string(),
+                value: v.to_str().unwrap_or("<binary>").to_string(),
+            })
+            .collect();
+
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("failed to read response body: {e}"))?;
+        let time_ms = started.elapsed().as_millis();
+        let size_bytes = bytes.len() as u64;
+
+        // Text stays a plain string; binary keeps its exact bytes as base64
+        // alongside a lossy rendering for display.
+        let (body, body_base64) = match std::str::from_utf8(&bytes) {
+            Ok(text) => (text.to_owned(), None),
+            Err(_) => (
+                String::from_utf8_lossy(&bytes).into_owned(),
+                Some(crate::github::base64_encode(&bytes)),
+            ),
+        };
+
+        Ok(HttpResponseData {
+            status: status.as_u16(),
+            status_text: status
+                .canonical_reason()
+                .unwrap_or("")
+                .to_string(),
+            headers,
+            body,
+            body_base64,
+            time_ms,
+            size_bytes,
+            final_url,
+            http_version,
         })
-        .collect();
+    };
 
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("failed to read response body: {e}"))?;
-    let time_ms = started.elapsed().as_millis();
-    let size_bytes = bytes.len() as u64;
+    // Dropping the future is what cancels it: reqwest tears the connection
+    // down when the in-flight send/read is dropped mid-way.
+    let result = match spec.cancel_id.as_deref().filter(|id| !id.is_empty()) {
+        Some(id) => {
+            let (handle, registration) = AbortHandle::new_pair();
+            cancels
+                .0
+                .lock()
+                .map_err(|e| e.to_string())?
+                .insert(id.to_string(), handle);
+            let outcome = Abortable::new(work, registration).await;
+            cancels
+                .0
+                .lock()
+                .map_err(|e| e.to_string())?
+                .remove(id);
+            match outcome {
+                Ok(result) => result,
+                Err(_) => Err("Request canceled".to_string()),
+            }
+        }
+        None => work.await,
+    };
 
-    crate::cookies::persist_after_request(&cookies, &db);
-
-    // Best-effort UTF-8 decode; binary responses are shown lossily.
-    let body = String::from_utf8_lossy(&bytes).into_owned();
-
-    Ok(HttpResponseData {
-        status: status.as_u16(),
-        status_text: status
-            .canonical_reason()
-            .unwrap_or("")
-            .to_string(),
-        headers,
-        body,
-        time_ms,
-        size_bytes,
-        final_url,
-        http_version,
-    })
+    if result.is_ok() && !skip_cookie_jar {
+        crate::cookies::persist_after_request(&cookies, &db);
+    }
+    result
 }
 
 /// A content type for a file body, from its extension.

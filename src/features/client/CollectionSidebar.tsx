@@ -29,11 +29,18 @@ import {
   updateNode,
   type DropPosition,
 } from "../../shared/lib/tree";
+import { AuthEditor } from "./AuthEditor";
 import { notify } from "../../shared/lib/notify";
 import { newId } from "../../shared/lib/storage";
 import { methodColor } from "../../shared/lib/ui";
 import { useConfirm } from "../../shared/state/confirm";
-import type { Folder, SavedRequest, TreeNode } from "../../shared/types";
+import {
+  defaultAuth,
+  type Auth,
+  type Folder,
+  type SavedRequest,
+  type TreeNode,
+} from "../../shared/types";
 
 interface Props {
   nodes: TreeNode[];
@@ -89,6 +96,11 @@ export function CollectionSidebar({
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [authFolderId, setAuthFolderId] = useState<string | null>(null);
+  // Resolved from the id each render, so the dialog always edits fresh state.
+  const authFolderNode = authFolderId ? findNode(nodes, authFolderId) : null;
+  const authFolder =
+    authFolderNode && isFolder(authFolderNode) ? authFolderNode : null;
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   /** Where a shift-click measures its range from. */
   const [anchorId, setAnchorId] = useState<string | null>(null);
@@ -595,13 +607,84 @@ export function CollectionSidebar({
           onDuplicate={duplicate}
           onDelete={remove}
           onRun={onRun}
+          onEditAuth={setAuthFolderId}
           selectedCount={selectedIds.size}
           onMoveSelected={moveSelected}
           onDuplicateSelected={duplicateSelected}
           onDeleteSelected={removeSelected}
         />
       )}
+      {authFolder && (
+        <FolderAuthDialog
+          folder={authFolder}
+          onClose={() => setAuthFolderId(null)}
+          onChange={(patch) =>
+            onChange(
+              updateNode(nodes, authFolder.id, (node) =>
+                isFolder(node)
+                  ? {
+                      ...node,
+                      auth: { ...defaultAuth(), ...(node.auth ?? {}), ...patch },
+                    }
+                  : node,
+              ),
+            )
+          }
+        />
+      )}
     </aside>
+  );
+}
+
+/** Folder-level authorization, inherited by requests set to "inherit". */
+function FolderAuthDialog({
+  folder,
+  onChange,
+  onClose,
+}: {
+  folder: Folder;
+  onChange: (patch: Partial<Auth>) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-8"
+      onClick={onClose}
+    >
+      <div
+        className="w-[30rem] rounded-lg border border-edge bg-panel p-4 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-2 flex items-center">
+          <span className="min-w-0 truncate text-sm font-semibold text-ink">
+            Authorization — {folder.name}
+          </span>
+          <button
+            onClick={onClose}
+            className="ml-auto rounded px-2 py-1 text-lg leading-none text-muted hover:bg-elevated hover:text-ink"
+            title="Close"
+          >
+            ×
+          </button>
+        </div>
+        <p className="mb-3 text-[11px] leading-relaxed text-muted">
+          Requests in this folder whose authorization is set to “Inherit from
+          parent” use this. Nested folders can inherit it too.
+        </p>
+        <AuthEditor
+          auth={{ ...defaultAuth(), ...(folder.auth ?? {}) }}
+          onChange={onChange}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -780,6 +863,7 @@ interface ContextMenuProps {
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
   onRun: (folderId: string | null) => void;
+  onEditAuth: (folderId: string) => void;
   /** How many rows are highlighted; >1 turns the menu into a bulk menu. */
   selectedCount: number;
   onMoveSelected: (targetId: string | null) => void;
@@ -798,6 +882,7 @@ function ContextMenu({
   onDuplicate,
   onDelete,
   onRun,
+  onEditAuth,
   selectedCount,
   onMoveSelected,
   onDuplicateSelected,
@@ -892,6 +977,7 @@ function ContextMenu({
   items.push({ label: "New Folder", run: () => onNewFolder(parentId) });
   if (node && isFolder(node)) {
     items.push({ label: "Run folder", run: () => onRun(node.id) });
+    items.push({ label: "Edit Authorization", run: () => onEditAuth(node.id) });
   } else if (!node) {
     items.push({ label: "Run collection", run: () => onRun(null) });
   }

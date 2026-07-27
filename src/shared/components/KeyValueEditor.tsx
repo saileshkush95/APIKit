@@ -62,18 +62,20 @@ export function KeyValueEditor({
   }
 
   return (
-    <table className="w-full border-collapse">
+    // Fixed layout: column widths must not be recomputed from cell content,
+    // or switching a row between text and file would shift the whole grid.
+    <table className="w-full table-fixed border-collapse">
       <thead>
         <tr className="text-left text-[11px] font-medium text-muted">
-          <th className="p-1">{keyPlaceholder}</th>
-          {allowFiles && <th className="p-1">Type</th>}
+          <th className="w-1/3 p-1">{keyPlaceholder}</th>
+          {allowFiles && <th className="w-24 p-1">Type</th>}
           <th className="p-1">{valuePlaceholder}</th>
           {allowSecrets && (
-            <th className="p-1" title="Secret values stay on this machine">
+            <th className="w-14 p-1" title="Secret values stay on this machine">
               Secret
             </th>
           )}
-          <th></th>
+          <th className="w-9"></th>
         </tr>
       </thead>
       <tbody>
@@ -124,10 +126,12 @@ export function KeyValueEditor({
             )}
             <td className="p-0.5">
               {allowFiles && row.kind === "file" ? (
-                <div className="flex items-center gap-1.5">
+                // h-8 matches .wrk-field, so the row keeps its height when a
+                // text input becomes a file picker.
+                <div className="flex h-8 items-center gap-1.5">
                   <button
                     onClick={() => pickFile(i)}
-                    className="flex-none rounded border border-edge px-2 py-1 text-xs text-muted hover:border-brand hover:text-ink"
+                    className="h-8 flex-none rounded border border-edge px-2 text-xs text-muted hover:border-brand hover:text-ink"
                   >
                     Choose file…
                   </button>

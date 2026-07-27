@@ -38,6 +38,19 @@ export function sendRequest(spec: HttpRequestSpec): Promise<HttpResponseData> {
   return invoke<HttpResponseData>("send_request", { spec });
 }
 
+/** Aborts the in-flight request that was sent with this `cancelId`. */
+export function cancelRequest(id: string): Promise<void> {
+  return invoke<void>("cancel_request", { id });
+}
+
+/** Writes base64-encoded bytes to disk — saving binary response bodies. */
+export function saveBinaryFile(
+  path: string,
+  contentsBase64: string,
+): Promise<void> {
+  return invoke<void>("save_binary_file", { path, contentsBase64 });
+}
+
 // --- Workspaces --------------------------------------------------------------
 
 export function listWorkspaces(): Promise<WorkspaceMeta[]> {

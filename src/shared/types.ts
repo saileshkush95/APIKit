@@ -49,6 +49,14 @@ export interface HttpRequestSpec {
   multipart?: MultipartPart[] | null;
   /** A file sent as the entire body; the backend reads it from disk. */
   bodyFilePath?: string | null;
+  /** When set, `cancelRequest` with the same id aborts this request. */
+  cancelId?: string | null;
+  /** Cap on redirects to follow; only used when redirects are followed. */
+  maxRedirects?: number | null;
+  /** Do not send a Referer header when following redirects. */
+  noReferer?: boolean | null;
+  /** Skip the shared cookie jar for this request, both directions. */
+  noCookieJar?: boolean | null;
 }
 
 export interface HttpResponseData {
@@ -56,6 +64,8 @@ export interface HttpResponseData {
   statusText: string;
   headers: Header[];
   body: string;
+  /** Original bytes when not valid UTF-8; what "Save response" writes. */
+  bodyBase64?: string | null;
   timeMs: number;
   sizeBytes: number;
   finalUrl: string;
@@ -108,7 +118,7 @@ export type BodyMode =
 
 export type RawLanguage = "json" | "text" | "xml" | "html" | "javascript";
 
-export type AuthType = "none" | "bearer" | "basic" | "apiKey";
+export type AuthType = "none" | "bearer" | "basic" | "apiKey" | "inherit";
 
 export interface Auth {
   type: AuthType;
@@ -189,6 +199,17 @@ export interface RequestConfig {
   preScript: string;
   /** JavaScript run once the response arrives. */
   postScript: string;
+
+  // Per-request overrides of the global settings; null means "use global".
+  verifyTls: boolean | null;
+  followRedirects: boolean | null;
+  timeoutMs: number | null;
+  /** Cap on redirects to follow; null uses the client default (10). */
+  maxRedirects: number | null;
+  /** Do not send a Referer header when following redirects. */
+  noReferer: boolean;
+  /** Skip the shared cookie jar entirely for this request. */
+  noCookieJar: boolean;
 }
 
 // --- Application settings ----------------------------------------------------
@@ -341,6 +362,12 @@ export function defaultConfig(): RequestConfig {
     docs: "",
     preScript: "",
     postScript: "",
+    verifyTls: null,
+    followRedirects: null,
+    timeoutMs: null,
+    maxRedirects: null,
+    noReferer: false,
+    noCookieJar: false,
   };
 }
 
@@ -402,6 +429,8 @@ export interface Folder {
   id: string;
   name: string;
   children: TreeNode[];
+  /** Requests inside whose auth is "inherit" resolve to this. */
+  auth?: Auth;
 }
 
 /** A collection is a list of these; folders nest arbitrarily deep. */
@@ -628,7 +657,8 @@ export type RequestTabKey =
   | "scripts"
   | "docs"
   | "comments"
-  | "connection";
+  | "connection"
+  | "settings";
 export type ResponseTabKey =
   | "body"
   | "cookies"

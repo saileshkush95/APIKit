@@ -34,6 +34,9 @@ export function GraphqlSchemaPanel({
 }: Props) {
   const [query, setQuery] = useState("");
   const [openType, setOpenType] = useState<string | null>(null);
+  // The whole panel folds to a slim rail; sections fold individually.
+  const [collapsed, setCollapsed] = useState(false);
+  const [closedSections, setClosedSections] = useState<Set<string>>(new Set());
 
   const roots = useMemo(() => (schema ? rootTypes(schema) : []), [schema]);
   const needle = query.trim().toLowerCase();
@@ -42,6 +45,35 @@ export function GraphqlSchemaPanel({
     () => (schema && openType ? typeByName(schema, openType) : null),
     [schema, openType],
   );
+
+  function toggleSection(label: string) {
+    setClosedSections((previous) => {
+      const next = new Set(previous);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+  }
+
+  if (collapsed) {
+    return (
+      <div className="flex w-7 flex-none flex-col items-center gap-2 border-l border-edge py-2">
+        <button
+          onClick={() => setCollapsed(false)}
+          className="rounded px-1 text-[11px] text-muted hover:bg-elevated hover:text-ink"
+          title="Show the schema panel"
+        >
+          ⟨
+        </button>
+        <span
+          className="text-[10px] font-semibold tracking-wide text-muted select-none"
+          style={{ writingMode: "vertical-rl" }}
+        >
+          Schema
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className="flex w-72 flex-none flex-col border-l border-edge">
@@ -54,6 +86,13 @@ export function GraphqlSchemaPanel({
           title="Re-run introspection"
         >
           {loading ? "…" : "↻"}
+        </button>
+        <button
+          onClick={() => setCollapsed(true)}
+          className="rounded px-1.5 py-0.5 text-[11px] text-muted hover:bg-elevated hover:text-ink"
+          title="Hide the schema panel"
+        >
+          ⟩
         </button>
       </div>
 
@@ -125,19 +164,31 @@ export function GraphqlSchemaPanel({
                     field.type.toLowerCase().includes(needle),
                 );
                 if (fields.length === 0) return null;
+                // A filter overrides folding — hiding matches would read
+                // as "no results".
+                const open = needle !== "" || !closedSections.has(label);
                 return (
                   <div key={label} className="px-2 pt-2">
-                    <div className="text-[10px] font-semibold tracking-wide text-muted uppercase">
+                    <button
+                      onClick={() => toggleSection(label)}
+                      className="flex w-full items-center gap-1 text-[10px] font-semibold tracking-wide text-muted uppercase hover:text-ink"
+                      title={open ? "Collapse" : "Expand"}
+                    >
+                      <span className="text-[9px]">{open ? "▾" : "▸"}</span>
                       {label}
-                    </div>
-                    {fields.map((field) => (
-                      <FieldRow
-                        key={field.name}
-                        field={field}
-                        onInsert={onInsert}
-                        onOpenType={setOpenType}
-                      />
-                    ))}
+                      <span className="ml-auto font-normal normal-case">
+                        {fields.length}
+                      </span>
+                    </button>
+                    {open &&
+                      fields.map((field) => (
+                        <FieldRow
+                          key={field.name}
+                          field={field}
+                          onInsert={onInsert}
+                          onOpenType={setOpenType}
+                        />
+                      ))}
                   </div>
                 );
               })
