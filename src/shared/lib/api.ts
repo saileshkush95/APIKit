@@ -388,8 +388,11 @@ export function onLoadProgress(
 
 // --- Proxy -------------------------------------------------------------------
 
-export function startProxy(port: number): Promise<number> {
-  return invoke<number>("start_proxy", { port });
+export function startProxy(
+  port: number,
+  allInterfaces: boolean,
+): Promise<number> {
+  return invoke<number>("start_proxy", { port, allInterfaces });
 }
 
 export function stopProxy(): Promise<void> {

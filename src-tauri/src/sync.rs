@@ -99,7 +99,7 @@ pub struct SyncOutcome {
 }
 
 /// This machine's LAN address, discovered without sending anything.
-fn local_addresses() -> Vec<String> {
+pub(crate) fn local_addresses() -> Vec<String> {
     let mut found = Vec::new();
     if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
         // Connecting a UDP socket only sets the default route; no packets go out.

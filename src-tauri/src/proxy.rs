@@ -70,6 +70,8 @@ impl ProxyShared {
 struct RunningProxy {
     shutdown: oneshot::Sender<()>,
     port: u16,
+    /// Bound to every interface rather than loopback only.
+    lan: bool,
 }
 
 /// Top-level proxy state managed by Tauri.
@@ -99,6 +101,8 @@ pub struct ProxyStatus {
     pub running: bool,
     pub port: Option<u16>,
     pub flow_count: usize,
+    /// Addresses clients can point at; loopback only unless LAN mode is on.
+    pub addresses: Vec<String>,
 }
 
 fn epoch_ms() -> u64 {
@@ -302,6 +306,7 @@ pub async fn start_proxy(
     app: AppHandle,
     state: State<'_, ProxyState>,
     port: u16,
+    all_interfaces: bool,
 ) -> Result<u16, String> {
     if state.running.lock().unwrap().is_some() {
         return Err("proxy is already running".into());
@@ -319,7 +324,14 @@ pub async fn start_proxy(
         started_at: None,
     };
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    // LAN mode lets phones and other machines on the network use the proxy;
+    // anyone on the network can then send traffic through this machine, so
+    // it is opt-in per start.
+    let addr = if all_interfaces {
+        SocketAddr::from(([0, 0, 0, 0], port))
+    } else {
+        SocketAddr::from(([127, 0, 0, 1], port))
+    };
     let proxy = Proxy::builder()
         .with_addr(addr)
         .with_ca(ca)
@@ -337,7 +349,11 @@ pub async fn start_proxy(
         }
     });
 
-    *state.running.lock().unwrap() = Some(RunningProxy { shutdown: tx, port });
+    *state.running.lock().unwrap() = Some(RunningProxy {
+        shutdown: tx,
+        port,
+        lan: all_interfaces,
+    });
     Ok(port)
 }
 
@@ -362,11 +378,17 @@ pub fn proxy_status(state: State<'_, ProxyState>) -> ProxyStatus {
             running: true,
             port: Some(r.port),
             flow_count,
+            addresses: if r.lan {
+                crate::sync::local_addresses()
+            } else {
+                vec!["127.0.0.1".to_string()]
+            },
         },
         None => ProxyStatus {
             running: false,
             port: None,
             flow_count,
+            addresses: Vec::new(),
         },
     }
 }

@@ -51,8 +51,13 @@ export function ProxyPanel() {
     running: false,
     port: null,
     flowCount: 0,
+    addresses: [],
   });
   const [port, setPort] = useState(8080);
+  // Off by default: on the LAN, anyone on the network can route through us.
+  const [lan, setLan] = useState(
+    () => localStorage.getItem("proxyLan") === "1",
+  );
   const [flows, setFlows] = useState<Flow[]>([]);
   const [selected, setSelected] = useState<Flow | null>(null);
   const [busy, setBusy] = useState(false);
@@ -116,7 +121,7 @@ export function ProxyPanel() {
     setError(null);
     try {
       if (status.running) await stopProxy();
-      else await startProxy(port);
+      else await startProxy(port, lan);
       setStatus(await proxyStatus());
     } catch (e) {
       setError(String(e));
@@ -169,6 +174,24 @@ export function ProxyPanel() {
             className="w-[70px] rounded-md border border-edge bg-elevated px-2 py-1.5 font-mono text-ink outline-none focus:border-brand disabled:opacity-60"
           />
         </label>
+        <label
+          className={`flex items-center gap-1.5 text-xs text-muted ${
+            status.running ? "opacity-60" : "cursor-pointer"
+          }`}
+          title="Also listen on your LAN address, so phones and other devices on the network can use this proxy. Anyone on the network can then route traffic through this machine."
+        >
+          <input
+            type="checkbox"
+            checked={lan}
+            disabled={status.running}
+            onChange={(e) => {
+              setLan(e.target.checked);
+              localStorage.setItem("proxyLan", e.target.checked ? "1" : "0");
+            }}
+            className="accent-[var(--color-brand)]"
+          />
+          Local network
+        </label>
         <span
           className={`h-2.5 w-2.5 rounded-full ${
             status.running ? "bg-ok shadow-[0_0_8px_var(--color-ok)]" : "bg-muted"
@@ -176,7 +199,12 @@ export function ProxyPanel() {
         />
         <span className="font-mono text-xs text-muted">
           {status.running
-            ? `Listening on 127.0.0.1:${status.port}`
+            ? `Listening on ${(status.addresses.length > 0
+                ? status.addresses
+                : ["127.0.0.1"]
+              )
+                .map((address) => `${address}:${status.port}`)
+                .join("  ·  ")}`
             : "Stopped"}
         </span>
         <div className="flex-1" />
@@ -226,7 +254,12 @@ export function ProxyPanel() {
             <li>
               Point your browser/system HTTP proxy at{" "}
               <code className="rounded bg-elevated px-1.5 font-mono text-ink">
-                127.0.0.1:{port}
+                {(status.addresses.length > 0
+                  ? status.addresses
+                  : ["127.0.0.1"]
+                )
+                  .map((address) => `${address}:${port}`)
+                  .join(" or ")}
               </code>
               .
             </li>
@@ -253,7 +286,10 @@ export function ProxyPanel() {
 
       {showSetup ? (
         <ProxySetupGuide
-          host={"127.0.0.1"}
+          host={
+            status.addresses.find((address) => address !== "127.0.0.1") ??
+            "127.0.0.1"
+          }
           port={status.port ?? port}
         />
       ) : (

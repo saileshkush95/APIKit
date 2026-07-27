@@ -1,6 +1,59 @@
 import { useState } from "react";
-import { CodeEditor } from "../../shared/components/CodeEditor";
+import {
+  CodeEditor,
+  type Suggestion,
+} from "../../shared/components/CodeEditor";
 import type { RequestConfig, ScriptLogEntry } from "../../shared/types";
+
+// The `wrk` scripting API, offered as completions. Mirrors what
+// `runPreScript` / `runPostScript` actually expose — keep in step.
+const COMMON_API: Suggestion[] = [
+  { name: "wrk.env.get", detail: "(name) → value" },
+  { name: "wrk.env.set", detail: "(name, value)" },
+  { name: "wrk.env.has", detail: "(name) → boolean" },
+  { name: "wrk.env.all", detail: "() → all variables" },
+  { name: "console.log", detail: "(…) → script log" },
+  { name: "console.error", detail: "(…) → script log" },
+];
+
+const PRE_API: Suggestion[] = [
+  { name: "wrk.request.method", detail: "string" },
+  { name: "wrk.request.url", detail: "string" },
+  { name: "wrk.request.headers", detail: "name → value object" },
+  { name: "wrk.request.body", detail: "string" },
+  ...COMMON_API,
+];
+
+const POST_API: Suggestion[] = [
+  { name: "wrk.response.status", detail: "number" },
+  { name: "wrk.response.statusText", detail: "string" },
+  { name: "wrk.response.timeMs", detail: "number" },
+  { name: "wrk.response.sizeBytes", detail: "number" },
+  { name: "wrk.response.headers", detail: "name → value object" },
+  { name: "wrk.response.body", detail: "string" },
+  { name: "wrk.response.json", detail: "() → parsed body" },
+  { name: "wrk.test", detail: "(name, fn)" },
+  { name: "wrk.expect", detail: "(value).toBe / .toContain" },
+  ...COMMON_API,
+];
+
+function suggestApi(entries: Suggestion[]) {
+  return (value: string, caret: number) => {
+    // A dotted identifier being typed: `wrk.res`, `console.`, `wrk`.
+    const match = /[A-Za-z_$][\w$]*(?:\.[\w$]*)*$/.exec(value.slice(0, caret));
+    if (!match) return null;
+    const query = match[0].toLowerCase();
+    const items = entries.filter(
+      (entry) =>
+        entry.name.toLowerCase().startsWith(query) &&
+        entry.name.toLowerCase() !== query,
+    );
+    return items.length > 0 ? { items, start: caret - match[0].length } : null;
+  };
+}
+
+const suggestPre = suggestApi(PRE_API);
+const suggestPost = suggestApi(POST_API);
 
 interface Props {
   config: RequestConfig;
@@ -90,6 +143,8 @@ export function ScriptsEditor({ config, onChange, logs }: Props) {
             : "// Runs when the response arrives.\n// wrk.response.status / .headers / .body / .json()\n// wrk.test(name, fn), wrk.expect(value).toBe(other)\n// wrk.env.set(name, value)"
         }
         className="min-h-[8rem] flex-1"
+        language="javascript"
+        suggest={phase === "pre" ? suggestPre : suggestPost}
       />
 
       {logs.length > 0 && (

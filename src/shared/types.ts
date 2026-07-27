@@ -106,6 +106,8 @@ export interface ProxyStatus {
   running: boolean;
   port: number | null;
   flowCount: number;
+  /** Addresses clients can point at; loopback only unless LAN mode is on. */
+  addresses: string[];
 }
 
 export type BodyMode =
