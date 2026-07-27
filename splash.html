@@ -32,20 +32,20 @@
         user-select: none;
         font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
       }
-      .stack { display: flex; flex-direction: column; align-items: center; gap: 10px; }
-      .mark { position: relative; height: 40px; width: 40px; }
+      .stack { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+      .mark { position: relative; height: 76px; width: 76px; }
       .mark svg { position: absolute; inset: 0; }
       .mark .pulse { animation: ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite; }
       @keyframes ping {
         0% { transform: scale(1); opacity: 0.35; }
         75%, 100% { transform: scale(1.6); opacity: 0; }
       }
-      h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
-      .tagline { margin-top: 2px; font-size: 10px; color: var(--muted); }
+      h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+      .tagline { margin-top: 5px; font-size: 13px; color: var(--muted); }
       .bar {
-        margin-top: 4px;
-        height: 2px;
-        width: 110px;
+        margin-top: 6px;
+        height: 3px;
+        width: 200px;
         overflow: hidden;
         border-radius: 2px;
         background: var(--edge);
@@ -95,10 +95,10 @@
   <body data-tauri-drag-region>
     <div class="stack">
       <div class="mark">
-        <svg class="pulse" width="40" height="40" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <svg class="pulse" width="76" height="76" viewBox="0 0 32 32" fill="none" aria-hidden="true">
           <rect x="2" y="2" width="28" height="28" rx="8" fill="var(--brand)" />
         </svg>
-        <svg width="40" height="40" viewBox="0 0 32 32" fill="none" role="img" aria-label="APIKit">
+        <svg width="76" height="76" viewBox="0 0 32 32" fill="none" role="img" aria-label="APIKit">
           <rect x="2" y="2" width="28" height="28" rx="8" fill="var(--brand)" />
           <path
             d="M12 10.5 7.5 16l4.5 5.5M20 10.5 24.5 16 20 21.5M17.8 9l-3.6 14"
