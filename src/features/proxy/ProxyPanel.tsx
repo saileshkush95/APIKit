@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import {
   caCertificatePath,
   clearFlows,
@@ -11,7 +12,11 @@ import {
 } from "../../shared/lib/api";
 import { ProxySetupGuide } from "./ProxySetupGuide";
 import type { Flow, Header, ProxyStatus } from "../../shared/types";
+import { generateCode } from "../../shared/lib/codegen";
+import { flowLabel, flowToDraft } from "../../shared/lib/flow";
+import { notify, notifyError } from "../../shared/lib/notify";
 import { statusColor } from "../../shared/lib/ui";
+import { useHandoff } from "../../shared/state/handoff";
 
 function shortPath(url: string): string {
   try {
@@ -57,6 +62,40 @@ export function ProxyPanel() {
   const [certPem, setCertPem] = useState("");
   const [showCert, setShowCert] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
+
+  const navigate = useNavigate();
+  const hand = useHandoff((s) => s.hand);
+
+  /** Sends a captured flow to the client, either as a tab or as a saved request. */
+  function handOff(flow: Flow, save: boolean) {
+    hand({
+      kind: "draft",
+      name: flowLabel(flow),
+      draft: flowToDraft(flow),
+      save,
+    });
+    navigate({ to: "/client" });
+  }
+
+  async function copyAsCurl(flow: Flow) {
+    const draft = flowToDraft(flow);
+    try {
+      await navigator.clipboard.writeText(
+        generateCode(
+          {
+            method: draft.method,
+            url: draft.url,
+            headers: draft.headers,
+            body: draft.body,
+          },
+          "curl",
+        ),
+      );
+      notify("success", "Copied as cURL");
+    } catch (e) {
+      notifyError("Could not copy", e);
+    }
+  }
 
   useEffect(() => {
     proxyStatus().then(setStatus).catch(() => {});
@@ -281,6 +320,30 @@ export function ProxyPanel() {
                 <span className="font-mono">{selected.method}</span>{" "}
                 {selected.url}
               </h3>
+
+              <div className="mb-4 flex gap-2">
+                <button
+                  onClick={() => handOff(selected, false)}
+                  className="rounded border border-edge px-2 py-1 text-[11px] text-ink hover:bg-elevated"
+                  title="Open this request in the client, ready to edit and resend"
+                >
+                  Open in client
+                </button>
+                <button
+                  onClick={() => handOff(selected, true)}
+                  className="rounded border border-edge px-2 py-1 text-[11px] text-ink hover:bg-elevated"
+                  title="Add this request to the collection"
+                >
+                  Save to collection
+                </button>
+                <button
+                  onClick={() => copyAsCurl(selected)}
+                  className="rounded border border-edge px-2 py-1 text-[11px] text-ink hover:bg-elevated"
+                >
+                  Copy as cURL
+                </button>
+              </div>
+
               <Section title="Request headers">
                 <HeaderTable headers={selected.requestHeaders} />
               </Section>

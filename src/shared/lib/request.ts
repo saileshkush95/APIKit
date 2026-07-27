@@ -5,9 +5,11 @@ import { applyQuery, parseQuery } from "./query";
 import { interpolate, resolveDraft, type VarMap, type WireRequest } from "./vars";
 import type { KeyValue, MultipartPart, RequestDraft } from "../types";
 
-/** A wire request that may carry a multipart body instead of a text one. */
+/** A wire request that may carry a multipart or file body instead of text. */
 export interface BuiltRequest extends WireRequest {
   multipart?: MultipartPart[];
+  /** A file the backend streams as the whole body, in `binary` mode. */
+  bodyFilePath?: string;
 }
 
 function activeRows(rows: KeyValue[]): KeyValue[] {
@@ -52,6 +54,7 @@ export function buildWireRequest(
   let url = draft.url;
   let body = "";
   let multipart: MultipartPart[] | undefined;
+  let bodyFilePath: string | undefined;
 
   switch (config.bodyMode) {
     case "raw":
@@ -128,6 +131,13 @@ export function buildWireRequest(
       break;
     }
     case "binary":
+      body = "";
+      // The path is not interpolated: a file name is a local path, not a
+      // value the environment should be rewriting.
+      if (config.binaryFilePath.trim() !== "") {
+        bodyFilePath = config.binaryFilePath;
+      }
+      break;
     case "none":
       body = "";
       break;
@@ -154,7 +164,9 @@ export function buildWireRequest(
   }
 
   const resolved = resolveDraft({ method: draft.method, url, headers, body }, vars);
-  return multipart ? { ...resolved, multipart } : resolved;
+  if (multipart) return { ...resolved, multipart };
+  if (bodyFilePath) return { ...resolved, bodyFilePath };
+  return resolved;
 }
 
 /** Writes `value` at a dotted path inside a variables object. */

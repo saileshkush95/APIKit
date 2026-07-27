@@ -12,12 +12,26 @@
   "app": {
     "windows": [
       {
+        "label": "splash",
+        "title": "APIKit",
+        "url": "splash.html",
+        "width": 300,
+        "height": 180,
+        "resizable": false,
+        "center": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
+      },
+      {
+        "label": "main",
         "title": "APIKit",
         "width": 1200,
         "height": 780,
         "minWidth": 720,
         "minHeight": 500,
-        "decorations": false
+        "decorations": false,
+        "visible": false
       }
     ],
     "security": {

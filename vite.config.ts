@@ -16,6 +16,17 @@ export default defineConfig(async () => ({
     tailwindcss(),
   ],
 
+  build: {
+    rollupOptions: {
+      // The splash window is a second page, loaded by Tauri before the app
+      // bundle exists — it must be emitted as its own entry.
+      input: {
+        main: "index.html",
+        splash: "splash.html",
+      },
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

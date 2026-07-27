@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  Cookie,
   Environment,
   Flow,
   HttpRequestSpec,
@@ -18,6 +19,7 @@ import type {
   GithubConfig,
   GithubFile,
   GithubPushResult,
+  HistoryEntry,
   Monitor,
   MonitorRun,
   SyncOutcome,
@@ -100,6 +102,30 @@ export function setSetting(
 /** Tells the backend whether closing the window should quit the app. */
 export function setBackgroundMode(enabled: boolean): Promise<void> {
   return invoke<void>("set_background_mode", { enabled });
+}
+
+// --- History -----------------------------------------------------------------
+
+export function loadHistory(
+  workspaceId: string,
+  limit?: number,
+): Promise<HistoryEntry[]> {
+  return invoke<HistoryEntry[]>("load_history", { workspaceId, limit });
+}
+
+export function recordHistory(
+  workspaceId: string,
+  entry: HistoryEntry,
+): Promise<void> {
+  return invoke<void>("record_history", { workspaceId, entry });
+}
+
+export function deleteHistoryEntry(id: string): Promise<void> {
+  return invoke<void>("delete_history_entry", { id });
+}
+
+export function clearHistory(workspaceId: string): Promise<void> {
+  return invoke<void>("clear_history", { workspaceId });
 }
 
 // --- Comments ----------------------------------------------------------------
@@ -380,4 +406,35 @@ export function caCertificatePath(): Promise<string> {
 /** Subscribe to live proxy flows. Returns an unlisten function. */
 export function onProxyFlow(cb: (flow: Flow) => void): Promise<UnlistenFn> {
   return listen<Flow>("proxy://flow", (event) => cb(event.payload));
+}
+
+// --- Cookies ------------------------------------------------------------------
+
+export function listCookies(): Promise<Cookie[]> {
+  return invoke<Cookie[]>("list_cookies");
+}
+
+export function cookiesEnabled(): Promise<boolean> {
+  return invoke<boolean>("cookies_enabled");
+}
+
+export function setCookiesEnabled(enabled: boolean): Promise<void> {
+  return invoke<void>("set_cookies_enabled", { enabled });
+}
+
+export function putCookie(cookie: Cookie): Promise<void> {
+  return invoke<void>("put_cookie", { cookie });
+}
+
+export function deleteCookie(
+  domain: string,
+  path: string,
+  name: string,
+): Promise<void> {
+  return invoke<void>("delete_cookie", { domain, path, name });
+}
+
+/** Clears every cookie, or just one domain's. */
+export function clearCookies(domain?: string): Promise<void> {
+  return invoke<void>("clear_cookies", { domain: domain ?? null });
 }

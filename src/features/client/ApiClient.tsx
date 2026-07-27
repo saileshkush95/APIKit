@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { CollectionSidebar } from "./CollectionSidebar";
+import { HistoryPanel } from "./HistoryPanel";
 import { ImportDialog } from "./ImportDialog";
 import { save } from "@tauri-apps/plugin-dialog";
 import { RequestPane } from "./RequestPane";
+import { SIDEBAR_DEFAULT, SidebarShell } from "./SidebarShell";
 import { TabStrip } from "./TabStrip";
 import {
   onStreamEvent,
@@ -22,6 +24,7 @@ import { buildWireRequest, enforceSecureUrl } from "../../shared/lib/request";
 import { runPostScript, runPreScript } from "../../shared/lib/scripts";
 import {
   buildExport,
+  normalizeDraft,
   serializeExport,
   suggestFilename,
 } from "../../shared/lib/exportWorkspace";
@@ -36,8 +39,10 @@ import {
 } from "../../shared/lib/tree";
 import { requestLabel } from "../../shared/lib/ui";
 import { useActiveRequest } from "../../shared/state/activeRequest";
-import { notifyError } from "../../shared/lib/notify";
+import { notify, notifyError } from "../../shared/lib/notify";
 import { useCollection } from "../../shared/state/collection";
+import { useHandoff } from "../../shared/state/handoff";
+import { useHistory } from "../../shared/state/history";
 import { useEnvironments } from "../../shared/state/environments";
 import { useSettings } from "../../shared/state/settings";
 import { useWorkspaceId, useWorkspaces } from "../../shared/state/workspaces";
@@ -49,6 +54,7 @@ import {
   type RequestDraft,
   type RequestTab,
   type SavedRequest,
+  type HistoryEntry,
   type ScriptLogEntry,
   type SentRequest,
   type StoredTab,
@@ -155,7 +161,13 @@ export function ApiClient({ intent }: ApiClientProps) {
   const onRun = (folderId: string | null) =>
     navigate({ to: "/runner", search: folderId ? { folder: folderId } : {} });
   const workspaceId = useWorkspaceId();
-  const { tree, setTree, expanded, toggleExpanded } = useCollection();
+  const {
+    tree,
+    setTree,
+    ready: collectionReady,
+    expanded,
+    toggleExpanded,
+  } = useCollection();
   const {
     vars,
     setVariables,
@@ -164,6 +176,7 @@ export function ApiClient({ intent }: ApiClientProps) {
     update: updateEnvironment,
   } = useEnvironments();
   const { settings } = useSettings();
+  const { record } = useHistory();
   const { setActive } = useActiveRequest();
   const { active: activeWorkspace } = useWorkspaces();
 
@@ -171,6 +184,9 @@ export function ApiClient({ intent }: ApiClientProps) {
   const [activeId, setActiveId] = useState<string>("");
   const [ready, setReady] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [sidebar, setSidebar] = useState<"collection" | "history">("collection");
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Read inside the stream listener, which is registered once.
   const maxMessagesRef = useRef(settings.maxStreamMessages);
@@ -178,6 +194,11 @@ export function ApiClient({ intent }: ApiClientProps) {
 
   useEffect(() => {
     let cancelled = false;
+    // Synchronously, before the load: tabs still hold the previous workspace's
+    // requests, and leaving `ready` true would let the debounced save write
+    // them into the workspace being switched *to*.
+    setReady(false);
+
     workspaceDataOnce(workspaceId)
       .then((workspace) => {
         if (cancelled) return;
@@ -190,7 +211,19 @@ export function ApiClient({ intent }: ApiClientProps) {
               ? saved
               : restored[0].id,
           );
+        } else {
+          // A workspace with nothing open starts blank; without this the
+          // previous workspace's tabs would simply stay on screen.
+          const blank = blankTab();
+          setTabs([blank]);
+          setActiveId(blank.id);
         }
+
+        const width = Number(workspace.settings[SETTINGS.sidebarWidth]);
+        if (Number.isFinite(width) && width > 0) setSidebarWidth(width);
+        setSidebarCollapsed(
+          workspace.settings[SETTINGS.sidebarCollapsed] === "true",
+        );
       })
       .catch((e) => notifyError("Could not restore open tabs", e))
       .finally(() => !cancelled && setReady(true));
@@ -202,6 +235,28 @@ export function ApiClient({ intent }: ApiClientProps) {
   usePersist(tabs, ready, (value) =>
     saveTabs(workspaceId, value.map(dehydrate)),
   );
+
+  useEffect(() => {
+    if (!ready) return;
+    setSetting(
+      workspaceId,
+      SETTINGS.sidebarCollapsed,
+      String(sidebarCollapsed),
+    ).catch(() => {});
+  }, [ready, workspaceId, sidebarCollapsed]);
+
+  useEffect(() => {
+    if (!ready) return;
+    // Debounced, because this one *does* change continuously while dragging.
+    const timer = setTimeout(() => {
+      setSetting(
+        workspaceId,
+        SETTINGS.sidebarWidth,
+        String(Math.round(sidebarWidth)),
+      ).catch(() => {});
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [ready, workspaceId, sidebarWidth]);
 
   const activeTab = tabs.find((t) => t.id === activeId) ?? tabs[0];
 
@@ -376,7 +431,9 @@ export function ApiClient({ intent }: ApiClientProps) {
       method: wire.method,
       url: sentUrl,
       headers: sentHeaders,
-      body: wire.body,
+      // A file body has no text to show, so name the file instead — otherwise
+      // the "what was sent" view would claim the body was empty.
+      body: built.bodyFilePath ? `<file: ${built.bodyFilePath}>` : wire.body,
       parts: built.multipart?.map((part) => ({
         name: part.name,
         value: part.value,
@@ -395,6 +452,7 @@ export function ApiClient({ intent }: ApiClientProps) {
         verifyTls: settings.verifyTls,
         followRedirects: settings.followRedirects,
         multipart: built.multipart ?? null,
+        bodyFilePath: built.bodyFilePath ?? null,
       });
 
       // Post-response script runs alongside the declarative assertions.
@@ -410,6 +468,8 @@ export function ApiClient({ intent }: ApiClientProps) {
       }
       setVariables(post.variables);
 
+      record(tab.name ?? requestLabel(tab.url), draftOf(tab), { response });
+
       const results = [...runAssertions(tab.tests, response), ...post.tests];
       updateTab(tab.id, {
         response,
@@ -421,6 +481,9 @@ export function ApiClient({ intent }: ApiClientProps) {
         respTab: results.some((r) => !r.passed) ? "tests" : "body",
       });
     } catch (e) {
+      record(tab.name ?? requestLabel(tab.url), draftOf(tab), {
+        error: String(e),
+      });
       updateTab(tab.id, {
         error: String(e),
         response: null,
@@ -539,6 +602,75 @@ export function ApiClient({ intent }: ApiClientProps) {
     // `at` changes each time, so asking twice works.
   }, [intent?.at]);
 
+  // A request handed over from another view — a flow captured by the proxy.
+  //
+  // Deliberately waits for both loads: restoring saved tabs replaces the whole
+  // tab list, and the collection starts empty until its own load lands — so
+  // acting early would either discard the tab or save into a tree about to be
+  // overwritten. Taken once, so coming back here later does not reopen it.
+  useEffect(() => {
+    if (!ready || !collectionReady) return;
+    const handoff = useHandoff.getState().take();
+    if (!handoff) return;
+    if (handoff.kind === "saved") {
+      const request = findRequest(tree, handoff.requestId);
+      // Gone by the time we got here — deleted, or on another machine's sync.
+      if (request) openRequest(request, { keep: true });
+      else notifyError("That request no longer exists", "");
+      return;
+    }
+    if (handoff.save) {
+      const request: SavedRequest = {
+        ...blankRequest(handoff.name),
+        ...normalizeDraft(handoff.draft),
+        name: handoff.name,
+      };
+      setTree(insertNode(tree, null, request));
+      notify("success", `Saved “${handoff.name}” to the collection`);
+    } else {
+      openDraft(handoff.name, handoff.draft);
+    }
+  }, [ready, collectionReady]);
+
+  /** Opens a draft as a preview tab, replacing any preview tab already open. */
+  function openDraft(name: string, source: RequestDraft) {
+    const draft = normalizeDraft(source);
+    const opened = blankTab({
+      name,
+      method: draft.method,
+      url: draft.url,
+      headers: [...draft.headers, { name: "", value: "" }],
+      body: draft.body,
+      tests: draft.tests,
+      config: draft.config,
+      preview: true,
+    });
+
+    const replaceable = tabs.find((tab) => tab.preview);
+    if (replaceable) {
+      setTabs((prev) =>
+        prev.map((tab) => (tab.id === replaceable.id ? opened : tab)),
+      );
+      setActiveId(opened.id);
+      return;
+    }
+    openTab(opened);
+  }
+
+  /** Reopens a recorded request exactly as it was sent. */
+  function openHistoryEntry(entry: HistoryEntry) {
+    openDraft(entry.name || requestLabel(entry.url), entry.request);
+  }
+
+  /** Promotes a recorded request into the collection. */
+  function saveHistoryEntry(entry: HistoryEntry) {
+    const draft = normalizeDraft(entry.request);
+    const name = entry.name || requestLabel(entry.url, "Saved request");
+    const request: SavedRequest = { ...blankRequest(name), ...draft, name };
+    setTree(insertNode(tree, null, request));
+    notify("success", `Saved “${name}” to the collection`);
+  }
+
   /** Writes the collection and environments to a file the user picks. */
   async function exportWorkspace() {
     const name = activeWorkspace?.name ?? "Workspace";
@@ -572,6 +704,9 @@ export function ApiClient({ intent }: ApiClientProps) {
       if (key === "t") {
         e.preventDefault();
         newTab();
+      } else if (key === "b") {
+        e.preventDefault();
+        setSidebarCollapsed((collapsed) => !collapsed);
       } else if (key === "s") {
         e.preventDefault();
         if (activeTab) saveTab(activeTab);
@@ -601,6 +736,36 @@ export function ApiClient({ intent }: ApiClientProps) {
 
   return (
     <div className="flex min-h-0 w-full">
+      <SidebarShell
+        width={sidebarWidth}
+        onWidthChange={setSidebarWidth}
+        collapsed={sidebarCollapsed}
+        onCollapsedChange={setSidebarCollapsed}
+        header={(
+          [
+            ["collection", "Collection"],
+            ["history", "History"],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setSidebar(key)}
+            className={`flex-1 px-2 py-1.5 text-xs ${
+              sidebar === key
+                ? "border-b-2 border-brand text-ink"
+                : "border-b-2 border-transparent text-muted hover:text-ink"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      >
+        {sidebar === "history" ? (
+          <HistoryPanel
+            onOpen={(entry) => openHistoryEntry(entry)}
+            onSave={(entry) => saveHistoryEntry(entry)}
+          />
+        ) : (
       <CollectionSidebar
         nodes={tree}
         onChange={(nodes: TreeNode[]) => setTree(nodes)}
@@ -615,6 +780,8 @@ export function ApiClient({ intent }: ApiClientProps) {
         onImport={() => setImporting(true)}
         onExport={exportWorkspace}
       />
+        )}
+      </SidebarShell>
 
       {importing && (
         <ImportDialog

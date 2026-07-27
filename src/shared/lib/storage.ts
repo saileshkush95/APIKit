@@ -14,6 +14,8 @@ export const SETTINGS = {
   expandedFolders: "expandedFolders",
   theme: "theme",
   mockPort: "mockPort",
+  sidebarWidth: "sidebarWidth",
+  sidebarCollapsed: "sidebarCollapsed",
 } as const;
 
 const pending = new Map<string, Promise<WorkspaceData>>();

@@ -4,7 +4,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { SplashScreen, useMinimumDuration } from "../features/onboarding/SplashScreen";
+import { revealMainWindow, useMinimumDuration } from "../features/onboarding/splash";
 import { Toaster } from "../shared/components/Toaster";
 import { ConfirmProvider } from "../shared/state/confirm";
 import { useWorkspacesStore } from "../shared/state/workspaces";
@@ -89,9 +89,16 @@ function App() {
   }, []);
 
   // Held briefly even on a fast start, so the splash does not flash past.
-  const splashing = useMinimumDuration(!loaded);
+  const splashing = useMinimumDuration(!loaded && !failed);
 
-  if (splashing) return <SplashScreen />;
+  // The splash is a real window shown by Tauri before this bundle exists, so
+  // it only appears when the *process* starts — reloading the webview does not
+  // bring it back. Once the workspace is open, this window takes over.
+  useEffect(() => {
+    if (!splashing) revealMainWindow();
+  }, [splashing]);
+
+  if (splashing) return null;
 
   if ((error || failed) && workspaces.length === 0) {
     return (

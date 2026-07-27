@@ -1,4 +1,5 @@
 mod background;
+mod cookies;
 mod github;
 mod http_client;
 mod load;
@@ -10,6 +11,7 @@ mod sync;
 mod stream;
 
 use background::BackgroundMode;
+use cookies::CookieState;
 use load::LoadState;
 use mock::MockState;
 use proxy::ProxyState;
@@ -38,15 +40,65 @@ pub fn run() {
         .manage(LoadState::default())
         .manage(BackgroundMode::default())
         .manage(SyncState::default())
+        .manage(CookieState::default())
         .setup(|app| {
             let db = store::init(app.handle())?;
+            // Cookies are restored before the window can send anything, so the
+            // first request of a session already carries them.
+            {
+                let conn = db.0.lock().map_err(|e| e.to_string())?;
+                cookies::restore(&app.state::<CookieState>().0, &conn);
+            }
             app.manage(db);
             background::init_tray(app.handle())?;
+
+            // Insurance against a hidden main window. The frontend normally
+            // reveals it as soon as the workspace opens; if that never happens
+            // — a bundle that fails to load, a capability that got dropped —
+            // an app with no window and no way to get one is unrecoverable.
+            // TEMP-DIAGNOSTIC
+            let probe = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                for t in [0u64, 100, 300, 700, 1500, 4000] {
+                    tokio::time::sleep(std::time::Duration::from_millis(t)).await;
+                    for label in ["splash", "main"] {
+                        match probe.get_webview_window(label) {
+                            Some(w) => eprintln!(
+                                "PROBE +{t}ms {label}: visible={:?} url={:?}",
+                                w.is_visible(),
+                                w.url().map(|u| u.to_string())
+                            ),
+                            None => eprintln!("PROBE +{t}ms {label}: MISSING"),
+                        }
+                    }
+                }
+            });
+
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                if let Some(window) = handle.get_webview_window("main") {
+                    if window.is_visible().unwrap_or(false) {
+                        return;
+                    }
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                if let Some(splash) = handle.get_webview_window("splash") {
+                    let _ = splash.destroy();
+                }
+            });
+
             Ok(())
         })
         .on_window_event(|window, event| {
             // With background mode on, closing the window keeps the process
             // (and therefore the monitor scheduler) alive.
+            // The splash window is closed programmatically and must never be
+            // caught by background mode, which would hide it instead.
+            if window.label() != "main" {
+                return;
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let app = window.app_handle();
                 if app.state::<BackgroundMode>().enabled() {
@@ -57,6 +109,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             http_client::send_request,
+            cookies::list_cookies,
+            cookies::cookies_enabled,
+            cookies::set_cookies_enabled,
+            cookies::put_cookie,
+            cookies::delete_cookie,
+            cookies::clear_cookies,
             store::list_workspaces,
             store::create_workspace,
             store::rename_workspace,

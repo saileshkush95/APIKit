@@ -47,6 +47,8 @@ export interface HttpRequestSpec {
   verifyTls?: boolean | null;
   followRedirects?: boolean | null;
   multipart?: MultipartPart[] | null;
+  /** A file sent as the entire body; the backend reads it from disk. */
+  bodyFilePath?: string | null;
 }
 
 export interface HttpResponseData {
@@ -74,6 +76,20 @@ export interface Flow {
   responseBody: string;
   startedMs: number;
   durationMs: number;
+}
+
+/** A cookie in the shared jar, as stored by the backend. */
+export interface Cookie {
+  domain: string;
+  path: string;
+  name: string;
+  value: string;
+  /** Unix milliseconds; null for a session cookie. */
+  expiresMs: number | null;
+  secure: boolean;
+  httpOnly: boolean;
+  /** "Strict", "Lax", "None", or empty when the server did not say. */
+  sameSite: string;
 }
 
 export interface ProxyStatus {
@@ -154,6 +170,8 @@ export interface RequestConfig {
   graphqlVariables: string;
   /** Files uploaded with a GraphQL request (multipart request spec). */
   graphqlFiles: GraphqlFile[];
+  /** A file sent as the whole request body, in `binary` mode. */
+  binaryFilePath: string;
   auth: Auth;
   /** Draft message for streaming protocols. */
   streamMessage: string;
@@ -310,6 +328,7 @@ export function defaultConfig(): RequestConfig {
     graphqlQuery: "",
     graphqlVariables: "{}",
     graphqlFiles: [],
+    binaryFilePath: "",
     auth: defaultAuth(),
     streamMessage: "",
     mqttTopics: "#",
@@ -412,6 +431,24 @@ export interface RequestTab extends RequestDraft {
   sent: SentRequest | null;
   scriptLogs: ScriptLogEntry[];
   stream: StreamSession;
+}
+
+// --- History -----------------------------------------------------------------
+
+/** One sent request. Per machine, so it is not synced. */
+export interface HistoryEntry {
+  id: string;
+  atMs: number;
+  name: string;
+  method: string;
+  url: string;
+  status: number | null;
+  statusText: string;
+  timeMs: number;
+  sizeBytes: number;
+  /** The request as sent, for reopening or saving to the collection. */
+  request: RequestDraft;
+  error: string | null;
 }
 
 // --- Comments ----------------------------------------------------------------

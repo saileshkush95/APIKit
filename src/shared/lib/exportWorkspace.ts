@@ -10,6 +10,7 @@ import {
   type Environment,
   type MockRoute,
   type Monitor,
+  type RequestDraft,
   type TreeNode,
   type WorkspaceExport,
 } from "../types";
@@ -75,6 +76,18 @@ export function reidTree(nodes: TreeNode[]): TreeNode[] {
       ? { ...node, id: newId(), children: reidTree(node.children) }
       : { ...node, id: newId() },
   );
+}
+
+/** Fills in anything a stored draft predates. */
+export function normalizeDraft(draft: RequestDraft): RequestDraft {
+  return {
+    method: draft.method || "GET",
+    url: draft.url ?? "",
+    headers: draft.headers ?? [],
+    body: draft.body ?? "",
+    tests: draft.tests ?? [],
+    config: normalizeConfig(draft.config),
+  };
 }
 
 export function suggestFilename(workspace: string): string {

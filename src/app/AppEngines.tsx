@@ -9,6 +9,7 @@ import {
 import { useCollectionStore } from "../shared/state/collection";
 import { useCommentsStore } from "../shared/state/comments";
 import { useEnvironmentsStore } from "../shared/state/environments";
+import { useHistoryStore } from "../shared/state/history";
 import { useMonitorsStore } from "../shared/state/monitors";
 import {
   unwatchPeers,
@@ -39,6 +40,7 @@ export function AppEngines() {
     useEnvironmentsStore.getState().load(workspaceId);
     useCollectionStore.getState().load(workspaceId);
     useCommentsStore.getState().load(workspaceId);
+    useHistoryStore.getState().load(workspaceId);
     useMonitorsStore.getState().load(workspaceId);
   }, [workspaceId, revision]);
 

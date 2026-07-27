@@ -7,6 +7,10 @@
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
+use tauri::State;
+
+use crate::cookies::CookieState;
+use crate::store::Db;
 
 /// A single header entry. Kept as a list (rather than a map) so the UI can
 /// preserve ordering and allow duplicate header names.
@@ -59,6 +63,10 @@ pub struct HttpRequestSpec {
     /// content intact.
     #[serde(default)]
     pub multipart: Option<Vec<MultipartPart>>,
+    /// A file sent as the entire request body, byte for byte. Read here for the
+    /// same reason as multipart parts: the webview would have to base64 it.
+    #[serde(default)]
+    pub body_file_path: Option<String>,
 }
 
 /// Response returned to the frontend.
@@ -81,12 +89,19 @@ pub struct HttpResponseData {
 
 /// Perform an HTTP request described by `spec`.
 #[tauri::command]
-pub async fn send_request(spec: HttpRequestSpec) -> Result<HttpResponseData, String> {
+pub async fn send_request(
+    spec: HttpRequestSpec,
+    cookies: State<'_, CookieState>,
+    db: State<'_, Db>,
+) -> Result<HttpResponseData, String> {
     let method = reqwest::Method::from_bytes(spec.method.to_uppercase().as_bytes())
         .map_err(|e| format!("invalid HTTP method: {e}"))?;
 
     let mut builder = reqwest::Client::builder()
-        .user_agent(concat!("APIKit/", env!("CARGO_PKG_VERSION")));
+        .user_agent(concat!("APIKit/", env!("CARGO_PKG_VERSION")))
+        // The jar is shared, so a login in one tab authenticates the next
+        // request — and reqwest applies it across redirects for us.
+        .cookie_provider(cookies.0.clone());
 
     if let Some(ms) = spec.timeout_ms {
         builder = builder.timeout(std::time::Duration::from_millis(ms));
@@ -122,6 +137,20 @@ pub async fn send_request(spec: HttpRequestSpec) -> Result<HttpResponseData, Str
 
     if let Some(parts) = &spec.multipart {
         req = req.multipart(build_multipart(parts).await?);
+    } else if let Some(path) = spec.body_file_path.as_deref().filter(|p| !p.is_empty()) {
+        let bytes = tokio::fs::read(path)
+            .await
+            .map_err(|e| format!("could not read {path}: {e}"))?;
+        // Only guess a type when the caller did not set one; an explicit
+        // Content-Type header is a deliberate choice and must win.
+        if !spec
+            .headers
+            .iter()
+            .any(|h| h.name.eq_ignore_ascii_case("content-type"))
+        {
+            req = req.header("Content-Type", guess_content_type(path));
+        }
+        req = req.body(bytes);
     } else if let Some(body) = spec.body {
         // Only attach a body for methods that conventionally carry one.
         if !body.is_empty() && method_allows_body(&method) {
@@ -155,6 +184,8 @@ pub async fn send_request(spec: HttpRequestSpec) -> Result<HttpResponseData, Str
     let time_ms = started.elapsed().as_millis();
     let size_bytes = bytes.len() as u64;
 
+    crate::cookies::persist_after_request(&cookies, &db);
+
     // Best-effort UTF-8 decode; binary responses are shown lossily.
     let body = String::from_utf8_lossy(&bytes).into_owned();
 
@@ -171,6 +202,37 @@ pub async fn send_request(spec: HttpRequestSpec) -> Result<HttpResponseData, Str
         final_url,
         http_version,
     })
+}
+
+/// A content type for a file body, from its extension.
+///
+/// Deliberately a short list rather than a mime database: these are the types
+/// people actually upload as a raw body, and anything unrecognised is safest as
+/// `application/octet-stream` — a wrong guess is worse than no guess.
+fn guess_content_type(path: &str) -> &'static str {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "json" => "application/json",
+        "xml" => "application/xml",
+        "txt" | "log" => "text/plain",
+        "csv" => "text/csv",
+        "html" | "htm" => "text/html",
+        "pdf" => "application/pdf",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "zip" => "application/zip",
+        "gz" => "application/gzip",
+        "mp4" => "video/mp4",
+        "mp3" => "audio/mpeg",
+        "wasm" => "application/wasm",
+        _ => "application/octet-stream",
+    }
 }
 
 /// Builds a multipart form, reading any referenced files from disk.

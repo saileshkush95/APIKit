@@ -1,11 +1,15 @@
 // Splitting text around {{variables}}, for highlighting and completion.
 
+import { isDynamic } from "./dynamicVars";
+
 export interface Token {
   text: string;
   /** Variable name when this token is a `{{…}}`, otherwise undefined. */
   name?: string;
   /** Whether the active environment defines it. */
   known?: boolean;
+  /** A generated value such as `$uuid`, resolved at send time. */
+  dynamic?: boolean;
 }
 
 const VARIABLE = /\{\{\s*([\w.\-$]+)\s*\}\}/g;
@@ -20,7 +24,8 @@ export function tokenize(input: string, vars: Record<string, string>): Token[] {
     tokens.push({
       text: match[0],
       name: match[1],
-      known: match[1] in vars,
+      known: match[1] in vars || isDynamic(match[1]),
+      dynamic: !(match[1] in vars) && isDynamic(match[1]),
     });
     index = start + match[0].length;
   }

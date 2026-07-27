@@ -29,7 +29,7 @@ const MODES: { value: BodyMode; label: string; disabled?: boolean }[] = [
   { value: "formData", label: "form-data" },
   { value: "urlEncoded", label: "x-www-form-urlencoded" },
   { value: "raw", label: "raw" },
-  { value: "binary", label: "binary", disabled: true },
+  { value: "binary", label: "binary" },
 ];
 
 const LANGUAGES: { value: RawLanguage; label: string }[] = [
@@ -39,6 +39,66 @@ const LANGUAGES: { value: RawLanguage; label: string }[] = [
   { value: "html", label: "HTML" },
   { value: "javascript", label: "JavaScript" },
 ];
+
+/**
+ * A single file sent as the entire request body.
+ *
+ * Only the path is held. The bytes are read by the backend at send time, so
+ * the file is never copied into the webview and stays byte-exact — and editing
+ * the file on disk changes what the next send uploads, which is what you want
+ * while iterating on a fixture.
+ */
+function BinaryBody({
+  config,
+  onConfigChange,
+}: {
+  config: RequestConfig;
+  onConfigChange: (patch: Partial<RequestConfig>) => void;
+}) {
+  const path = config.binaryFilePath;
+
+  async function pick() {
+    const selected = await open({
+      multiple: false,
+      title: "Choose a file to send as the body",
+    });
+    if (typeof selected === "string") onConfigChange({ binaryFilePath: selected });
+  }
+
+  return (
+    <div className="flex flex-none flex-col items-start gap-2 py-2">
+      <div className="flex items-center gap-2">
+        <button
+          onClick={pick}
+          className="rounded border border-edge px-2 py-1 text-[11px] text-ink hover:bg-elevated"
+        >
+          {path ? "Choose another file" : "Choose a file"}
+        </button>
+        {path && (
+          <>
+            <span className="font-mono text-[11px] text-ink" title={path}>
+              {fileNameOf(path)}
+            </span>
+            <button
+              onClick={() => onConfigChange({ binaryFilePath: "" })}
+              className="text-[11px] text-muted hover:text-err"
+              title="Remove"
+            >
+              ×
+            </button>
+          </>
+        )}
+      </div>
+      <p className="text-[11px] leading-relaxed text-muted">
+        {path ? (
+          <span className="font-mono break-all">{path}</span>
+        ) : (
+          "The file is sent as the raw body, unmodified. Its content type is guessed from the extension unless you set a Content-Type header yourself."
+        )}
+      </p>
+    </div>
+  );
+}
 
 /** Attachments for the GraphQL multipart request spec. */
 function GraphqlFiles({
@@ -233,9 +293,7 @@ export function BodyEditor({
       )}
 
       {config.bodyMode === "binary" && (
-        <p className="py-4 text-center text-xs text-muted">
-          Binary bodies are not supported yet.
-        </p>
+        <BinaryBody config={config} onConfigChange={onConfigChange} />
       )}
 
     </div>

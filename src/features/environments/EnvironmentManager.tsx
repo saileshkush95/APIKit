@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useEnvironments } from "../../shared/state/environments";
 import { KeyValueEditor } from "../../shared/components/KeyValueEditor";
+import { DYNAMIC_VARS } from "../../shared/lib/dynamicVars";
 
 interface Props {
   onClose: () => void;
@@ -135,6 +136,28 @@ export function EnvironmentManager({ onClose }: Props) {
                   export so teammates know what to fill in, but the values never
                   leave.
                 </p>
+
+                <details className="mt-4 border-t border-edge pt-3">
+                  <summary className="cursor-default text-[11px] text-muted select-none">
+                    Generated variables
+                  </summary>
+                  <p className="mt-1.5 mb-2 text-[11px] leading-relaxed text-muted">
+                    Always available, no definition needed. Each is regenerated
+                    every time you send — so a retry gets a fresh value, not the
+                    one that already failed. Defining a variable with the same
+                    name overrides it.
+                  </p>
+                  <ul className="space-y-1">
+                    {DYNAMIC_VARS.map((item) => (
+                      <li key={item.name} className="flex gap-2 text-[11px]">
+                        <code className="w-32 flex-none font-mono text-redirect">
+                          {`{{${item.name}}}`}
+                        </code>
+                        <span className="text-muted">{item.description}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               </>
             ) : (
               <div className="p-6 text-center text-muted">

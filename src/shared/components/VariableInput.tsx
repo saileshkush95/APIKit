@@ -6,6 +6,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { DYNAMIC_VARS, matchDynamic } from "../lib/dynamicVars";
 import {
   completeVariable,
   openVariable,
@@ -13,6 +14,10 @@ import {
 } from "../lib/variableTokens";
 import { useEnvironments } from "../state/environments";
 import type { FieldSize } from "./Field";
+
+function describeDynamic(name: string): string {
+  return DYNAMIC_VARS.find((item) => item.name === name)?.description ?? "";
+}
 
 interface Props {
   value: string;
@@ -90,9 +95,10 @@ export function VariableInput({
       return;
     }
     const needle = open.query.toLowerCase();
-    const found = names
-      .filter((name) => name.toLowerCase().includes(needle))
-      .slice(0, 8);
+    const found = [
+      ...names.filter((name) => name.toLowerCase().includes(needle)),
+      ...matchDynamic(open.query).map((item) => item.name),
+    ].slice(0, 8);
     setSuggestions(found);
     setHighlighted(0);
     setAnchor(found.length > 0 ? { start: open.start } : null);
@@ -128,7 +134,13 @@ export function VariableInput({
             token.name ? (
               <span
                 key={index}
-                className={token.known ? "text-brand" : "wrk-variable-unknown"}
+                className={
+                  token.dynamic
+                    ? "text-redirect"
+                    : token.known
+                      ? "text-brand"
+                      : "wrk-variable-unknown"
+                }
               >
                 {token.text}
               </span>
@@ -210,7 +222,11 @@ export function VariableInput({
                 >
                   <span className="font-mono text-brand">{name}</span>
                   <span className="min-w-0 flex-1 truncate text-right text-muted">
-                    {vars[name] === "" ? "empty" : vars[name]}
+                    {name in vars
+                      ? vars[name] === ""
+                        ? "empty"
+                        : vars[name]
+                      : describeDynamic(name)}
                   </span>
                 </button>
               </li>

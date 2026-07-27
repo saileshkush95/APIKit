@@ -1,5 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { DYNAMIC_VARS, matchDynamic } from "../lib/dynamicVars";
 import { completeVariable, openVariable } from "../lib/variableTokens";
 import { useEnvironments } from "../state/environments";
 
@@ -72,9 +73,10 @@ export function CodeEditor({
     }
 
     const needle = open.query.toLowerCase();
-    const items = names
-      .filter((name) => name.toLowerCase().includes(needle))
-      .slice(0, 8);
+    const items = [
+      ...names.filter((name) => name.toLowerCase().includes(needle)),
+      ...matchDynamic(open.query).map((item) => item.name),
+    ].slice(0, 8);
     if (items.length === 0) {
       setCompletion(null);
       return;
@@ -206,7 +208,12 @@ export function CodeEditor({
                 >
                   <span className="font-mono text-brand">{name}</span>
                   <span className="min-w-0 flex-1 truncate text-right text-muted">
-                    {vars[name] === "" ? "empty" : vars[name]}
+                    {name in vars
+                      ? vars[name] === ""
+                        ? "empty"
+                        : vars[name]
+                      : DYNAMIC_VARS.find((item) => item.name === name)
+                          ?.description}
                   </span>
                 </button>
               </li>

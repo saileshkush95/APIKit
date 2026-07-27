@@ -1,4 +1,8 @@
+import { useEffect, useState } from "react";
+import { CookieManager } from "./CookieManager";
 import { Toggle } from "../../shared/components/Toggle";
+import { cookiesEnabled, setCookiesEnabled } from "../../shared/lib/api";
+import { notifyError } from "../../shared/lib/notify";
 import { Input, Select } from "../../shared/components/Field";
 import { useOnboarding } from "../../shared/state/onboarding";
 import { useSettings } from "../../shared/state/settings";
@@ -78,6 +82,22 @@ function Row({
 
 
 export function SettingsPanel() {
+  const [jarEnabled, setJarEnabled] = useState(true);
+
+  useEffect(() => {
+    cookiesEnabled().then(setJarEnabled).catch(() => {});
+  }, []);
+
+  async function toggleJar(enabled: boolean) {
+    setJarEnabled(enabled);
+    try {
+      await setCookiesEnabled(enabled);
+    } catch (e) {
+      setJarEnabled(!enabled);
+      notifyError("Could not change the cookie setting", e);
+    }
+  }
+
   const { settings, update, reset } = useSettings();
   const { mode, setMode } = useTheme();
   const { replay, startTour } = useOnboarding();
@@ -290,6 +310,23 @@ export function SettingsPanel() {
               stop monitoring. Monitors do not run once the app is fully quit.
             </p>
           )}
+        </Section>
+
+        <Section
+          title="Cookies"
+          description="Cookies servers set are stored here and sent back automatically."
+        >
+          <Row
+            label="Cookie jar"
+            hint="Off makes every request stateless"
+          >
+            <Toggle
+              checked={jarEnabled}
+              onChange={toggleJar}
+              label={jarEnabled ? "Enabled" : "Disabled"}
+            />
+          </Row>
+          {jarEnabled && <CookieManager />}
         </Section>
 
         <Section title="Requests" description="Defaults for new requests.">

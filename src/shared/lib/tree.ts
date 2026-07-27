@@ -136,6 +136,74 @@ export function moveNode(
   return insertBeside(pruned, targetId, dragged, position);
 }
 
+/**
+ * Drops ids that are already covered by another id in the set.
+ *
+ * Selecting a folder *and* something inside it is easy to do by accident. For
+ * a move or a delete the folder alone is the whole instruction — acting on the
+ * child too would move it out of the folder that is itself moving.
+ */
+export function topmost(nodes: TreeNode[], ids: Set<string>): string[] {
+  const covered = new Set<string>();
+  for (const id of ids) {
+    const node = findNode(nodes, id);
+    if (!node || !isFolder(node)) continue;
+    for (const other of ids) {
+      if (other !== id && containsNode(node, other)) covered.add(other);
+    }
+  }
+  // Tree order, so a bulk move keeps the nodes in the order they were shown.
+  return flatIds(nodes).filter((id) => ids.has(id) && !covered.has(id));
+}
+
+/** Every id in the tree, depth-first — the order the sidebar renders them. */
+export function flatIds(nodes: TreeNode[]): string[] {
+  return nodes.flatMap((node) =>
+    isFolder(node) ? [node.id, ...flatIds(node.children)] : [node.id],
+  );
+}
+
+export function removeNodes(nodes: TreeNode[], ids: string[]): TreeNode[] {
+  return ids.reduce((tree, id) => removeNode(tree, id), nodes);
+}
+
+/**
+ * Moves several nodes into `targetId` at once, keeping their relative order.
+ *
+ * A node that would move into itself is skipped rather than dropped, so a
+ * selection spanning the destination folder still moves everything else.
+ */
+export function moveNodes(
+  nodes: TreeNode[],
+  ids: string[],
+  targetId: string | null,
+): TreeNode[] {
+  let tree = nodes;
+  for (const id of topmost(nodes, new Set(ids))) {
+    if (id === targetId) continue;
+    const node = findNode(tree, id);
+    if (!node) continue;
+    if (targetId !== null && containsNode(node, targetId)) continue;
+    tree = insertNode(removeNode(tree, id), targetId, node);
+  }
+  return tree;
+}
+
+/** Every folder in the tree, with the path that leads to it. */
+export function folderOptions(
+  nodes: TreeNode[],
+  trail: string[] = [],
+): { id: string; label: string }[] {
+  return nodes.flatMap((node) =>
+    isFolder(node)
+      ? [
+          { id: node.id, label: [...trail, node.name].join(" / ") },
+          ...folderOptions(node.children, [...trail, node.name]),
+        ]
+      : [],
+  );
+}
+
 export function countRequests(nodes: TreeNode[]): number {
   return nodes.reduce(
     (sum, node) =>

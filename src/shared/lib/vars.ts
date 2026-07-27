@@ -1,8 +1,10 @@
 // `{{variable}}` substitution driven by the active environment.
 
+import { generateDynamic, isDynamic } from "./dynamicVars";
 import type { Environment, RequestDraft, Variable } from "../types";
 
-const VAR_PATTERN = /\{\{\s*([\w.\-]+)\s*\}\}/g;
+// Must accept `$`, which prefixes the generated variables in dynamicVars.ts.
+const VAR_PATTERN = /\{\{\s*([\w.\-$]+)\s*\}\}/g;
 
 export type VarMap = Record<string, string>;
 
@@ -19,11 +21,18 @@ export function environmentVars(env: Environment | null): VarMap {
   return env ? toVarMap(env.variables) : {};
 }
 
-/** Replaces every `{{name}}` that resolves; unknown names are left untouched. */
+/**
+ * Replaces every `{{name}}` that resolves; unknown names are left untouched.
+ *
+ * An environment variable wins over a generated one of the same name, so a
+ * `$timestamp` you define yourself is still yours.
+ */
 export function interpolate(input: string, vars: VarMap): string {
-  return input.replace(VAR_PATTERN, (match, name: string) =>
-    name in vars ? vars[name] : match,
-  );
+  return input.replace(VAR_PATTERN, (match, name: string) => {
+    if (name in vars) return vars[name];
+    const generated = generateDynamic(name);
+    return generated ?? match;
+  });
 }
 
 /** Every distinct `{{name}}` referenced by a string. */
@@ -49,7 +58,7 @@ export function unresolvedVars(draft: WireRequest, vars: VarMap): string[] {
   const missing = new Set<string>();
   for (const s of draftStrings(draft)) {
     for (const name of referencedVars(s)) {
-      if (!(name in vars)) missing.add(name);
+      if (!(name in vars) && !isDynamic(name)) missing.add(name);
     }
   }
   return [...missing];

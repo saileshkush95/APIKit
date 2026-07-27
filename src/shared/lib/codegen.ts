@@ -2,6 +2,11 @@
 
 import type { WireRequest } from "./vars";
 
+/** A request whose body may be a file on disk rather than text. */
+export interface CodeRequest extends WireRequest {
+  bodyFilePath?: string;
+}
+
 export type CodeTarget =
   | "curl"
   | "fetch"
@@ -46,21 +51,30 @@ function hasBody(request: WireRequest): boolean {
   );
 }
 
-function curl(request: WireRequest): string {
+function curl(request: CodeRequest): string {
   const parts = [`curl --request ${request.method.toUpperCase()} \\`];
   parts.push(`  --url ${shellQuote(request.url)}`);
   for (const header of request.headers) {
     parts.push(`  --header ${shellQuote(`${header.name}: ${header.value}`)}`);
   }
-  if (hasBody(request)) parts.push(`  --data ${shellQuote(request.body)}`);
+  if (request.bodyFilePath) {
+    // `@` streams the file as-is; `--data` would mangle newlines.
+    parts.push(`  --data-binary ${shellQuote(`@${request.bodyFilePath}`)}`);
+  } else if (hasBody(request)) {
+    parts.push(`  --data ${shellQuote(request.body)}`);
+  }
   return parts.join(" \\\n").replace(" \\\n  --url", " \\\n  --url");
 }
 
-function httpie(request: WireRequest): string {
+function httpie(request: CodeRequest): string {
   const headers = request.headers
     .map((header) => shellQuote(`${header.name}:${header.value}`))
     .join(" ");
-  const body = hasBody(request) ? ` <<< ${shellQuote(request.body)}` : "";
+  const body = request.bodyFilePath
+    ? ` < ${shellQuote(request.bodyFilePath)}`
+    : hasBody(request)
+      ? ` <<< ${shellQuote(request.body)}`
+      : "";
   return `http ${request.method.toUpperCase()} ${shellQuote(request.url)} ${headers}${body}`.trim();
 }
 
@@ -304,7 +318,26 @@ function swiftCode(request: WireRequest): string {
   return lines.join("\n");
 }
 
-export function generateCode(request: WireRequest, target: CodeTarget): string {
+/**
+ * A file body cannot be inlined into generated code, so it is called out.
+ *
+ * curl and HTTPie can point at the file themselves; every other target would
+ * otherwise render an empty body, which is a quiet lie about what gets sent.
+ */
+function fileBodyNote(path: string, target: CodeTarget): string {
+  if (target === "curl" || target === "httpie") return "";
+  const comment = target === "python" || target === "ruby" ? "#" : "//";
+  return `${comment} Body: the raw bytes of ${path} — read the file and send it as the body.\n\n`;
+}
+
+export function generateCode(request: CodeRequest, target: CodeTarget): string {
+  const note = request.bodyFilePath
+    ? fileBodyNote(request.bodyFilePath, target)
+    : "";
+  return note + generateBody(request, target);
+}
+
+function generateBody(request: CodeRequest, target: CodeTarget): string {
   switch (target) {
     case "curl":
       return curl(request);

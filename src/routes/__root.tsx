@@ -9,6 +9,7 @@ import { Tour } from "../features/onboarding/Tour";
 import { WelcomeScreen } from "../features/onboarding/WelcomeScreen";
 import { ThemeToggle } from "../features/settings/ThemeToggle";
 import { WorkspaceSwitcher } from "../features/workspaces/WorkspaceSwitcher";
+import { CommandPalette } from "../shared/components/CommandPalette";
 import { Logo } from "../shared/components/Logo";
 import { NAV_ICONS, NavRail, type NavItem } from "../shared/components/NavRail";
 import { WindowControls } from "../shared/components/WindowControls";
@@ -65,6 +66,8 @@ function RootLayout() {
         </div>
         <WindowControls />
       </header>
+
+      <CommandPalette />
 
       <div className="flex min-h-0 flex-1">
         <NavRail

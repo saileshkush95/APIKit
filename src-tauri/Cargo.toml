@@ -40,7 +40,11 @@ reqwest = { version = "0.12", default-features = false, features = [
     "stream",
     "multipart",
     "json",
+    "cookies",
 ] }
+
+# Parsing the `Expires` attribute of a Set-Cookie header
+httpdate = "1"
 
 # Streaming protocols: WebSocket / Socket.IO / GraphQL subscriptions, and MQTT
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }

@@ -16,12 +16,16 @@ import {
   cloneNode,
   filterTree,
   findNode,
+  folderOptions,
   insertNode,
   isFolder,
   moveNode,
+  moveNodes,
   parentIdOf,
   removeNode,
+  removeNodes,
   requestIdsIn,
+  topmost,
   updateNode,
   type DropPosition,
 } from "../../shared/lib/tree";
@@ -85,6 +89,9 @@ export function CollectionSidebar({
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  /** Where a shift-click measures its range from. */
+  const [anchorId, setAnchorId] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{
     id: string | null;
@@ -98,6 +105,15 @@ export function CollectionSidebar({
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
   );
+
+  useEffect(() => {
+    if (selectedIds.size === 0) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") clearSelection();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedIds.size]);
 
   useEffect(() => {
     if (!menu) return;
@@ -180,6 +196,129 @@ export function CollectionSidebar({
     });
   }
 
+  /**
+   * Click behaviour, matching every file tree: plain click selects one thing
+   * (and opens it), ⌘/ctrl toggles, shift extends from the last anchor.
+   */
+  function handleSelectClick(id: string, e: React.MouseEvent): boolean {
+    if (e.metaKey || e.ctrlKey) {
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      setAnchorId(id);
+      return true;
+    }
+
+    if (e.shiftKey && anchorId) {
+      // The range runs over what is *visible*: extending across a collapsed
+      // folder's hidden children would select things you cannot see.
+      const order = visibleIds();
+      const from = order.indexOf(anchorId);
+      const to = order.indexOf(id);
+      if (from !== -1 && to !== -1) {
+        const [start, end] = from < to ? [from, to] : [to, from];
+        setSelectedIds(new Set(order.slice(start, end + 1)));
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /** Ids in the order they appear on screen, skipping collapsed subtrees. */
+  function visibleIds(): string[] {
+    const ids: string[] = [];
+    const walk = (list: TreeNode[]) => {
+      for (const node of list) {
+        ids.push(node.id);
+        if (isFolder(node) && (searching || expanded.has(node.id))) {
+          walk(node.children);
+        }
+      }
+    };
+    walk(visible);
+    return ids;
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+    setAnchorId(null);
+  }
+
+  async function removeSelected() {
+    const ids = topmost(nodes, selectedIds);
+    if (ids.length === 0) return;
+
+    const requests = ids.flatMap((id) => {
+      const node = findNode(nodes, id);
+      return node ? requestIdsIn(node) : [];
+    });
+    const folders = ids.filter((id) => {
+      const node = findNode(nodes, id);
+      return node !== null && isFolder(node);
+    }).length;
+
+    const ok = await confirm({
+      title: `Delete ${ids.length} item${ids.length === 1 ? "" : "s"}?`,
+      body:
+        folders > 0
+          ? `This deletes ${folders} folder${
+              folders === 1 ? "" : "s"
+            } and the ${requests.length} request${
+              requests.length === 1 ? "" : "s"
+            } inside the selection.`
+          : `This deletes ${requests.length} request${
+              requests.length === 1 ? "" : "s"
+            }.`,
+      warning: "Deletions are shared: peers syncing this workspace lose them too.",
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+
+    const previous = nodes;
+    onChange(removeNodes(nodes, ids));
+    onRequestsDeleted(requests);
+    clearSelection();
+
+    notify("info", `Deleted ${ids.length} item${ids.length === 1 ? "" : "s"}`, {
+      action: { label: "Undo", run: () => onChange(previous) },
+    });
+  }
+
+  function moveSelected(targetId: string | null) {
+    const ids = topmost(nodes, selectedIds);
+    if (ids.length === 0) return;
+
+    const previous = nodes;
+    onChange(moveNodes(nodes, ids, targetId));
+    if (targetId) onToggleExpanded(targetId, true);
+
+    const where = targetId
+      ? `“${findNode(nodes, targetId)?.name ?? "folder"}”`
+      : "the top level";
+    notify("info", `Moved ${ids.length} item${ids.length === 1 ? "" : "s"} to ${where}`, {
+      action: { label: "Undo", run: () => onChange(previous) },
+    });
+  }
+
+  function duplicateSelected() {
+    const ids = topmost(nodes, selectedIds);
+    let tree = nodes;
+    for (const id of ids) {
+      const node = findNode(tree, id);
+      if (!node) continue;
+      const copy = cloneNode(node);
+      copy.name = `${node.name} copy`;
+      tree = moveNode(insertNode(tree, null, copy), copy.id, id, "after");
+    }
+    onChange(tree);
+    clearSelection();
+  }
+
   function clearHoverTimer() {
     if (hoverTimer.current) {
       window.clearTimeout(hoverTimer.current.timer);
@@ -251,6 +390,17 @@ export function CollectionSidebar({
     setDropTarget(null);
     if (!target) return;
 
+    // Dragging one of several selected rows moves all of them — dropping only
+    // the row under the cursor would silently ignore the selection.
+    if (selectedIds.size > 1 && selectedIds.has(active)) {
+      const parent =
+        target.position === "inside" ? target.id : parentIdOf(nodes, target.id ?? "");
+      onChange(moveNodes(nodes, [...selectedIds], target.id === null ? null : parent));
+      if (parent) onToggleExpanded(parent, true);
+      clearSelection();
+      return;
+    }
+
     onChange(moveNode(nodes, active, target.id, target.position));
     if (target.position === "inside" && target.id) {
       onToggleExpanded(target.id, true);
@@ -273,6 +423,7 @@ export function CollectionSidebar({
             (!isFolder(node) && node.id === activeRequestId) ||
             (isFolder(node) && node.id === selectedFolderId)
           }
+          selected={selectedIds.has(node.id)}
           renaming={renamingId === node.id}
           onRename={(name) => rename(node.id, name)}
           onCancelRename={() => setRenamingId(null)}
@@ -281,7 +432,10 @@ export function CollectionSidebar({
             onCreateRequest(node.id);
           }}
           onNewFolder={() => addFolder(node.id)}
-          onClick={() => {
+          onClick={(e) => {
+            // A modified click is a selection gesture and never opens anything.
+            if (handleSelectClick(node.id, e)) return;
+            clearSelection();
             if (isFolder(node)) {
               setSelectedFolderId(node.id);
               onToggleExpanded(node.id);
@@ -296,6 +450,7 @@ export function CollectionSidebar({
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (!selectedIds.has(node.id)) clearSelection();
             setMenu({ x: e.clientX, y: e.clientY, node });
           }}
         />
@@ -321,7 +476,7 @@ export function CollectionSidebar({
   return (
     <aside
       data-tour="collection"
-      className="flex w-60 flex-none flex-col border-r border-edge bg-panel"
+      className="flex min-h-0 w-full flex-1 flex-col border-r border-edge bg-panel"
     >
       <div className="flex flex-none items-center gap-1 border-b border-edge px-2 py-1.5">
         <span className="px-1 text-xs font-semibold text-muted">Collection</span>
@@ -440,6 +595,10 @@ export function CollectionSidebar({
           onDuplicate={duplicate}
           onDelete={remove}
           onRun={onRun}
+          selectedCount={selectedIds.size}
+          onMoveSelected={moveSelected}
+          onDuplicateSelected={duplicateSelected}
+          onDeleteSelected={removeSelected}
         />
       )}
     </aside>
@@ -465,13 +624,14 @@ interface RowProps {
   drop: DropPosition | null;
   hidden: boolean;
   active: boolean;
+  selected: boolean;
   renaming: boolean;
   onRename: (name: string) => void;
   onCancelRename: () => void;
   onDoubleClick: () => void;
   onNewRequest: () => void;
   onNewFolder: () => void;
-  onClick: () => void;
+  onClick: (e: React.MouseEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }
 
@@ -482,6 +642,7 @@ function Row({
   drop,
   hidden,
   active,
+  selected,
   renaming,
   onRename,
   onCancelRename,
@@ -526,7 +687,13 @@ function Row({
       style={{ paddingLeft: 6 + depth * 12 }}
       className={`group flex cursor-default items-center gap-1.5 py-1 pr-2 text-xs ${dropCls} ${
         hidden ? "opacity-40" : ""
-      } ${active ? "bg-elevated text-ink" : "text-muted hover:bg-elevated/60"}`}
+      } ${
+        selected
+          ? "bg-brand/20 text-ink shadow-[inset_2px_0_0_0_var(--color-brand)]"
+          : active
+            ? "bg-elevated text-ink"
+            : "text-muted hover:bg-elevated/60"
+      }`}
       title={isFolder(node) ? node.name : `${node.method} ${node.url}`}
     >
       {isFolder(node) ? (
@@ -613,6 +780,11 @@ interface ContextMenuProps {
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
   onRun: (folderId: string | null) => void;
+  /** How many rows are highlighted; >1 turns the menu into a bulk menu. */
+  selectedCount: number;
+  onMoveSelected: (targetId: string | null) => void;
+  onDuplicateSelected: () => void;
+  onDeleteSelected: () => void;
 }
 
 function ContextMenu({
@@ -626,7 +798,12 @@ function ContextMenu({
   onDuplicate,
   onDelete,
   onRun,
+  selectedCount,
+  onMoveSelected,
+  onDuplicateSelected,
+  onDeleteSelected,
 }: ContextMenuProps) {
+  const [movingTo, setMovingTo] = useState(false);
   const { node } = state;
   // A folder hosts new items directly; a request puts them beside itself.
   const parentId = node
@@ -636,6 +813,77 @@ function ContextMenu({
     : null;
 
   const items: { label: string; run: () => void; danger?: boolean }[] = [];
+
+  // With several rows highlighted the menu acts on all of them; offering
+  // single-item actions here would be ambiguous about which one they meant.
+  if (selectedCount > 1) {
+    const many = `${selectedCount} items`;
+    return (
+      <div
+        className="fixed z-50 min-w-44 overflow-hidden rounded-md border border-edge bg-elevated py-1 shadow-xl"
+        style={{ left: state.x, top: state.y }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-3 py-1 text-[10px] tracking-wide text-muted uppercase">
+          {many} selected
+        </div>
+        <button
+          onMouseEnter={() => setMovingTo(true)}
+          onClick={() => setMovingTo((open) => !open)}
+          className="flex w-full items-center px-3 py-1 text-left text-xs text-ink hover:bg-panel"
+        >
+          Move to<span className="ml-auto text-muted">›</span>
+        </button>
+        {movingTo && (
+          <div className="max-h-56 overflow-auto border-y border-edge bg-panel/60">
+            <button
+              onClick={() => {
+                onMoveSelected(null);
+                onClose();
+              }}
+              className="block w-full px-5 py-1 text-left text-xs text-ink hover:bg-panel"
+            >
+              Top level
+            </button>
+            {folderOptions(nodes).map((folder) => (
+              <button
+                key={folder.id}
+                onClick={() => {
+                  onMoveSelected(folder.id);
+                  onClose();
+                }}
+                title={folder.label}
+                className="block w-full truncate px-5 py-1 text-left text-xs text-ink hover:bg-panel"
+              >
+                {folder.label}
+              </button>
+            ))}
+            {folderOptions(nodes).length === 0 && (
+              <p className="px-5 py-1 text-xs text-muted">No folders yet.</p>
+            )}
+          </div>
+        )}
+        <button
+          onClick={() => {
+            onDuplicateSelected();
+            onClose();
+          }}
+          className="block w-full px-3 py-1 text-left text-xs text-ink hover:bg-panel"
+        >
+          Duplicate {many}
+        </button>
+        <button
+          onClick={() => {
+            onDeleteSelected();
+            onClose();
+          }}
+          className="block w-full px-3 py-1 text-left text-xs text-err hover:bg-panel"
+        >
+          Delete {many}
+        </button>
+      </div>
+    );
+  }
 
   if (node && !isFolder(node)) {
     items.push({ label: "Open", run: () => onOpen(node) });
