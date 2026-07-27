@@ -1,0 +1,66 @@
+[package]
+name = "webrequestkit"
+version = "0.1.0"
+description = "API testing tool with proxy interception"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "webrequestkit_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-autostart = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP client for the API-testing side
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "gzip",
+    "brotli",
+    "deflate",
+    "http2",
+    "charset",
+    "stream",
+    "multipart",
+    "json",
+] }
+
+# Streaming protocols: WebSocket / Socket.IO / GraphQL subscriptions, and MQTT
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+rumqttc = "0.24"
+url = "2"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# MITM proxy engine
+hudsucker = "0.23"
+
+# CA / leaf certificate generation for TLS interception
+rcgen = { version = "0.13", features = ["pem"] }
+
+# Workspace storage (collections, environments, tabs)
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Mock server
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+
+# Body buffering for capturing request/response payloads
+http-body-util = "0.1"
+bytes = "1"
+futures = "0.3"

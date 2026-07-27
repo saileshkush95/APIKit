@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+/* Design tokens — exposed as Tailwind utilities (bg-canvas, text-ink, …).
+   The values here are the dark theme; the light theme overrides the same
+   variables below, so every utility follows the active theme automatically. */
+@theme {
+  --color-canvas: #1e1e1e;
+  --color-panel: #262626;
+  --color-elevated: #303030;
+  --color-edge: #3c3c3c;
+  --color-ink: #e8e8e8;
+  --color-muted: #9b9b9b;
+  --color-brand: #ff6c37;
+  --color-brand-bright: #ff8354;
+  --color-ok: #10b981;
+  --color-warn: #e8a33d;
+  --color-err: #ef5350;
+  --color-redirect: #7c8cff;
+
+  --color-method-get: #10b981;
+  --color-method-post: #e8a33d;
+  --color-method-put: #3b82f6;
+  --color-method-patch: #a78bfa;
+  --color-method-delete: #ef5350;
+
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas,
+    monospace;
+}
+
+:root[data-theme="light"] {
+  --color-canvas: #ffffff;
+  --color-panel: #f8f8f8;
+  --color-elevated: #eeeeee;
+  --color-edge: #dcdcdc;
+  --color-ink: #1f1f1f;
+  --color-muted: #6c6c6c;
+  --color-brand: #ff6c37;
+  --color-brand-bright: #f2551a;
+  --color-ok: #078a5e;
+  --color-warn: #b97b12;
+  --color-err: #d23f3a;
+  --color-redirect: #5b6bdb;
+
+  --color-method-get: #078a5e;
+  --color-method-post: #b97b12;
+  --color-method-put: #1d6fd8;
+  --color-method-patch: #7c58d3;
+  --color-method-delete: #d23f3a;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbars that match the active theme rather than the OS default. */
+* {
+  scrollbar-color: var(--color-edge) transparent;
+  scrollbar-width: thin;
+}
+
+/* Rendered Markdown (request docs, comments). */
+.wrk-markdown h2,
+.wrk-markdown h3,
+.wrk-markdown h4,
+.wrk-markdown h5 {
+  margin: 0.8em 0 0.3em;
+  font-weight: 600;
+  color: var(--color-ink);
+}
+.wrk-markdown h2 { font-size: 1.25em; }
+.wrk-markdown h3 { font-size: 1.1em; }
+.wrk-markdown p { margin: 0.4em 0; }
+.wrk-markdown a { color: var(--color-brand); text-decoration: underline; }
+.wrk-markdown .wrk-list { margin: 0.4em 0; padding-left: 1.2em; list-style: disc; }
+.wrk-markdown .wrk-quote {
+  margin: 0.4em 0;
+  padding-left: 0.7em;
+  border-left: 2px solid var(--color-edge);
+  color: var(--color-muted);
+}
+.wrk-markdown .wrk-code {
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+  background: var(--color-elevated);
+  font-family: var(--font-mono);
+}
+.wrk-markdown .wrk-pre {
+  margin: 0.5em 0;
+  padding: 0.6em;
+  overflow-x: auto;
+  border: 1px solid var(--color-edge);
+  border-radius: 4px;
+  background: var(--color-elevated);
+  font-family: var(--font-mono);
+}
