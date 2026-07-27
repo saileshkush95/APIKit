@@ -1,3 +1,4 @@
+import { useOnboarding } from "../../shared/state/onboarding";
 import { useSettings } from "../../shared/state/settings";
 import { useTheme, type ThemeMode } from "../../shared/state/theme";
 import type { AppSettings, HttpVersion } from "../../shared/types";
@@ -101,6 +102,7 @@ function Toggle({
 export function SettingsPanel() {
   const { settings, update, reset } = useSettings();
   const { mode, setMode } = useTheme();
+  const { replay, startTour } = useOnboarding();
 
   function set<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
     update({ [key]: value } as Partial<AppSettings>);
@@ -241,6 +243,28 @@ export function SettingsPanel() {
               Streaming protocols still verify certificates.
             </p>
           )}
+        </Section>
+
+        <Section
+          title="Getting started"
+          description="Revisit the introduction whenever you like."
+        >
+          <Row label="Introduction">
+            <div className="flex gap-2">
+              <button
+                onClick={replay}
+                className="rounded border border-edge px-2.5 py-1 text-xs text-muted hover:border-brand hover:text-ink"
+              >
+                Show welcome screen
+              </button>
+              <button
+                onClick={startTour}
+                className="rounded border border-edge px-2.5 py-1 text-xs text-muted hover:border-brand hover:text-ink"
+              >
+                Take the tour
+              </button>
+            </div>
+          </Row>
         </Section>
 
         <Section

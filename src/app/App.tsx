@@ -10,11 +10,14 @@ import { RunnerPanel } from "../features/runner/RunnerPanel";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
 import { SyncPanel } from "../features/sync/SyncPanel";
 import { ThemeToggle } from "../features/settings/ThemeToggle";
+import { Tour } from "../features/onboarding/Tour";
+import { WelcomeScreen } from "../features/onboarding/WelcomeScreen";
 import { Toaster } from "../shared/components/Toaster";
 import { WorkspaceSwitcher } from "../features/workspaces/WorkspaceSwitcher";
 import { CollectionProvider } from "../shared/state/collection";
 import { ActiveRequestProvider } from "../shared/state/activeRequest";
 import { ConfirmProvider } from "../shared/state/confirm";
+import { OnboardingProvider, useOnboarding } from "../shared/state/onboarding";
 import { CommentsProvider } from "../shared/state/comments";
 import { MonitorsProvider } from "../shared/state/monitors";
 import { SettingsProvider } from "../shared/state/settings";
@@ -45,6 +48,12 @@ function Shell() {
   const [view, setView] = useState<View>("client");
   // Set when the sidebar asks to run a folder, consumed by the runner.
   const [runTarget, setRunTarget] = useState<string | null>(null);
+  // Bumped to ask the client to create a request or open the importer.
+  const [clientIntent, setClientIntent] = useState<{
+    kind: "new" | "import";
+    at: number;
+  } | null>(null);
+  const { showWelcome, startTour } = useOnboarding();
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-canvas text-ink">
@@ -65,6 +74,13 @@ function Shell() {
         <div className="ml-auto flex items-center gap-3">
           <WorkspaceSwitcher />
           <EnvironmentBar />
+          <button
+            onClick={startTour}
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-edge text-xs text-muted hover:bg-elevated hover:text-ink"
+            title="Take the tour"
+          >
+            ?
+          </button>
           <ThemeToggle />
         </div>
       </header>
@@ -82,6 +98,7 @@ function Shell() {
                 setRunTarget(folderId);
                 setView("runner");
               }}
+              intent={clientIntent}
             />
           )}
           {view === "runner" && <RunnerPanel initialTarget={runTarget} />}
@@ -100,6 +117,21 @@ function Shell() {
           {view === "settings" && <SettingsPanel />}
         </main>
       </div>
+
+      {showWelcome && (
+        <WelcomeScreen
+          onCreateRequest={() => {
+            setView("client");
+            setClientIntent({ kind: "new", at: Date.now() });
+          }}
+          onImport={() => {
+            setView("client");
+            setClientIntent({ kind: "import", at: Date.now() });
+          }}
+          onOpenSync={() => setView("sync")}
+        />
+      )}
+      <Tour />
     </div>
   );
 }
@@ -135,9 +167,11 @@ function App() {
     <ThemeProvider>
       <SettingsProvider>
         <ConfirmProvider>
-          <WorkspacesProvider>
+          <OnboardingProvider>
+            <WorkspacesProvider>
             <WorkspaceScope />
-          </WorkspacesProvider>
+            </WorkspacesProvider>
+          </OnboardingProvider>
           <Toaster />
         </ConfirmProvider>
       </SettingsProvider>

@@ -278,7 +278,7 @@ export function RequestPane({
       )}
 
       {/* URL bar */}
-      <div className="flex flex-none gap-2 px-4 py-2.5">
+      <div data-tour="urlbar" className="flex flex-none gap-2 px-4 py-2.5">
         <select
           value={protocol}
           onChange={(e) => switchProtocol(e.target.value as Protocol)}
@@ -384,7 +384,10 @@ export function RequestPane({
         className="flex min-h-0 flex-col border-t border-edge"
         style={{ flexBasis: `${split * 100}%`, flexGrow: 0, flexShrink: 1 }}
       >
-        <div className="flex flex-none items-center gap-1 border-b border-edge px-3 py-1.5">
+        <div
+          data-tour="request-tabs"
+          className="flex flex-none items-center gap-1 border-b border-edge px-3 py-1.5"
+        >
           {visibleTabs.map((key) => (
             <PaneTab
               key={key}

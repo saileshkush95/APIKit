@@ -11,7 +11,7 @@ export function EnvironmentBar() {
 
   return (
     <>
-      <div className="flex items-center gap-1.5">
+      <div data-tour="environments" className="flex items-center gap-1.5">
         <select
           value={activeId ?? NO_ENV}
           onChange={(e) =>

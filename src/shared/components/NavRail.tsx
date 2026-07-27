@@ -79,7 +79,10 @@ export const NAV_ICONS = {
 /** Postman-style vertical rail of workspace sections. */
 export function NavRail({ items, active, onSelect }: Props) {
   return (
-    <nav className="flex w-16 flex-none flex-col items-stretch border-r border-edge bg-panel py-1.5">
+    <nav
+      data-tour="nav"
+      className="flex w-16 flex-none flex-col items-stretch border-r border-edge bg-panel py-1.5"
+    >
       {items.map((item) => {
         const selected = item.key === active;
         return (

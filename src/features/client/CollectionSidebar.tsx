@@ -312,7 +312,10 @@ export function CollectionSidebar({
   const draggedNode = dragId ? findNode(nodes, dragId) : null;
 
   return (
-    <aside className="flex w-60 flex-none flex-col border-r border-edge bg-panel">
+    <aside
+      data-tour="collection"
+      className="flex w-60 flex-none flex-col border-r border-edge bg-panel"
+    >
       <div className="flex flex-none items-center gap-1 border-b border-edge px-2 py-1.5">
         <span className="px-1 text-xs font-semibold text-muted">Collection</span>
         <div className="ml-auto flex items-center">

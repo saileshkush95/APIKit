@@ -19,6 +19,10 @@ import {
   setSetting,
 } from "../lib/api";
 import { GLOBAL_SCOPE, invalidateWorkspace, SETTINGS } from "../lib/storage";
+import {
+  SplashScreen,
+  useMinimumDuration,
+} from "../../features/onboarding/SplashScreen";
 import type { WorkspaceMeta } from "../types";
 
 interface WorkspacesValue {
@@ -91,6 +95,9 @@ export function WorkspacesProvider({ children }: { children: ReactNode }) {
     [activeId, switchTo],
   );
 
+  // Held briefly even on a fast start, so the splash does not flash past.
+  const splashing = useMinimumDuration(!loaded);
+
   const active = workspaces.find((w) => w.id === activeId) ?? null;
 
   const value = useMemo<WorkspacesValue>(
@@ -98,12 +105,8 @@ export function WorkspacesProvider({ children }: { children: ReactNode }) {
     [workspaces, active, switchTo, create, rename, remove, error],
   );
 
-  if (!loaded) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-canvas text-muted">
-        Loading workspace…
-      </div>
-    );
+  if (splashing) {
+    return <SplashScreen />;
   }
 
   if (error && workspaces.length === 0) {

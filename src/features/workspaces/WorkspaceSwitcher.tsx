@@ -36,7 +36,7 @@ export function WorkspaceSwitcher() {
   }
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} data-tour="workspace" className="relative">
       <button
         onClick={() => setOpen((prev) => !prev)}
         className="flex h-7 items-center gap-1.5 rounded-md border border-edge px-2.5 text-xs text-ink hover:bg-elevated"

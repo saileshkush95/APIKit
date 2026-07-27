@@ -142,9 +142,11 @@ function sameDraft(a: RequestDraft, b: RequestDraft): boolean {
 interface ApiClientProps {
   /** Opens the runner on a folder (or the whole collection when null). */
   onRun: (folderId: string | null) => void;
+  /** A request from the welcome screen; the timestamp makes it repeatable. */
+  intent?: { kind: "new" | "import"; at: number } | null;
 }
 
-export function ApiClient({ onRun }: ApiClientProps) {
+export function ApiClient({ onRun, intent }: ApiClientProps) {
   const workspaceId = useWorkspaceId();
   const { tree, setTree, expanded, toggleExpanded } = useCollection();
   const {
@@ -470,6 +472,13 @@ export function ApiClient({ onRun }: ApiClientProps) {
       });
     }
   }
+
+  useEffect(() => {
+    if (!intent) return;
+    if (intent.kind === "import") setImporting(true);
+    else createRequest(null);
+    // `at` changes each time, so asking twice works.
+  }, [intent?.at]);
 
   /** Writes the collection and environments to a file the user picks. */
   async function exportWorkspace() {
