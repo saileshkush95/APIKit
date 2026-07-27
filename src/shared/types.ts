@@ -1,0 +1,642 @@
+// Types shared with the Rust backend. Field names use camelCase to match the
+// `#[serde(rename_all = "camelCase")]` attributes on the Rust structs.
+
+/** A name/value pair — the shape behind headers, query params and variables. */
+export interface KeyValue {
+  name: string;
+  value: string;
+  /** Form-data rows can carry a file instead of text. */
+  kind?: "text" | "file";
+  filePath?: string;
+  /** Environment variables only: never synced, never exported. */
+  secret?: boolean;
+}
+
+/** One part of a multipart body; the backend reads `filePath` from disk. */
+export interface MultipartPart {
+  name: string;
+  value: string;
+  filePath?: string | null;
+  fileName?: string | null;
+  contentType?: string | null;
+}
+
+/** A file attached to a GraphQL request, mapped onto a variable path. */
+export interface GraphqlFile {
+  /** Variable path, e.g. `file` or `input.files.0`. */
+  variable: string;
+  filePath: string;
+}
+
+export type Header = KeyValue;
+export type Variable = KeyValue;
+
+export interface Environment {
+  id: string;
+  name: string;
+  variables: Variable[];
+}
+
+export interface HttpRequestSpec {
+  method: string;
+  url: string;
+  headers: Header[];
+  body?: string | null;
+  timeoutMs?: number | null;
+  httpVersion?: string | null;
+  verifyTls?: boolean | null;
+  followRedirects?: boolean | null;
+  multipart?: MultipartPart[] | null;
+}
+
+export interface HttpResponseData {
+  status: number;
+  statusText: string;
+  headers: Header[];
+  body: string;
+  timeMs: number;
+  sizeBytes: number;
+  finalUrl: string;
+  /** Protocol actually negotiated, e.g. "HTTP/2.0". */
+  httpVersion: string;
+}
+
+export interface Flow {
+  id: number;
+  method: string;
+  url: string;
+  host: string;
+  requestHeaders: Header[];
+  requestBody: string;
+  status: number | null;
+  statusText: string;
+  responseHeaders: Header[];
+  responseBody: string;
+  startedMs: number;
+  durationMs: number;
+}
+
+export interface ProxyStatus {
+  running: boolean;
+  port: number | null;
+  flowCount: number;
+}
+
+export type BodyMode =
+  | "none"
+  | "formData"
+  | "urlEncoded"
+  | "raw"
+  | "binary"
+  | "graphql";
+
+export type RawLanguage = "json" | "text" | "xml" | "html" | "javascript";
+
+export type AuthType = "none" | "bearer" | "basic" | "apiKey";
+
+export interface Auth {
+  type: AuthType;
+  token: string;
+  username: string;
+  password: string;
+  key: string;
+  value: string;
+  /** Where an API key is placed. */
+  addTo: "header" | "query";
+}
+
+/** Protocols a request can speak. */
+export type Protocol =
+  | "rest"
+  | "graphql"
+  | "websocket"
+  | "sse"
+  | "socketio"
+  | "mqtt"
+  | "graphqlws"
+  | "webrtc";
+
+export type HttpVersion = "auto" | "http1" | "http2";
+
+/** Protocols driven by a long-lived session rather than one round trip. */
+export const STREAMING_PROTOCOLS: Protocol[] = [
+  "websocket",
+  "sse",
+  "socketio",
+  "mqtt",
+  "graphqlws",
+];
+
+export function isStreaming(protocol: Protocol): boolean {
+  return STREAMING_PROTOCOLS.includes(protocol);
+}
+
+export const PROTOCOL_LABELS: Record<Protocol, string> = {
+  rest: "REST",
+  graphql: "GraphQL",
+  websocket: "WebSocket",
+  sse: "SSE",
+  socketio: "Socket.IO",
+  mqtt: "MQTT",
+  graphqlws: "GraphQL Subs",
+  webrtc: "WebRTC",
+};
+
+/** Everything the builder tracks beyond the raw wire fields. */
+export interface RequestConfig {
+  protocol: Protocol;
+  httpVersion: HttpVersion;
+  bodyMode: BodyMode;
+  rawLanguage: RawLanguage;
+  formData: KeyValue[];
+  urlEncoded: KeyValue[];
+  graphqlQuery: string;
+  graphqlVariables: string;
+  /** Files uploaded with a GraphQL request (multipart request spec). */
+  graphqlFiles: GraphqlFile[];
+  auth: Auth;
+  /** Draft message for streaming protocols. */
+  streamMessage: string;
+  mqttTopics: string;
+  mqttPublishTopic: string;
+  mqttClientId: string;
+  mqttUsername: string;
+  mqttPassword: string;
+  mqttQos: number;
+  /** Comma-separated ICE servers for the WebRTC connectivity check. */
+  iceServers: string;
+  /** Markdown documentation shown in the request's Docs tab. */
+  docs: string;
+  /** JavaScript run before the request is sent. */
+  preScript: string;
+  /** JavaScript run once the response arrives. */
+  postScript: string;
+}
+
+// --- Application settings ----------------------------------------------------
+
+export interface AppSettings {
+  accentColor: string;
+  uiFont: string;
+  monoFont: string;
+  fontSize: number;
+  defaultTimeoutMs: number;
+  followRedirects: boolean;
+  /** Reject invalid/self-signed certificates. */
+  verifyTls: boolean;
+  /** Rewrite http:// → https:// and ws:// → wss:// before connecting. */
+  enforceSecure: boolean;
+  defaultHttpVersion: HttpVersion;
+  /** How many messages a streaming session keeps in memory. */
+  maxStreamMessages: number;
+  /** Closing the window hides it instead of quitting, so monitors keep running. */
+  runInBackground: boolean;
+  startAtLogin: boolean;
+  /** Name attached to comments you write. */
+  userName: string;
+}
+
+// --- LAN sync ----------------------------------------------------------------
+
+export interface SyncPeer {
+  id: string;
+  name: string;
+  /** host:port of the peer sharing its workspace. */
+  host: string;
+  token: string;
+  enabled: boolean;
+  /** Watermarks, so each round only exchanges what changed. */
+  pulledWatermark: number;
+  pushedWatermark: number;
+  lastSyncMs: number | null;
+  lastError: string | null;
+  lastSkewMs: number | null;
+}
+
+export interface GithubConfig {
+  repo: string;
+  branch: string;
+  path: string;
+  token: string;
+}
+
+export interface GithubFile {
+  content: string;
+  sha: string | null;
+  exists: boolean;
+}
+
+export interface GithubPushResult {
+  sha: string;
+  commitUrl: string;
+}
+
+/** The document written to disk on export and to GitHub on push. */
+export interface WorkspaceExport {
+  format: "webrequestkit";
+  version: 1;
+  exportedAt: string;
+  workspace: string;
+  tree: TreeNode[];
+  environments: Environment[];
+  monitors?: Monitor[];
+  mockRoutes?: MockRoute[];
+}
+
+export interface SyncServerStatus {
+  running: boolean;
+  port: number | null;
+  addresses: string[];
+}
+
+export interface SyncOutcome {
+  pushed: number;
+  pulled: number;
+  skipped: number;
+  peerNow: number;
+  localNow: number;
+  pulledWatermark: number;
+  pushedWatermark: number;
+}
+
+export function defaultSettings(): AppSettings {
+  return {
+    accentColor: "#ff6c37",
+    uiFont: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+    monoFont:
+      "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace",
+    fontSize: 13,
+    defaultTimeoutMs: 30_000,
+    followRedirects: true,
+    verifyTls: true,
+    enforceSecure: false,
+    defaultHttpVersion: "auto",
+    maxStreamMessages: 500,
+    runInBackground: false,
+    startAtLogin: false,
+    userName: "",
+  };
+}
+
+export function defaultAuth(): Auth {
+  return {
+    type: "none",
+    token: "",
+    username: "",
+    password: "",
+    key: "",
+    value: "",
+    addTo: "header",
+  };
+}
+
+export function defaultConfig(): RequestConfig {
+  return {
+    protocol: "rest",
+    httpVersion: "auto",
+    bodyMode: "none",
+    rawLanguage: "json",
+    formData: [{ name: "", value: "" }],
+    urlEncoded: [{ name: "", value: "" }],
+    graphqlQuery: "",
+    graphqlVariables: "{}",
+    graphqlFiles: [],
+    auth: defaultAuth(),
+    streamMessage: "",
+    mqttTopics: "#",
+    mqttPublishTopic: "",
+    mqttClientId: "",
+    mqttUsername: "",
+    mqttPassword: "",
+    mqttQos: 0,
+    iceServers: "stun:stun.l.google.com:19302",
+    docs: "",
+    preScript: "",
+    postScript: "",
+  };
+}
+
+/** Fills in fields added after a workspace was first saved. */
+export function normalizeConfig(config?: Partial<RequestConfig> | null): RequestConfig {
+  const base = defaultConfig();
+  if (!config) return base;
+  return {
+    ...base,
+    ...config,
+    auth: { ...base.auth, ...(config.auth ?? {}) },
+    formData: config.formData?.length ? config.formData : base.formData,
+    graphqlFiles: config.graphqlFiles ?? base.graphqlFiles,
+    urlEncoded: config.urlEncoded?.length ? config.urlEncoded : base.urlEncoded,
+  };
+}
+
+/** The editable payload of a request, shared by saved requests and open tabs. */
+export interface RequestDraft {
+  method: string;
+  url: string;
+  headers: Header[];
+  body: string;
+  tests: Assertion[];
+  config: RequestConfig;
+}
+
+export interface Assertion {
+  id: string;
+  source: "status" | "responseTime" | "header" | "jsonBody" | "bodyText";
+  /** Header name or JSON path, depending on `source`. */
+  target: string;
+  op:
+    | "equals"
+    | "notEquals"
+    | "contains"
+    | "lessThan"
+    | "greaterThan"
+    | "exists"
+    | "matches";
+  expected: string;
+}
+
+export interface AssertionResult {
+  assertion: Assertion;
+  passed: boolean;
+  actual: string;
+  message: string;
+}
+
+export interface SavedRequest extends RequestDraft {
+  kind: "request";
+  id: string;
+  name: string;
+}
+
+export interface Folder {
+  kind: "folder";
+  id: string;
+  name: string;
+  children: TreeNode[];
+}
+
+/** A collection is a list of these; folders nest arbitrarily deep. */
+export type TreeNode = Folder | SavedRequest;
+
+export interface RequestTab extends RequestDraft {
+  id: string;
+  /** Explicit tab title; `null` means "derive it from the URL". */
+  name: string | null;
+  /** Id of the saved request this tab edits, if any. */
+  sourceId: string | null;
+  reqTab: RequestTabKey;
+  respTab: ResponseTabKey;
+
+  // Runtime-only state — not persisted.
+  response: HttpResponseData | null;
+  error: string | null;
+  loading: boolean;
+  results: AssertionResult[];
+  scriptLogs: ScriptLogEntry[];
+  stream: StreamSession;
+}
+
+// --- Comments ----------------------------------------------------------------
+
+export interface Comment {
+  id: string;
+  requestId: string;
+  /** Set when this is a reply to another comment. */
+  parentId: string | null;
+  author: string;
+  body: string;
+  createdAt: number;
+}
+
+// --- Monitoring --------------------------------------------------------------
+
+export type MonitorTargetKind =
+  | "request"
+  | "folder"
+  | "collection"
+  | "url";
+
+export interface Monitor {
+  id: string;
+  name: string;
+  targetKind: MonitorTargetKind;
+  targetId: string | null;
+  intervalSecs: number;
+  enabled: boolean;
+  /** Environment to run against; null uses whichever is active. */
+  environmentId: string | null;
+  notify: boolean;
+  // Used when `targetKind` is "url" — an endpoint checked directly, without a
+  // saved request behind it.
+  method: string;
+  url: string;
+  headers: Header[];
+  body: string;
+  expectedStatus: number;
+}
+
+export interface MonitorRun {
+  id: string;
+  monitorId: string;
+  atMs: number;
+  ok: boolean;
+  requests: number;
+  failures: number;
+  avgMs: number;
+  detail: string;
+}
+
+export const MONITOR_INTERVALS: { value: number; label: string }[] = [
+  { value: 30, label: "30 seconds" },
+  { value: 60, label: "1 minute" },
+  { value: 300, label: "5 minutes" },
+  { value: 900, label: "15 minutes" },
+  { value: 3600, label: "1 hour" },
+];
+
+// --- Load testing ------------------------------------------------------------
+
+export type LoadTestKind =
+  | "load"
+  | "stress"
+  | "spike"
+  | "soak"
+  | "assertions"
+  | "chain";
+
+export interface LoadPhase {
+  label: string;
+  vus: number;
+  durationSecs: number;
+}
+
+export interface LoadConfig {
+  request: HttpRequestSpec;
+  phases: LoadPhase[];
+  thinkTimeMs: number;
+}
+
+export interface PhaseReport {
+  label: string;
+  vus: number;
+  durationSecs: number;
+  requests: number;
+  failures: number;
+  statuses: [number, number][];
+  avgMs: number;
+  minMs: number;
+  maxMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+  rps: number;
+}
+
+export interface LoadReport {
+  phases: PhaseReport[];
+  totalRequests: number;
+  totalFailures: number;
+  durationMs: number;
+  cancelled: boolean;
+}
+
+export interface LoadProgress {
+  phaseIndex: number;
+  label: string;
+  elapsedSecs: number;
+  durationSecs: number;
+  requests: number;
+  failures: number;
+  avgMs: number;
+}
+
+// --- Streaming sessions ------------------------------------------------------
+
+export interface StreamEvent {
+  sessionId: string;
+  direction: "in" | "out" | "system";
+  data: string;
+  label: string | null;
+  atMs: number;
+}
+
+export type StreamState =
+  | "idle"
+  | "connecting"
+  | "open"
+  | "closed"
+  | "error";
+
+export interface StreamStatus {
+  sessionId: string;
+  state: Exclude<StreamState, "idle">;
+  detail: string | null;
+}
+
+export interface ScriptLogEntry {
+  phase: "pre" | "post";
+  level: "log" | "error";
+  message: string;
+}
+
+/** Runtime state of a tab's live connection. */
+export interface StreamSession {
+  sessionId: string | null;
+  state: StreamState;
+  detail: string | null;
+  events: StreamEvent[];
+}
+
+export function emptySession(): StreamSession {
+  return { sessionId: null, state: "idle", detail: null, events: [] };
+}
+
+export interface StreamConnectConfig {
+  kind: string;
+  url: string;
+  headers: Header[];
+  topics: string[];
+  query: string;
+  variables: string;
+  clientId: string | null;
+  username: string | null;
+  password: string | null;
+  qos: number;
+}
+
+export type RequestTabKey =
+  | "params"
+  | "auth"
+  | "headers"
+  | "body"
+  | "tests"
+  | "scripts"
+  | "docs"
+  | "comments"
+  | "connection";
+export type ResponseTabKey = "body" | "cookies" | "headers" | "tests";
+
+/** The persisted slice of a tab — response state is deliberately transient. */
+export interface StoredTab extends Omit<RequestDraft, "config"> {
+  id: string;
+  name: string | null;
+  sourceId: string | null;
+  reqTab: RequestTabKey;
+  /** Persisted as opaque JSON; normalized on load. */
+  config: Partial<RequestConfig>;
+}
+
+/** A canned response served by the built-in mock server. */
+export interface MockRoute {
+  id: string;
+  enabled: boolean;
+  method: string;
+  /** Path pattern; supports a trailing `*` wildcard. */
+  path: string;
+  status: number;
+  headers: Header[];
+  body: string;
+  delayMs: number;
+}
+
+export interface MockStatus {
+  running: boolean;
+  port: number | null;
+  hitCount: number;
+}
+
+export interface MockHit {
+  method: string;
+  path: string;
+  status: number;
+  routeId: string | null;
+  atMs: number;
+}
+
+export interface WorkspaceMeta {
+  id: string;
+  name: string;
+}
+
+/** Everything one workspace holds, as returned by `load_workspace_data`. */
+export interface WorkspaceData {
+  tree: TreeNode[];
+  environments: Environment[];
+  tabs: StoredTab[];
+  mockRoutes: MockRoute[];
+  monitors: Monitor[];
+  comments: Comment[];
+  monitorRuns: MonitorRun[];
+  settings: Record<string, string>;
+}
+
+export const HTTP_METHODS = [
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "HEAD",
+  "OPTIONS",
+] as const;

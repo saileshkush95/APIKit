@@ -4,6 +4,7 @@ mod http_client;
 mod load;
 mod mock;
 mod proxy;
+mod secrets;
 mod store;
 mod sync;
 mod stream;
@@ -85,6 +86,9 @@ pub fn run() {
             github::github_push,
             github::github_check,
             github::write_text_file,
+            secrets::secret_set,
+            secrets::secret_get,
+            secrets::secret_delete,
             store::set_setting,
             background::set_background_mode,
             background::background_mode,

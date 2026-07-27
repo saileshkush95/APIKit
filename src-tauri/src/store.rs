@@ -185,7 +185,7 @@ pub struct WorkspaceData {
     pub settings: HashMap<String, String>,
 }
 
-const SCHEMA: &str = r#"
+pub(crate) const SCHEMA: &str = r#"
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS workspaces (
@@ -323,7 +323,7 @@ CREATE TABLE IF NOT EXISTS settings (
 
 /// Indexes are created after [`migrate`], because a database written by an
 /// older build may still be missing the columns they cover.
-const INDEXES: &str = r#"
+pub(crate) const INDEXES: &str = r#"
 CREATE INDEX IF NOT EXISTS idx_folders_parent    ON folders(parent_id);
 CREATE INDEX IF NOT EXISTS idx_folders_ws        ON folders(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_requests_folder   ON requests(folder_id);
@@ -402,6 +402,8 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         let _ = conn.execute(statement, []);
     }
 
+    stamp_unversioned_rows(conn)?;
+
     // `settings` gained a `scope` column, which needs a table rebuild rather
     // than an ALTER because the primary key changed.
     let scoped = conn.prepare("SELECT scope FROM settings LIMIT 1").is_ok();
@@ -424,6 +426,38 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Tables that take part in sync, in dependency order.
+const VERSIONED_TABLES: &[&str] = &[
+    "workspaces",
+    "folders",
+    "requests",
+    "environments",
+    "mock_routes",
+    "monitors",
+    "comments",
+];
+
+/// Gives a real timestamp to rows that predate sync bookkeeping.
+///
+/// The migration added `updated_at` with `DEFAULT 0`, and [`snapshot`] only
+/// sends rows *newer* than the caller's watermark — a first sync asks for
+/// everything after 0, so rows still sitting at 0 would never be sent. Left
+/// alone they are invisible to every peer, forever.
+pub(crate) fn stamp_unversioned_rows(conn: &Connection) -> Result<usize, String> {
+    let now = now_ms();
+    let mut stamped = 0;
+    for table in VERSIONED_TABLES {
+        // Tables missing on an old database simply report an error we ignore.
+        if let Ok(count) = conn.execute(
+            &format!("UPDATE {table} SET updated_at = ?1 WHERE updated_at = 0"),
+            params![now],
+        ) {
+            stamped += count;
+        }
+    }
+    Ok(stamped)
 }
 
 fn ensure_default_workspace(conn: &Connection) -> Result<String, String> {
@@ -646,7 +680,7 @@ enum Stub {
     Request(TreeNode),
 }
 
-fn read_tree(conn: &Connection, workspace_id: &str) -> Result<Vec<TreeNode>, String> {
+pub(crate) fn read_tree(conn: &Connection, workspace_id: &str) -> Result<Vec<TreeNode>, String> {
     let mut children: HashMap<Option<String>, Vec<(i64, Stub)>> = HashMap::new();
 
     let mut folders = conn
@@ -1484,6 +1518,64 @@ pub struct SyncPayload {
     pub now: i64,
 }
 
+/// Variables flagged `secret` never leave the machine: their names travel so
+/// peers know what to fill in, their values do not.
+fn redact_secret_variables(value: &serde_json::Value) -> serde_json::Value {
+    let serde_json::Value::String(raw) = value else {
+        return value.clone();
+    };
+    let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return value.clone();
+    };
+    let Some(list) = parsed.as_array_mut() else {
+        return value.clone();
+    };
+    for entry in list.iter_mut() {
+        if entry.get("secret").and_then(|s| s.as_bool()).unwrap_or(false) {
+            entry["value"] = serde_json::Value::String(String::new());
+        }
+    }
+    serde_json::Value::String(parsed.to_string())
+}
+
+/// Puts this machine's secret values back over a redacted incoming row, so a
+/// sync never wipes a credential the peer could not send.
+fn merge_local_secrets(
+    incoming: &serde_json::Value,
+    local: Option<&str>,
+) -> serde_json::Value {
+    let (serde_json::Value::String(raw), Some(local_raw)) = (incoming, local) else {
+        return incoming.clone();
+    };
+    let (Ok(mut parsed), Ok(local_parsed)) = (
+        serde_json::from_str::<serde_json::Value>(raw),
+        serde_json::from_str::<serde_json::Value>(local_raw),
+    ) else {
+        return incoming.clone();
+    };
+    let (Some(list), Some(local_list)) = (parsed.as_array_mut(), local_parsed.as_array()) else {
+        return incoming.clone();
+    };
+
+    for entry in list.iter_mut() {
+        let is_secret = entry.get("secret").and_then(|s| s.as_bool()).unwrap_or(false);
+        let is_blank = entry.get("value").and_then(|v| v.as_str()).unwrap_or("").is_empty();
+        if !is_secret || !is_blank {
+            continue;
+        }
+        let name = entry.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        let kept = local_list
+            .iter()
+            .find(|candidate| candidate.get("name").and_then(|n| n.as_str()) == Some(name))
+            .and_then(|candidate| candidate.get("value"))
+            .cloned();
+        if let Some(kept) = kept {
+            entry["value"] = kept;
+        }
+    }
+    serde_json::Value::String(parsed.to_string())
+}
+
 /// Canonical text form of a value, used for both signatures and binding.
 fn value_text(value: &serde_json::Value) -> String {
     match value {
@@ -1598,7 +1690,12 @@ pub fn snapshot(
             .query_map(params![workspace_id, since], |row| {
                 let mut values = Vec::with_capacity(count);
                 for index in 0..count {
-                    values.push(json_from_sql(row.get::<_, rusqlite::types::Value>(index + 3)?));
+                    let mut value =
+                        json_from_sql(row.get::<_, rusqlite::types::Value>(index + 3)?);
+                    if spec.name == "environments" && spec.columns[index] == "variables" {
+                        value = redact_secret_variables(&value);
+                    }
+                    values.push(value);
                 }
                 Ok(SyncRow {
                     table: spec.name.to_string(),
@@ -1716,6 +1813,22 @@ pub fn apply(conn: &mut Connection, payload: &SyncPayload) -> Result<ApplyReport
             continue;
         }
 
+        // Environments arrive with secret values blanked; keep ours.
+        let mut values = row.values.clone();
+        if spec.name == "environments" {
+            let local_variables: Option<String> = tx
+                .query_row(
+                    "SELECT variables FROM environments WHERE id = ?1",
+                    params![row.id],
+                    |r| r.get(0),
+                )
+                .ok();
+            if let Some(index) = spec.columns.iter().position(|c| *c == "variables") {
+                values[index] =
+                    merge_local_secrets(&values[index], local_variables.as_deref());
+            }
+        }
+
         let columns = spec.columns.join(", ");
         let placeholders: Vec<String> = (0..spec.columns.len())
             .map(|index| format!("?{}", index + 6))
@@ -1745,9 +1858,9 @@ pub fn apply(conn: &mut Connection, payload: &SyncPayload) -> Result<ApplyReport
             rusqlite::types::Value::Text(payload.workspace_id.clone()),
             rusqlite::types::Value::Integer(row.updated_at),
             rusqlite::types::Value::Integer(row.deleted as i64),
-            rusqlite::types::Value::Text(row_sig(&row.values)),
+            rusqlite::types::Value::Text(row_sig(&values)),
         ];
-        bindings.extend(row.values.iter().map(sql_value));
+        bindings.extend(values.iter().map(sql_value));
 
         tx.execute(&sql, rusqlite::params_from_iter(bindings))
             .map_err(to_err)?;
@@ -1828,6 +1941,33 @@ mod tests {
             })
             .unwrap();
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn rows_predating_sync_are_stamped_so_they_can_travel() {
+        let mut a = memory_db();
+        write_tree(&mut a, "w", &[request("r1", "Legacy")]).unwrap();
+        // Simulate a row created before sync bookkeeping existed.
+        a.execute("UPDATE requests SET updated_at = 0", []).unwrap();
+
+        let invisible = snapshot(&a, "w", 0).unwrap();
+        assert!(
+            invisible.rows.iter().all(|row| row.table != "requests"),
+            "a row at updated_at = 0 cannot be sent — this is the bug",
+        );
+
+        let stamped = stamp_unversioned_rows(&a).unwrap();
+        assert!(stamped >= 1);
+
+        let payload = snapshot(&a, "w", 0).unwrap();
+        assert!(
+            payload.rows.iter().any(|row| row.table == "requests"),
+            "after stamping it must be included",
+        );
+
+        let mut b = memory_db();
+        apply(&mut b, &payload).unwrap();
+        assert_eq!(names(&read_tree(&b, "w").unwrap()), vec!["Legacy"]);
     }
 
     #[test]
@@ -1934,5 +2074,47 @@ mod tests {
             .expect("workspace created on the peer");
         assert_eq!(name, "Test");
         assert_eq!(names(&read_tree(&b, "w").unwrap()), vec!["Login"]);
+    }
+}
+
+#[cfg(test)]
+mod secret_tests {
+    use super::*;
+
+    fn variables(json: &str) -> serde_json::Value {
+        serde_json::Value::String(json.to_string())
+    }
+
+    #[test]
+    fn secret_values_never_leave_the_machine() {
+        let redacted = redact_secret_variables(&variables(
+            r#"[{"name":"baseUrl","value":"https://api"},{"name":"token","value":"hunter2","secret":true}]"#,
+        ));
+        let text = redacted.as_str().unwrap();
+        assert!(text.contains("https://api"), "plain values still travel");
+        assert!(!text.contains("hunter2"), "secret value must be stripped");
+        assert!(text.contains("\"token\""), "its name still travels");
+    }
+
+    #[test]
+    fn a_sync_does_not_wipe_a_local_secret() {
+        let incoming = variables(
+            r#"[{"name":"token","value":"","secret":true},{"name":"baseUrl","value":"https://new"}]"#,
+        );
+        let local = r#"[{"name":"token","value":"my-local-token","secret":true},{"name":"baseUrl","value":"https://old"}]"#;
+
+        let merged = merge_local_secrets(&incoming, Some(local));
+        let text = merged.as_str().unwrap();
+        assert!(text.contains("my-local-token"), "local secret is kept");
+        assert!(text.contains("https://new"), "non-secret still updates");
+    }
+
+    #[test]
+    fn an_explicitly_sent_secret_is_respected() {
+        // Only blanks are refilled; a peer that genuinely sends a value wins.
+        let incoming = variables(r#"[{"name":"token","value":"from-peer","secret":true}]"#);
+        let local = r#"[{"name":"token","value":"mine","secret":true}]"#;
+        let merged = merge_local_secrets(&incoming, Some(local));
+        assert!(merged.as_str().unwrap().contains("from-peer"));
     }
 }
