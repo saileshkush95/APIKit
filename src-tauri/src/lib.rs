@@ -56,24 +56,6 @@ pub fn run() {
             // reveals it as soon as the workspace opens; if that never happens
             // — a bundle that fails to load, a capability that got dropped —
             // an app with no window and no way to get one is unrecoverable.
-            // TEMP-DIAGNOSTIC
-            let probe = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                for t in [0u64, 100, 300, 700, 1500, 4000] {
-                    tokio::time::sleep(std::time::Duration::from_millis(t)).await;
-                    for label in ["splash", "main"] {
-                        match probe.get_webview_window(label) {
-                            Some(w) => eprintln!(
-                                "PROBE +{t}ms {label}: visible={:?} url={:?}",
-                                w.is_visible(),
-                                w.url().map(|u| u.to_string())
-                            ),
-                            None => eprintln!("PROBE +{t}ms {label}: MISSING"),
-                        }
-                    }
-                }
-            });
-
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;

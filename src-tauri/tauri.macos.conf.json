@@ -2,6 +2,19 @@
   "app": {
     "windows": [
       {
+        "label": "splash",
+        "title": "APIKit",
+        "url": "splash.html",
+        "width": 600,
+        "height": 360,
+        "resizable": false,
+        "center": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
+      },
+      {
+        "label": "main",
         "title": "APIKit",
         "width": 1200,
         "height": 780,
@@ -9,7 +22,8 @@
         "minHeight": 500,
         "decorations": true,
         "titleBarStyle": "Overlay",
-        "hiddenTitle": true
+        "hiddenTitle": true,
+        "visible": false
       }
     ]
   }
