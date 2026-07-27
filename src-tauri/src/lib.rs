@@ -65,6 +65,13 @@ pub fn run() {
                     }
                     let _ = window.show();
                     let _ = window.set_focus();
+                    // Same repaint nudge as the frontend reveal: macOS can
+                    // leave a hidden-then-shown window uncomposited.
+                    if let Ok(size) = window.inner_size() {
+                        let _ = window
+                            .set_size(tauri::PhysicalSize::new(size.width, size.height + 1));
+                        let _ = window.set_size(size);
+                    }
                 }
                 if let Some(splash) = handle.get_webview_window("splash") {
                     let _ = splash.destroy();

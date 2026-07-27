@@ -6,7 +6,11 @@
 // here, once the workspace database is actually open.
 
 import { useEffect, useState } from "react";
-import { getAllWindows, getCurrentWindow } from "@tauri-apps/api/window";
+import {
+  getAllWindows,
+  getCurrentWindow,
+  PhysicalSize,
+} from "@tauri-apps/api/window";
 
 let revealed = false;
 
@@ -20,6 +24,14 @@ export async function revealMainWindow(): Promise<void> {
     const current = getCurrentWindow();
     await current.show();
     await current.setFocus();
+
+    // macOS sometimes fails to composite a window that was created hidden:
+    // the DOM is fully rendered but the screen stays blank until something
+    // forces a repaint. A one-pixel resize and back is imperceptible and
+    // reliably triggers one.
+    const size = await current.innerSize();
+    await current.setSize(new PhysicalSize(size.width, size.height + 1));
+    await current.setSize(size);
 
     // Closed rather than hidden: nothing reopens it, and a lingering
     // always-on-top window would sit over the app forever.
