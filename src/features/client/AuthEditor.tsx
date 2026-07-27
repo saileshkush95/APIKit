@@ -1,3 +1,4 @@
+import { Input, Select } from "../../shared/components/Field";
 import type { Auth, AuthType } from "../../shared/types";
 
 interface Props {
@@ -12,8 +13,6 @@ const TYPES: { value: AuthType; label: string }[] = [
   { value: "apiKey", label: "API Key" },
 ];
 
-const inputCls =
-  "w-full rounded border border-edge bg-panel px-2 py-1.5 font-mono text-xs text-ink outline-none focus:border-brand";
 
 function Field({
   label,
@@ -35,17 +34,17 @@ export function AuthEditor({ auth, onChange }: Props) {
   return (
     <div className="flex max-w-2xl flex-col gap-2.5">
       <Field label="Type">
-        <select
+        <Select
           value={auth.type}
           onChange={(e) => onChange({ type: e.target.value as AuthType })}
-          className={`${inputCls} cursor-pointer font-sans`}
+          className={"wrk-field cursor-pointer font-sans"}
         >
           {TYPES.map((type) => (
             <option key={type.value} value={type.value}>
               {type.label}
             </option>
           ))}
-        </select>
+        </Select>
       </Field>
 
       {auth.type === "none" && (
@@ -56,12 +55,12 @@ export function AuthEditor({ auth, onChange }: Props) {
 
       {auth.type === "bearer" && (
         <Field label="Token">
-          <input
+          <Input
             value={auth.token}
             spellCheck={false}
             placeholder="{{accessToken}}"
             onChange={(e) => onChange({ token: e.target.value })}
-            className={inputCls}
+            className="wrk-field"
           />
         </Field>
       )}
@@ -69,20 +68,20 @@ export function AuthEditor({ auth, onChange }: Props) {
       {auth.type === "basic" && (
         <>
           <Field label="Username">
-            <input
+            <Input
               value={auth.username}
               spellCheck={false}
               onChange={(e) => onChange({ username: e.target.value })}
-              className={inputCls}
+              className="wrk-field"
             />
           </Field>
           <Field label="Password">
-            <input
+            <Input
               value={auth.password}
               type="password"
               spellCheck={false}
               onChange={(e) => onChange({ password: e.target.value })}
-              className={inputCls}
+              className="wrk-field"
             />
           </Field>
         </>
@@ -91,34 +90,34 @@ export function AuthEditor({ auth, onChange }: Props) {
       {auth.type === "apiKey" && (
         <>
           <Field label="Key">
-            <input
+            <Input
               value={auth.key}
               spellCheck={false}
               placeholder="X-API-Key"
               onChange={(e) => onChange({ key: e.target.value })}
-              className={inputCls}
+              className="wrk-field"
             />
           </Field>
           <Field label="Value">
-            <input
+            <Input
               value={auth.value}
               spellCheck={false}
               placeholder="{{apiKey}}"
               onChange={(e) => onChange({ value: e.target.value })}
-              className={inputCls}
+              className="wrk-field"
             />
           </Field>
           <Field label="Add to">
-            <select
+            <Select
               value={auth.addTo}
               onChange={(e) =>
                 onChange({ addTo: e.target.value as Auth["addTo"] })
               }
-              className={`${inputCls} cursor-pointer font-sans`}
+              className={"wrk-field cursor-pointer font-sans"}
             >
               <option value="header">Header</option>
               <option value="query">Query Params</option>
-            </select>
+            </Select>
           </Field>
         </>
       )}

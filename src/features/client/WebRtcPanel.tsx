@@ -1,3 +1,4 @@
+import { Input } from "../../shared/components/Field";
 import { useEffect, useRef, useState } from "react";
 import type { RequestConfig } from "../../shared/types";
 
@@ -94,12 +95,12 @@ export function WebRtcPanel({ config, onConfigChange }: Props) {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <input
+        <Input
           value={config.iceServers}
           spellCheck={false}
           placeholder="stun:stun.l.google.com:19302, turn:user:pass@host:3478"
           onChange={(e) => onConfigChange({ iceServers: e.target.value })}
-          className="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1.5 font-mono text-xs text-ink outline-none focus:border-brand"
+          className="wrk-field mono min-w-0 flex-1"
         />
         <button
           onClick={gather}

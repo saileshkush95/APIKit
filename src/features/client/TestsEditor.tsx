@@ -1,3 +1,4 @@
+import { Input, Select } from "../../shared/components/Field";
 import {
   ASSERTION_OPS,
   ASSERTION_SOURCES,
@@ -11,8 +12,6 @@ interface Props {
   onChange: (tests: Assertion[]) => void;
 }
 
-const controlCls =
-  "rounded border border-edge bg-panel px-1.5 py-1 text-xs text-ink outline-none focus:border-brand";
 
 export function newAssertion(): Assertion {
   return {
@@ -41,55 +40,55 @@ export function TestsEditor({ tests, onChange }: Props) {
 
       {tests.map((test) => (
         <div key={test.id} className="flex items-center gap-1.5">
-          <select
+          <Select
             value={test.source}
             onChange={(e) =>
               update(test.id, {
                 source: e.target.value as Assertion["source"],
               })
             }
-            className={`${controlCls} w-36 flex-none cursor-pointer`}
+            className={"wrk-field w-36 flex-none cursor-pointer"}
           >
             {ASSERTION_SOURCES.map((s) => (
               <option key={s.value} value={s.value}>
                 {s.label}
               </option>
             ))}
-          </select>
+          </Select>
 
           {sourceNeedsTarget(test.source) && (
-            <input
+            <Input
               value={test.target}
               spellCheck={false}
               placeholder={
                 test.source === "header" ? "Content-Type" : "data.items[0].id"
               }
               onChange={(e) => update(test.id, { target: e.target.value })}
-              className={`${controlCls} w-40 flex-none font-mono`}
+              className={"wrk-field w-40 flex-none font-mono"}
             />
           )}
 
-          <select
+          <Select
             value={test.op}
             onChange={(e) =>
               update(test.id, { op: e.target.value as Assertion["op"] })
             }
-            className={`${controlCls} w-32 flex-none cursor-pointer`}
+            className={"wrk-field w-32 flex-none cursor-pointer"}
           >
             {ASSERTION_OPS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </Select>
 
           {test.op !== "exists" && (
-            <input
+            <Input
               value={test.expected}
               spellCheck={false}
               placeholder="Expected"
               onChange={(e) => update(test.id, { expected: e.target.value })}
-              className={`${controlCls} min-w-0 flex-1 font-mono`}
+              className={"wrk-field min-w-0 flex-1 font-mono"}
             />
           )}
 

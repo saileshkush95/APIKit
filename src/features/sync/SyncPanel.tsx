@@ -1,3 +1,5 @@
+import { Toggle } from "../../shared/components/Toggle";
+import { Input, Select } from "../../shared/components/Field";
 import { useState } from "react";
 import { GithubPanel } from "./GithubPanel";
 import { diagnosePeer, listPeerWorkspaces } from "../../shared/lib/api";
@@ -5,8 +7,6 @@ import { SKEW_WARNING_MS, useSync } from "../../shared/state/sync";
 import { useWorkspaces } from "../../shared/state/workspaces";
 import type { WorkspaceMeta } from "../../shared/types";
 
-const fieldCls =
-  "rounded border border-edge bg-panel px-2 py-1.5 text-xs text-ink outline-none focus:border-brand";
 
 function ago(ms: number | null): string {
   if (ms === null) return "never";
@@ -135,22 +135,22 @@ export function SyncPanel() {
             <div className="flex flex-wrap items-center gap-3">
               <label className="flex items-center gap-1.5 text-xs text-muted">
                 Port
-                <input
+                <Input
                   type="number"
                   value={port}
                   disabled={server.running}
                   onChange={(e) => setPort(Number(e.target.value))}
-                  className={`${fieldCls} w-24 font-mono disabled:opacity-50`}
+                  className={"wrk-field w-24 font-mono disabled:opacity-50"}
                 />
               </label>
               <label className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted">
                 Pairing token
-                <input
+                <Input
                   value={token}
                   spellCheck={false}
                   disabled={server.running}
                   onChange={(e) => setToken(e.target.value)}
-                  className={`${fieldCls} min-w-0 flex-1 font-mono disabled:opacity-50`}
+                  className={"wrk-field min-w-0 flex-1 font-mono disabled:opacity-50"}
                 />
               </label>
             </div>
@@ -183,30 +183,24 @@ export function SyncPanel() {
         <section className="rounded-lg border border-edge bg-panel">
           <div className="flex flex-wrap items-center gap-3 border-b border-edge px-4 py-2.5">
             <h2 className="text-sm font-semibold">Peers</h2>
-            <label
-              className="flex items-center gap-1.5 text-xs text-ink"
+            <Toggle
+              checked={live}
+              onChange={setLive}
+              label="Live"
               title="Push local edits immediately and follow each peer's change stream"
-            >
-              <input
-                type="checkbox"
-                checked={live}
-                onChange={(e) => setLive(e.target.checked)}
-                className="accent-[var(--color-brand)]"
-              />
-              Live
-            </label>
+            />
             <label className="flex items-center gap-1.5 text-xs text-muted">
               Auto-sync
-              <select
+              <Select
                 value={autoSyncSecs}
                 onChange={(e) => setAutoSyncSecs(Number(e.target.value))}
-                className={`${fieldCls} cursor-pointer`}
+                className={"wrk-field cursor-pointer"}
               >
                 <option value={0}>Manual only</option>
                 <option value={30}>Every 30 seconds</option>
                 <option value={60}>Every minute</option>
                 <option value={300}>Every 5 minutes</option>
-              </select>
+              </Select>
             </label>
             <div className="ml-auto flex items-center gap-2">
               <button
@@ -247,38 +241,30 @@ export function SyncPanel() {
                       }
                       className="w-32 rounded border border-transparent bg-transparent px-1 py-0.5 text-xs font-semibold text-ink outline-none hover:border-edge focus:border-brand"
                     />
-                    <input
+                    <Input
                       value={peer.host}
                       spellCheck={false}
                       placeholder="192.168.1.20:7420"
                       onChange={(e) =>
                         updatePeer(peer.id, { host: e.target.value })
                       }
-                      className={`${fieldCls} w-48 font-mono`}
+                      className={"wrk-field w-48 font-mono"}
                     />
-                    <input
+                    <Input
                       value={peer.token}
                       spellCheck={false}
                       placeholder="pairing token"
                       onChange={(e) =>
                         updatePeer(peer.id, { token: e.target.value })
                       }
-                      className={`${fieldCls} w-40 font-mono`}
+                      className={"wrk-field w-40 font-mono"}
                     />
-                    <label
-                      className="flex items-center gap-1.5 text-xs text-muted"
+                    <Toggle
+                      checked={peer.enabled}
+                      onChange={(enabled) => updatePeer(peer.id, { enabled })}
+                      label="Auto"
                       title="Include in auto-sync and Sync all"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={peer.enabled}
-                        onChange={(e) =>
-                          updatePeer(peer.id, { enabled: e.target.checked })
-                        }
-                        className="accent-[var(--color-brand)]"
-                      />
-                      Auto
-                    </label>
+                    />
 
                     <div className="ml-auto flex items-center gap-2">
                       <button
@@ -307,7 +293,7 @@ export function SyncPanel() {
 
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <span className="text-[11px] text-muted">Workspace</span>
-                    <select
+                    <Select
                       value={peer.workspaceId}
                       onChange={(e) => {
                         const chosen = (offered[peer.id] ?? []).find(
@@ -318,7 +304,7 @@ export function SyncPanel() {
                           workspaceName: chosen?.name ?? "",
                         });
                       }}
-                      className={`${fieldCls} min-w-56 cursor-pointer`}
+                      className={"wrk-field min-w-56 cursor-pointer"}
                     >
                       {/* Pushing your own workspace creates it on the peer. */}
                       <option value={active?.id ?? ""}>
@@ -339,7 +325,7 @@ export function SyncPanel() {
                             {peer.workspaceName || "Paired workspace"}
                           </option>
                         )}
-                    </select>
+                    </Select>
                     <button
                       onClick={() =>
                         loadWorkspaces(peer.id, peer.host, peer.token)

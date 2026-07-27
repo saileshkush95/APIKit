@@ -1,3 +1,5 @@
+import { Toggle } from "../../shared/components/Toggle";
+import { Input, Select } from "../../shared/components/Field";
 import { useEffect, useState } from "react";
 import { KeyValueEditor } from "../../shared/components/KeyValueEditor";
 import {
@@ -40,8 +42,6 @@ function newRoute(): MockRoute {
   };
 }
 
-const fieldCls =
-  "rounded border border-edge bg-panel px-2 py-1 text-xs text-ink outline-none focus:border-brand";
 
 export function MockPanel() {
   const workspaceId = useWorkspaceId();
@@ -146,12 +146,12 @@ export function MockPanel() {
 
         <label className="flex items-center gap-1.5 text-xs text-muted">
           Port
-          <input
+          <Input
             type="number"
             value={port}
             disabled={status.running}
             onChange={(e) => setPort(Number(e.target.value))}
-            className={`${fieldCls} w-24 font-mono disabled:opacity-50`}
+            className={"wrk-field w-24 font-mono disabled:opacity-50"}
           />
         </label>
 
@@ -206,15 +206,11 @@ export function MockPanel() {
                     : "text-muted hover:bg-elevated/60"
                 } ${route.enabled ? "" : "opacity-50"}`}
               >
-                <input
-                  type="checkbox"
+                <Toggle
                   checked={route.enabled}
+                  onChange={(enabled) => update(route.id, { enabled })}
                   onClick={(e) => e.stopPropagation()}
-                  onChange={(e) =>
-                    update(route.id, { enabled: e.target.checked })
-                  }
-                  className="flex-none accent-[var(--color-brand)]"
-                  title="Enabled"
+                  title="Serve this route"
                 />
                 <span
                   className={`w-10 flex-none font-mono text-[10px] font-bold ${methodColor(
@@ -239,12 +235,12 @@ export function MockPanel() {
           {selected ? (
             <div className="min-h-0 flex-1 overflow-auto p-4">
               <div className="mb-3 flex flex-wrap items-center gap-2">
-                <select
+                <Select
                   value={selected.method}
                   onChange={(e) =>
                     update(selected.id, { method: e.target.value })
                   }
-                  className={`${fieldCls} cursor-pointer font-mono font-bold ${methodColor(
+                  className={`wrk-field cursor-pointer font-mono font-bold ${methodColor(
                     selected.method,
                   )}`}
                 >
@@ -253,30 +249,30 @@ export function MockPanel() {
                       {m}
                     </option>
                   ))}
-                </select>
-                <input
+                </Select>
+                <Input
                   value={selected.path}
                   spellCheck={false}
                   placeholder="/api/users/*"
                   onChange={(e) =>
                     update(selected.id, { path: e.target.value })
                   }
-                  className={`${fieldCls} min-w-0 flex-1 font-mono`}
+                  className={"wrk-field min-w-0 flex-1 font-mono"}
                 />
                 <label className="flex items-center gap-1.5 text-xs text-muted">
                   Status
-                  <input
+                  <Input
                     type="number"
                     value={selected.status}
                     onChange={(e) =>
                       update(selected.id, { status: Number(e.target.value) })
                     }
-                    className={`${fieldCls} w-20 font-mono`}
+                    className={"wrk-field w-20 font-mono"}
                   />
                 </label>
                 <label className="flex items-center gap-1.5 text-xs text-muted">
                   Delay
-                  <input
+                  <Input
                     type="number"
                     min={0}
                     value={selected.delayMs}
@@ -285,7 +281,7 @@ export function MockPanel() {
                         delayMs: Math.max(0, Number(e.target.value)),
                       })
                     }
-                    className={`${fieldCls} w-20 font-mono`}
+                    className={"wrk-field w-20 font-mono"}
                   />
                   ms
                 </label>

@@ -397,6 +397,12 @@ export interface RequestTab extends RequestDraft {
   reqTab: RequestTabKey;
   respTab: ResponseTabKey;
 
+  /**
+   * A preview tab is the one opened by a single click: it is replaced by the
+   * next preview, and becomes permanent as soon as it is edited.
+   */
+  preview: boolean;
+
   // Runtime-only state — not persisted.
   response: HttpResponseData | null;
   error: string | null;

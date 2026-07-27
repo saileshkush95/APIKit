@@ -1,3 +1,4 @@
+import { Select } from "../../shared/components/Field";
 import { useState } from "react";
 import { useEnvironments } from "../../shared/state/environments";
 import { EnvironmentManager } from "./EnvironmentManager";
@@ -12,12 +13,13 @@ export function EnvironmentBar() {
   return (
     <>
       <div data-tour="environments" className="flex items-center gap-1.5">
-        <select
+        <Select
           value={activeId ?? NO_ENV}
           onChange={(e) =>
             setActiveId(e.target.value === NO_ENV ? null : e.target.value)
           }
-          className="h-7 cursor-pointer rounded-md border border-edge bg-elevated px-2 text-xs text-ink outline-none focus:border-brand"
+          size="compact"
+          className="w-44"
           title="Active environment"
         >
           <option value={NO_ENV}>No environment</option>
@@ -26,7 +28,7 @@ export function EnvironmentBar() {
               {env.name}
             </option>
           ))}
-        </select>
+        </Select>
         <button
           onClick={() => setManaging(true)}
           className="flex h-7 items-center rounded-md px-2 text-xs text-muted hover:bg-elevated hover:text-ink"

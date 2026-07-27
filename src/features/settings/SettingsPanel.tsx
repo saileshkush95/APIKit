@@ -1,3 +1,5 @@
+import { Toggle } from "../../shared/components/Toggle";
+import { Input, Select } from "../../shared/components/Field";
 import { useOnboarding } from "../../shared/state/onboarding";
 import { useSettings } from "../../shared/state/settings";
 import { useTheme, type ThemeMode } from "../../shared/state/theme";
@@ -74,30 +76,6 @@ function Row({
   );
 }
 
-const controlCls =
-  "rounded border border-edge bg-panel px-2 py-1.5 text-xs text-ink outline-none focus:border-brand";
-
-function Toggle({
-  checked,
-  onChange,
-  label,
-}: {
-  checked: boolean;
-  onChange: (value: boolean) => void;
-  label: string;
-}) {
-  return (
-    <label className="flex cursor-pointer items-center gap-2 text-xs text-ink">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="accent-[var(--color-brand)]"
-      />
-      {label}
-    </label>
-  );
-}
 
 export function SettingsPanel() {
   const { settings, update, reset } = useSettings();
@@ -169,31 +147,31 @@ export function SettingsPanel() {
           </Row>
 
           <Row label="Interface font">
-            <select
+            <Select
               value={settings.uiFont}
               onChange={(e) => set("uiFont", e.target.value)}
-              className={`${controlCls} w-64 cursor-pointer`}
+              className={"wrk-field w-64 cursor-pointer"}
             >
               {UI_FONTS.map((font) => (
                 <option key={font.label} value={font.value}>
                   {font.label}
                 </option>
               ))}
-            </select>
+            </Select>
           </Row>
 
           <Row label="Monospace font" hint="Editors, headers, response bodies">
-            <select
+            <Select
               value={settings.monoFont}
               onChange={(e) => set("monoFont", e.target.value)}
-              className={`${controlCls} w-64 cursor-pointer`}
+              className={"wrk-field w-64 cursor-pointer"}
             >
               {MONO_FONTS.map((font) => (
                 <option key={font.label} value={font.value}>
                   {font.label}
                 </option>
               ))}
-            </select>
+            </Select>
           </Row>
 
           <Row label="Base font size">
@@ -272,12 +250,12 @@ export function SettingsPanel() {
           description="Used when you comment on an endpoint."
         >
           <Row label="Display name">
-            <input
+            <Input
               value={settings.userName}
               spellCheck={false}
               placeholder="Anonymous"
               onChange={(e) => set("userName", e.target.value)}
-              className={`${controlCls} w-64`}
+              className={"wrk-field w-64"}
             />
           </Row>
         </Section>
@@ -317,7 +295,7 @@ export function SettingsPanel() {
         <Section title="Requests" description="Defaults for new requests.">
           <Row label="Timeout">
             <div className="flex items-center gap-2">
-              <input
+              <Input
                 type="number"
                 min={0}
                 step={1000}
@@ -325,7 +303,7 @@ export function SettingsPanel() {
                 onChange={(e) =>
                   set("defaultTimeoutMs", Math.max(0, Number(e.target.value)))
                 }
-                className={`${controlCls} w-28 font-mono`}
+                className={"wrk-field w-28 font-mono"}
               />
               <span className="text-xs text-muted">ms</span>
             </div>
@@ -338,23 +316,23 @@ export function SettingsPanel() {
             />
           </Row>
           <Row label="Default HTTP version">
-            <select
+            <Select
               value={settings.defaultHttpVersion}
               onChange={(e) =>
                 set("defaultHttpVersion", e.target.value as HttpVersion)
               }
-              className={`${controlCls} w-40 cursor-pointer`}
+              className={"wrk-field w-40 cursor-pointer"}
             >
               <option value="auto">Auto (ALPN)</option>
               <option value="http1">HTTP/1.1</option>
               <option value="http2">HTTP/2</option>
-            </select>
+            </Select>
           </Row>
           <Row
             label="Stream history"
             hint="Messages kept per streaming session"
           >
-            <input
+            <Input
               type="number"
               min={50}
               step={50}
@@ -362,7 +340,7 @@ export function SettingsPanel() {
               onChange={(e) =>
                 set("maxStreamMessages", Math.max(50, Number(e.target.value)))
               }
-              className={`${controlCls} w-28 font-mono`}
+              className={"wrk-field w-28 font-mono"}
             />
           </Row>
         </Section>

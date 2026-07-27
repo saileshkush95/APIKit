@@ -1,3 +1,4 @@
+import { Input, Select } from "../../shared/components/Field";
 import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -24,8 +25,6 @@ import {
   type TreeNode,
 } from "../../shared/types";
 
-const fieldCls =
-  "rounded border border-edge bg-panel px-2 py-1 text-xs text-ink outline-none focus:border-brand";
 
 function folderOptions(
   nodes: TreeNode[],
@@ -245,10 +244,10 @@ export function LoadTestPanel() {
               variables between them.
             </p>
             <div className="flex items-center gap-2">
-              <select
+              <Select
                 value={folderId}
                 onChange={(e) => setFolderId(e.target.value)}
-                className={`${fieldCls} w-64 cursor-pointer`}
+                className={"wrk-field w-64 cursor-pointer"}
               >
                 <option value="">Entire collection</option>
                 {folders.map((folder) => (
@@ -256,7 +255,7 @@ export function LoadTestPanel() {
                     {folder.label}
                   </option>
                 ))}
-              </select>
+              </Select>
               <button
                 onClick={() => onOpenRunner(folderId || null)}
                 className="rounded-md bg-brand px-4 py-1.5 text-xs font-semibold text-white hover:bg-brand-bright"
@@ -270,10 +269,10 @@ export function LoadTestPanel() {
             {/* Target */}
             <section className="rounded-lg border border-edge bg-panel p-4">
               <div className="mb-3 flex items-center gap-2">
-                <select
+                <Select
                   value={method}
                   onChange={(e) => setMethod(e.target.value)}
-                  className={`${fieldCls} cursor-pointer font-mono font-bold ${methodColor(
+                  className={`wrk-field cursor-pointer font-mono font-bold ${methodColor(
                     method,
                   )}`}
                 >
@@ -282,15 +281,15 @@ export function LoadTestPanel() {
                       {m}
                     </option>
                   ))}
-                </select>
-                <input
+                </Select>
+                <Input
                   value={url}
                   spellCheck={false}
                   placeholder={
                     active?.url || "https://api.example.com/endpoint"
                   }
                   onChange={(e) => setUrl(e.target.value)}
-                  className={`${fieldCls} min-w-0 flex-1 font-mono`}
+                  className={"wrk-field min-w-0 flex-1 font-mono"}
                 />
                 <button
                   onClick={useActive}
@@ -313,14 +312,14 @@ export function LoadTestPanel() {
               {kind === "assertions" ? (
                 <label className="flex items-center gap-2 text-xs text-muted">
                   Iterations
-                  <input
+                  <Input
                     type="number"
                     min={1}
                     value={iterations}
                     onChange={(e) =>
                       setIterations(Math.max(1, Number(e.target.value)))
                     }
-                    className={`${fieldCls} w-24 font-mono`}
+                    className={"wrk-field w-24 font-mono"}
                   />
                   <span>
                     runs the request {iterations}× and checks its assertions
@@ -347,16 +346,16 @@ export function LoadTestPanel() {
                       {phases.map((phase, i) => (
                         <tr key={i}>
                           <td className="p-1">
-                            <input
+                            <Input
                               value={phase.label}
                               onChange={(e) =>
                                 patchPhase(i, { label: e.target.value })
                               }
-                              className={`${fieldCls} w-full`}
+                              className={"wrk-field w-full"}
                             />
                           </td>
                           <td className="p-1">
-                            <input
+                            <Input
                               type="number"
                               min={1}
                               value={phase.vus}
@@ -365,11 +364,11 @@ export function LoadTestPanel() {
                                   vus: Math.max(1, Number(e.target.value)),
                                 })
                               }
-                              className={`${fieldCls} w-24 font-mono`}
+                              className={"wrk-field w-24 font-mono"}
                             />
                           </td>
                           <td className="p-1">
-                            <input
+                            <Input
                               type="number"
                               min={1}
                               max={3600}
@@ -382,7 +381,7 @@ export function LoadTestPanel() {
                                   ),
                                 })
                               }
-                              className={`${fieldCls} w-24 font-mono`}
+                              className={"wrk-field w-24 font-mono"}
                             />
                           </td>
                           <td className="p-1">
@@ -416,14 +415,14 @@ export function LoadTestPanel() {
                     </button>
                     <label className="flex items-center gap-1.5 text-xs text-muted">
                       Think time
-                      <input
+                      <Input
                         type="number"
                         min={0}
                         value={thinkTimeMs}
                         onChange={(e) =>
                           setThinkTimeMs(Math.max(0, Number(e.target.value)))
                         }
-                        className={`${fieldCls} w-20 font-mono`}
+                        className={"wrk-field w-20 font-mono"}
                       />
                       ms between requests per user
                     </label>

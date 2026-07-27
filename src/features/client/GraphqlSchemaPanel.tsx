@@ -1,3 +1,4 @@
+import { Input } from "../../shared/components/Field";
 import { useMemo, useState } from "react";
 import {
   rootTypes,
@@ -75,12 +76,12 @@ export function GraphqlSchemaPanel({
       {schema && (
         <>
           <div className="flex-none px-2 py-1.5">
-            <input
+            <Input
               value={query}
               spellCheck={false}
               placeholder="Filter fields…"
               onChange={(e) => setQuery(e.target.value)}
-              className="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-ink outline-none focus:border-brand"
+              className="wrk-field compact"
             />
           </div>
 

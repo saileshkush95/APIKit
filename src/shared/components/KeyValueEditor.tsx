@@ -1,3 +1,6 @@
+import { Autocomplete } from "./Autocomplete";
+import { Input, Select } from "./Field";
+import { Toggle } from "./Toggle";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { KeyValue } from "../types";
 
@@ -10,14 +13,16 @@ interface Props {
   allowFiles?: boolean;
   /** Lets a row be marked secret (environment variables). */
   allowSecrets?: boolean;
+  /** Completions for the key column, e.g. header names. */
+  suggestName?: (query: string) => string[];
+  /** Completions for the value column, given the row's key. */
+  suggestValue?: (name: string, query: string) => string[];
 }
 
 function fileNameOf(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
 }
 
-const inputCls =
-  "w-full rounded border border-edge bg-panel px-2 py-1.5 font-mono text-xs text-ink outline-none focus:border-brand";
 
 /** Editable key/value list that always keeps one trailing blank row. */
 export function KeyValueEditor({
@@ -27,6 +32,8 @@ export function KeyValueEditor({
   valuePlaceholder = "Value",
   allowFiles = false,
   allowSecrets = false,
+  suggestName,
+  suggestValue,
 }: Props) {
   function update(index: number, patch: Partial<KeyValue>) {
     const next = rows.map((row, i) => (i === index ? { ...row, ...patch } : row));
@@ -69,17 +76,27 @@ export function KeyValueEditor({
         {rows.map((row, i) => (
           <tr key={i}>
             <td className="p-0.5">
-              <input
-                value={row.name}
-                spellCheck={false}
-                placeholder={keyPlaceholder}
-                className={inputCls}
-                onChange={(e) => update(i, { name: e.target.value })}
-              />
+              {suggestName ? (
+                <Autocomplete
+                  value={row.name}
+                  spellCheck={false}
+                  placeholder={keyPlaceholder}
+                  mono
+                  suggest={suggestName}
+                  onChange={(name) => update(i, { name })}
+                />
+              ) : (
+                <Input
+                  value={row.name}
+                  spellCheck={false}
+                  placeholder={keyPlaceholder}
+                  onChange={(e) => update(i, { name: e.target.value })}
+                />
+              )}
             </td>
             {allowFiles && (
               <td className="p-0.5">
-                <select
+                <Select
                   value={row.kind ?? "text"}
                   onChange={(e) =>
                     update(i, {
@@ -87,11 +104,11 @@ export function KeyValueEditor({
                       filePath: e.target.value === "text" ? "" : row.filePath,
                     })
                   }
-                  className={`${inputCls} w-20 cursor-pointer`}
+                  className={"wrk-field w-20 cursor-pointer"}
                 >
                   <option value="text">Text</option>
                   <option value="file">File</option>
-                </select>
+                </Select>
               </td>
             )}
             <td className="p-0.5">
@@ -111,24 +128,35 @@ export function KeyValueEditor({
                   </span>
                 </div>
               ) : (
-                <input
-                  value={row.value}
-                  spellCheck={false}
-                  // Masked so a shared screen does not leak the value.
-                  type={allowSecrets && row.secret ? "password" : "text"}
-                  placeholder={valuePlaceholder}
-                  className={inputCls}
-                  onChange={(e) => update(i, { value: e.target.value })}
-                />
+                (() => {
+                  const secret = Boolean(allowSecrets && row.secret);
+                  return suggestValue && !secret ? (
+                    <Autocomplete
+                      value={row.value}
+                      spellCheck={false}
+                      placeholder={valuePlaceholder}
+                      mono
+                      suggest={(query) => suggestValue(row.name, query)}
+                      onChange={(value) => update(i, { value })}
+                    />
+                  ) : (
+                    <Input
+                      value={row.value}
+                      spellCheck={false}
+                      // Masked so a shared screen does not leak the value.
+                      type={secret ? "password" : "text"}
+                      placeholder={valuePlaceholder}
+                      onChange={(e) => update(i, { value: e.target.value })}
+                    />
+                  );
+                })()
               )}
             </td>
             {allowSecrets && (
               <td className="p-0.5 text-center">
-                <input
-                  type="checkbox"
+                <Toggle
                   checked={row.secret ?? false}
-                  onChange={(e) => update(i, { secret: e.target.checked })}
-                  className="accent-[var(--color-brand)]"
+                  onChange={(secret) => update(i, { secret })}
                   title="Keep this value on this machine only"
                 />
               </td>

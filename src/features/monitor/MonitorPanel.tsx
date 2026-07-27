@@ -1,3 +1,5 @@
+import { Toggle } from "../../shared/components/Toggle";
+import { Input, Select } from "../../shared/components/Field";
 import { useMemo, useState } from "react";
 import { KeyValueEditor } from "../../shared/components/KeyValueEditor";
 import { isFolder } from "../../shared/lib/tree";
@@ -14,8 +16,6 @@ import {
   type TreeNode,
 } from "../../shared/types";
 
-const fieldCls =
-  "rounded border border-edge bg-panel px-2 py-1 text-xs text-ink outline-none focus:border-brand";
 
 function options(
   nodes: TreeNode[],
@@ -186,20 +186,12 @@ export function MonitorPanel() {
                   </span>
                 </div>
 
-                <label
-                  className="flex items-center gap-1.5 text-xs text-muted"
+                <Toggle
+                  checked={monitor.enabled}
+                  onChange={(enabled) => update(monitor.id, { enabled })}
+                  label={monitor.enabled ? "On" : "Off"}
                   title="Enable the schedule"
-                >
-                  <input
-                    type="checkbox"
-                    checked={monitor.enabled}
-                    onChange={(e) =>
-                      update(monitor.id, { enabled: e.target.checked })
-                    }
-                    className="accent-[var(--color-brand)]"
-                  />
-                  {monitor.enabled ? "On" : "Off"}
-                </label>
+                />
 
                 <button
                   onClick={() => runNow(monitor.id)}
@@ -228,7 +220,7 @@ export function MonitorPanel() {
                   <div className="flex flex-wrap items-center gap-4">
                     <label className="flex items-center gap-1.5 text-xs text-muted">
                       Check
-                      <select
+                      <Select
                         value={monitor.targetKind}
                         onChange={(e) =>
                           update(monitor.id, {
@@ -236,23 +228,23 @@ export function MonitorPanel() {
                             targetId: null,
                           })
                         }
-                        className={`${fieldCls} cursor-pointer`}
+                        className={"wrk-field cursor-pointer"}
                       >
                         <option value="collection">Entire collection</option>
                         <option value="folder">A folder</option>
                         <option value="request">A single request</option>
                         <option value="url">A custom endpoint</option>
-                      </select>
+                      </Select>
                     </label>
 
                     {monitor.targetKind !== "collection" &&
                       monitor.targetKind !== "url" && (
-                      <select
+                      <Select
                         value={monitor.targetId ?? ""}
                         onChange={(e) =>
                           update(monitor.id, { targetId: e.target.value || null })
                         }
-                        className={`${fieldCls} w-64 cursor-pointer`}
+                        className={"wrk-field w-64 cursor-pointer"}
                       >
                         <option value="">Select…</option>
                         {(monitor.targetKind === "folder"
@@ -263,38 +255,38 @@ export function MonitorPanel() {
                             {option.label}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                     )}
 
                     <label className="flex items-center gap-1.5 text-xs text-muted">
                       Every
-                      <select
+                      <Select
                         value={monitor.intervalSecs}
                         onChange={(e) =>
                           update(monitor.id, {
                             intervalSecs: Number(e.target.value),
                           })
                         }
-                        className={`${fieldCls} cursor-pointer`}
+                        className={"wrk-field cursor-pointer"}
                       >
                         {MONITOR_INTERVALS.map((interval) => (
                           <option key={interval.value} value={interval.value}>
                             {interval.label}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                     </label>
 
                     <label className="flex items-center gap-1.5 text-xs text-muted">
                       Environment
-                      <select
+                      <Select
                         value={monitor.environmentId ?? ""}
                         onChange={(e) =>
                           update(monitor.id, {
                             environmentId: e.target.value || null,
                           })
                         }
-                        className={`${fieldCls} cursor-pointer`}
+                        className={"wrk-field cursor-pointer"}
                       >
                         <option value="">Active environment</option>
                         {environments.map((env) => (
@@ -302,20 +294,14 @@ export function MonitorPanel() {
                             {env.name}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                     </label>
 
-                    <label className="flex items-center gap-1.5 text-xs text-muted">
-                      <input
-                        type="checkbox"
-                        checked={monitor.notify}
-                        onChange={(e) =>
-                          update(monitor.id, { notify: e.target.checked })
-                        }
-                        className="accent-[var(--color-brand)]"
-                      />
-                      Notify on failure
-                    </label>
+                    <Toggle
+                      checked={monitor.notify}
+                      onChange={(notify) => update(monitor.id, { notify })}
+                      label="Notify on failure"
+                    />
 
                     <div className="ml-auto flex items-center gap-2">
                       <button
@@ -336,12 +322,12 @@ export function MonitorPanel() {
                   {monitor.targetKind === "url" && (
                     <div className="mt-3 rounded border border-edge p-3">
                       <div className="mb-2 flex flex-wrap items-center gap-2">
-                        <select
+                        <Select
                           value={monitor.method || "GET"}
                           onChange={(e) =>
                             update(monitor.id, { method: e.target.value })
                           }
-                          className={`${fieldCls} cursor-pointer font-mono font-bold ${methodColor(
+                          className={`wrk-field mono w-28 font-bold ${methodColor(
                             monitor.method || "GET",
                           )}`}
                         >
@@ -350,19 +336,19 @@ export function MonitorPanel() {
                               {m}
                             </option>
                           ))}
-                        </select>
-                        <input
+                        </Select>
+                        <Input
                           value={monitor.url}
                           spellCheck={false}
                           placeholder="https://api.example.com/health"
                           onChange={(e) =>
                             update(monitor.id, { url: e.target.value })
                           }
-                          className={`${fieldCls} min-w-0 flex-1 font-mono`}
+                          className={"wrk-field min-w-0 flex-1 font-mono"}
                         />
                         <label className="flex items-center gap-1.5 text-xs text-muted">
                           Expect
-                          <input
+                          <Input
                             type="number"
                             value={monitor.expectedStatus || 200}
                             onChange={(e) =>
@@ -370,7 +356,7 @@ export function MonitorPanel() {
                                 expectedStatus: Number(e.target.value),
                               })
                             }
-                            className={`${fieldCls} w-20 font-mono`}
+                            className={"wrk-field w-20 font-mono"}
                           />
                         </label>
                       </div>

@@ -1,3 +1,4 @@
+import { Input } from "../../shared/components/Field";
 import { useEffect, useState } from "react";
 import {
   githubCheck,
@@ -24,8 +25,6 @@ import type { GithubConfig } from "../../shared/types";
 const CONFIG_KEY = "githubConfig";
 const STATE_KEY = "githubState";
 
-const fieldCls =
-  "rounded border border-edge bg-panel px-2 py-1.5 text-xs text-ink outline-none focus:border-brand";
 
 interface Stored extends GithubConfig {
   autoPush: boolean;
@@ -168,43 +167,43 @@ export function GithubPanel() {
         <div className="flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-1.5 text-xs text-muted">
             Repository
-            <input
+            <Input
               value={config.repo}
               spellCheck={false}
               placeholder="owner/repo"
               onChange={(e) => setConfig({ ...config, repo: e.target.value })}
-              className={`${fieldCls} w-48 font-mono`}
+              className={"wrk-field w-48 font-mono"}
             />
           </label>
           <label className="flex items-center gap-1.5 text-xs text-muted">
             Branch
-            <input
+            <Input
               value={config.branch}
               spellCheck={false}
               onChange={(e) => setConfig({ ...config, branch: e.target.value })}
-              className={`${fieldCls} w-28 font-mono`}
+              className={"wrk-field w-28 font-mono"}
             />
           </label>
           <label className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted">
             Path
-            <input
+            <Input
               value={config.path}
               spellCheck={false}
               onChange={(e) => setConfig({ ...config, path: e.target.value })}
-              className={`${fieldCls} min-w-0 flex-1 font-mono`}
+              className={"wrk-field min-w-0 flex-1 font-mono"}
             />
           </label>
         </div>
 
         <label className="flex items-center gap-1.5 text-xs text-muted">
           Personal access token
-          <input
+          <Input
             value={config.token}
             type="password"
             spellCheck={false}
             placeholder="ghp_… (needs repo scope, stored in your keychain)"
             onChange={(e) => setConfig({ ...config, token: e.target.value })}
-            className={`${fieldCls} min-w-0 flex-1 font-mono`}
+            className={"wrk-field min-w-0 flex-1 font-mono"}
           />
         </label>
 

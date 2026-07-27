@@ -1,3 +1,4 @@
+import { Select } from "../../shared/components/Field";
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { CodeEditor } from "../../shared/components/CodeEditor";
@@ -167,12 +168,12 @@ export function BodyEditor({
 
         {config.bodyMode === "raw" && (
           <>
-            <select
+            <Select
               value={config.rawLanguage}
               onChange={(e) =>
                 onConfigChange({ rawLanguage: e.target.value as RawLanguage })
               }
-              className="cursor-pointer rounded border border-edge bg-panel px-1.5 py-0.5 text-xs text-brand outline-none focus:border-brand"
+              className="wrk-field compact w-32 text-brand"
             >
               {LANGUAGES.map((language) => (
                 <option
@@ -183,7 +184,7 @@ export function BodyEditor({
                   {language.label}
                 </option>
               ))}
-            </select>
+            </Select>
             <button
               onClick={() => onBodyChange(beautify(body, config.rawLanguage))}
               className="ml-auto text-xs text-brand hover:underline"

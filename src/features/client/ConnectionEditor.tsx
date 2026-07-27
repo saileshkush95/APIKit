@@ -1,3 +1,4 @@
+import { Input, Select } from "../../shared/components/Field";
 import { CodeEditor } from "../../shared/components/CodeEditor";
 import type { Protocol, RequestConfig } from "../../shared/types";
 
@@ -7,8 +8,6 @@ interface Props {
   onChange: (patch: Partial<RequestConfig>) => void;
 }
 
-const inputCls =
-  "w-full rounded border border-edge bg-panel px-2 py-1.5 font-mono text-xs text-ink outline-none focus:border-brand";
 
 function Field({
   label,
@@ -31,50 +30,50 @@ export function ConnectionEditor({ protocol, config, onChange }: Props) {
     return (
       <div className="flex max-w-2xl flex-col gap-2.5">
         <Field label="Subscribe to">
-          <input
+          <Input
             value={config.mqttTopics}
             spellCheck={false}
             placeholder="sensors/#, alerts/+/critical"
             onChange={(e) => onChange({ mqttTopics: e.target.value })}
-            className={inputCls}
+            className="wrk-field"
           />
         </Field>
         <Field label="Client ID">
-          <input
+          <Input
             value={config.mqttClientId}
             spellCheck={false}
             placeholder="auto-generated"
             onChange={(e) => onChange({ mqttClientId: e.target.value })}
-            className={inputCls}
+            className="wrk-field"
           />
         </Field>
         <Field label="Username">
-          <input
+          <Input
             value={config.mqttUsername}
             spellCheck={false}
             onChange={(e) => onChange({ mqttUsername: e.target.value })}
-            className={inputCls}
+            className="wrk-field"
           />
         </Field>
         <Field label="Password">
-          <input
+          <Input
             value={config.mqttPassword}
             type="password"
             spellCheck={false}
             onChange={(e) => onChange({ mqttPassword: e.target.value })}
-            className={inputCls}
+            className="wrk-field"
           />
         </Field>
         <Field label="QoS">
-          <select
+          <Select
             value={config.mqttQos}
             onChange={(e) => onChange({ mqttQos: Number(e.target.value) })}
-            className={`${inputCls} cursor-pointer`}
+            className={"wrk-field cursor-pointer"}
           >
             <option value={0}>0 — at most once</option>
             <option value={1}>1 — at least once</option>
             <option value={2}>2 — exactly once</option>
-          </select>
+          </Select>
         </Field>
         <p className="text-[11px] text-muted">
           Topics are comma-separated. Use{" "}

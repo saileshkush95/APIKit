@@ -34,7 +34,7 @@ function Tab({
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs ${
+      className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs ${
         active ? "bg-elevated font-medium text-ink" : "text-muted hover:text-ink"
       }`}
     >
@@ -157,8 +157,8 @@ export function ResponseViewer({
   return (
     <>
       {/* Tabs + status */}
-      <div className="flex flex-none items-center gap-3 px-3 py-1.5">
-        <div className="flex gap-1">
+      <div className="flex flex-none items-center gap-3 px-2 py-1">
+        <div className="flex gap-0.5">
           <Tab
             active={activeTab === "body"}
             onClick={() => onTabChange("body")}

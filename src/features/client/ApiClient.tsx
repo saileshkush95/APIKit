@@ -65,6 +65,7 @@ function blankTab(overrides: Partial<RequestTab> = {}): RequestTab {
     body: "",
     tests: [],
     config: defaultConfig(),
+    preview: false,
     reqTab: "params",
     respTab: "body",
     response: null,
@@ -99,6 +100,7 @@ function hydrate(stored: StoredTab): RequestTab {
       : [{ name: "", value: "" }],
     tests: stored.tests ?? [],
     config: normalizeConfig(stored.config),
+    preview: false,
     respTab: "body",
     response: null,
     error: null,
@@ -223,10 +225,26 @@ export function ApiClient({ intent }: ApiClientProps) {
     );
   }, [activeTab, setActive]);
 
+  /** Fields whose change means the user is working in the tab, not just looking. */
+  const EDITS: (keyof RequestTab)[] = [
+    "method",
+    "url",
+    "headers",
+    "body",
+    "tests",
+    "config",
+    "name",
+  ];
+
   const updateTab = useCallback(
     (id: string, patch: Partial<RequestTab>) => {
+      const edited = EDITS.some((field) => field in patch);
       setTabs((prev) =>
-        prev.map((tab) => (tab.id === id ? { ...tab, ...patch } : tab)),
+        prev.map((tab) =>
+          tab.id === id
+            ? { ...tab, ...patch, preview: edited ? false : tab.preview }
+            : tab,
+        ),
       );
     },
     [],
@@ -252,34 +270,53 @@ export function ApiClient({ intent }: ApiClientProps) {
     });
   }
 
-  /** Focuses an existing tab for a saved request, or opens a new one. */
-  function openRequest(request: SavedRequest) {
+  /**
+   * Opens a request. A single click opens it as a preview, which the next
+   * single click replaces — so browsing a collection does not leave a trail of
+   * tabs. Editing it, or a double click, makes it stay.
+   */
+  function openRequest(request: SavedRequest, { keep = false } = {}) {
     const existing = tabs.find((t) => t.sourceId === request.id);
     if (existing) {
       setActiveId(existing.id);
+      // A second click on the tab you are already previewing keeps it.
+      if (keep && existing.preview) {
+        updateTab(existing.id, { preview: false });
+      }
       return;
     }
-    openTab(
-      blankTab({
-        name: request.name,
-        sourceId: request.id,
-        method: request.method,
-        url: request.url,
-        headers: request.headers.length
-          ? [...request.headers, { name: "", value: "" }]
-          : [{ name: "", value: "" }],
-        body: request.body,
-        tests: request.tests ?? [],
-        config: normalizeConfig(request.config),
-      }),
-    );
+
+    const opened = blankTab({
+      name: request.name,
+      sourceId: request.id,
+      method: request.method,
+      url: request.url,
+      headers: request.headers.length
+        ? [...request.headers, { name: "", value: "" }]
+        : [{ name: "", value: "" }],
+      body: request.body,
+      tests: request.tests ?? [],
+      config: normalizeConfig(request.config),
+      preview: !keep,
+    });
+
+    const replaceable = tabs.find((tab) => tab.preview);
+    if (!keep && replaceable) {
+      // Reuse the preview slot so its position in the strip is kept.
+      setTabs((prev) =>
+        prev.map((tab) => (tab.id === replaceable.id ? opened : tab)),
+      );
+      setActiveId(opened.id);
+      return;
+    }
+    openTab(opened);
   }
 
   function createRequest(parentId: string | null) {
     const request = blankRequest();
     setTree(insertNode(tree, parentId, request));
     if (parentId) toggleExpanded(parentId, true);
-    openRequest(request);
+    openRequest(request, { keep: true });
   }
 
   /** Renames the tab, and the saved request behind it when there is one. */
@@ -550,7 +587,8 @@ export function ApiClient({ intent }: ApiClientProps) {
         expanded={expanded}
         onToggleExpanded={toggleExpanded}
         activeRequestId={activeRequestId}
-        onOpen={openRequest}
+        onOpen={(request) => openRequest(request)}
+        onOpenPermanent={(request) => openRequest(request, { keep: true })}
         onCreateRequest={createRequest}
         onRequestsDeleted={unbindTabs}
         onRun={onRun}
@@ -577,6 +615,7 @@ export function ApiClient({ intent }: ApiClientProps) {
           activeId={activeTab?.id ?? ""}
           dirtyIds={dirtyIds}
           onSelect={setActiveId}
+          onKeep={(id) => updateTab(id, { preview: false })}
           onClose={closeTab}
           onNew={newTab}
         />

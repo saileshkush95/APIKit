@@ -6,6 +6,8 @@ interface Props {
   activeId: string;
   dirtyIds: Set<string>;
   onSelect: (id: string) => void;
+  /** Double-clicking a preview tab keeps it. */
+  onKeep: (id: string) => void;
   onClose: (id: string) => void;
   onNew: () => void;
 }
@@ -16,6 +18,7 @@ export function TabStrip({
   activeId,
   dirtyIds,
   onSelect,
+  onKeep,
   onClose,
   onNew,
 }: Props) {
@@ -28,6 +31,7 @@ export function TabStrip({
           <div
             key={tab.id}
             onClick={() => onSelect(tab.id)}
+            onDoubleClick={() => onKeep(tab.id)}
             onAuxClick={(e) => {
               if (e.button === 1) onClose(tab.id);
             }}
@@ -45,7 +49,10 @@ export function TabStrip({
             >
               {tab.method.toUpperCase()}
             </span>
-            <span className="min-w-0 flex-1 truncate">
+            <span
+              className={`min-w-0 flex-1 truncate ${tab.preview ? "italic" : ""}`}
+              title={tab.preview ? "Preview — edit or double-click to keep" : undefined}
+            >
               {tab.name ?? requestLabel(tab.url)}
             </span>
             {dirty ? (

@@ -1,3 +1,4 @@
+import { Input, Select } from "../../shared/components/Field";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { executeRequest } from "../../shared/lib/execute";
 import { findNode, isFolder } from "../../shared/lib/tree";
@@ -131,10 +132,10 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
       <div className="flex flex-none flex-wrap items-center gap-3 border-b border-edge px-4 py-2.5">
         <label className="flex items-center gap-1.5 text-xs text-muted">
           Run
-          <select
+          <Select
             value={targetId}
             onChange={(e) => setTargetId(e.target.value)}
-            className="cursor-pointer rounded border border-edge bg-panel px-2 py-1 text-xs text-ink outline-none focus:border-brand"
+            className="wrk-field w-56"
           >
             <option value="">Entire collection</option>
             {folders.map((folder) => (
@@ -142,29 +143,29 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
                 {folder.label}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
 
         <label className="flex items-center gap-1.5 text-xs text-muted">
           Iterations
-          <input
+          <Input
             type="number"
             min={1}
             value={iterations}
             onChange={(e) => setIterations(Math.max(1, Number(e.target.value)))}
-            className="w-16 rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-ink outline-none focus:border-brand"
+            className="wrk-field mono w-16"
           />
         </label>
 
         <label className="flex items-center gap-1.5 text-xs text-muted">
           Delay
-          <input
+          <Input
             type="number"
             min={0}
             step={50}
             value={delayMs}
             onChange={(e) => setDelayMs(Math.max(0, Number(e.target.value)))}
-            className="w-20 rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-ink outline-none focus:border-brand"
+            className="wrk-field mono w-20"
           />
           ms
         </label>

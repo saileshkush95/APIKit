@@ -37,7 +37,10 @@ interface Props {
   expanded: Set<string>;
   onToggleExpanded: (id: string, force?: boolean) => void;
   activeRequestId: string | null;
+  /** Single click: opens as a preview the next click can replace. */
   onOpen: (request: SavedRequest) => void;
+  /** Double click: opens a tab that stays. */
+  onOpenPermanent: (request: SavedRequest) => void;
   /** Create a blank request in `parentId` and open it in a tab. */
   onCreateRequest: (parentId: string | null) => void;
   /** Lets open tabs unbind from requests that no longer exist. */
@@ -70,6 +73,7 @@ export function CollectionSidebar({
   onToggleExpanded,
   activeRequestId,
   onOpen,
+  onOpenPermanent,
   onCreateRequest,
   onRequestsDeleted,
   onRun,
@@ -286,6 +290,9 @@ export function CollectionSidebar({
               onOpen(node);
             }
           }}
+          onDoubleClick={() => {
+            if (!isFolder(node)) onOpenPermanent(node);
+          }}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -461,6 +468,7 @@ interface RowProps {
   renaming: boolean;
   onRename: (name: string) => void;
   onCancelRename: () => void;
+  onDoubleClick: () => void;
   onNewRequest: () => void;
   onNewFolder: () => void;
   onClick: () => void;
@@ -477,6 +485,7 @@ function Row({
   renaming,
   onRename,
   onCancelRename,
+  onDoubleClick,
   onNewRequest,
   onNewFolder,
   onClick,
@@ -512,6 +521,7 @@ function Row({
       {...attributes}
       {...listeners}
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       style={{ paddingLeft: 6 + depth * 12 }}
       className={`group flex cursor-default items-center gap-1.5 py-1 pr-2 text-xs ${dropCls} ${

@@ -1,3 +1,4 @@
+import { Input } from "../../shared/components/Field";
 import { useEffect, useRef } from "react";
 import { CodeEditor } from "../../shared/components/CodeEditor";
 import type { Protocol, RequestConfig, StreamSession } from "../../shared/types";
@@ -52,14 +53,14 @@ export function StreamConsole({
       {!receiveOnly && (
         <div className="flex flex-none flex-col gap-2 border-b border-edge p-3">
           {protocol === "mqtt" && (
-            <input
+            <Input
               value={config.mqttPublishTopic}
               spellCheck={false}
               placeholder="Publish topic, e.g. sensors/temperature"
               onChange={(e) =>
                 onConfigChange({ mqttPublishTopic: e.target.value })
               }
-              className="rounded border border-edge bg-panel px-2 py-1.5 font-mono text-xs text-ink outline-none focus:border-brand"
+              className="wrk-field mono"
             />
           )}
           <CodeEditor

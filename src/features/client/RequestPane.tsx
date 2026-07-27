@@ -1,3 +1,4 @@
+import { Input, Select } from "../../shared/components/Field";
 import { useEffect, useRef, useState } from "react";
 import { AuthEditor } from "./AuthEditor";
 import { BodyEditor } from "./BodyEditor";
@@ -12,6 +13,10 @@ import { StreamConsole } from "./StreamConsole";
 import { TestsEditor } from "./TestsEditor";
 import { WebRtcPanel } from "./WebRtcPanel";
 import { applyQuery, parseQuery } from "../../shared/lib/query";
+import {
+  matchHeaderValues,
+  matchHeaders,
+} from "../../shared/lib/headerSuggestions";
 import { buildWireRequest } from "../../shared/lib/request";
 import { unresolvedVars } from "../../shared/lib/vars";
 import { methodColor } from "../../shared/lib/ui";
@@ -107,7 +112,7 @@ function PaneTab({
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs ${
+      className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs ${
         active
           ? "bg-elevated font-medium text-ink"
           : "text-muted hover:text-ink"
@@ -210,7 +215,7 @@ export function RequestPane({
   return (
     <div ref={containerRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
       {/* Breadcrumb + save */}
-      <div className="flex flex-none items-center gap-1.5 px-4 pt-2.5 text-xs text-muted">
+      <div className="flex flex-none items-center gap-1.5 px-4 pt-2 text-xs text-muted">
         {breadcrumb.map((crumb, i) => (
           <span key={i} className="flex items-center gap-1.5">
             <span className="truncate">{crumb}</span>
@@ -278,11 +283,11 @@ export function RequestPane({
       )}
 
       {/* URL bar */}
-      <div data-tour="urlbar" className="flex flex-none gap-2 px-4 py-2.5">
-        <select
+      <div data-tour="urlbar" className="flex flex-none gap-2 px-4 py-2">
+        <Select
           value={protocol}
           onChange={(e) => switchProtocol(e.target.value as Protocol)}
-          className="cursor-pointer rounded-md border border-edge bg-panel px-2 text-xs font-semibold text-brand outline-none focus:border-brand"
+          className="wrk-field lg w-32 font-semibold text-brand"
           title="Protocol"
         >
           {PROTOCOLS.map((option) => (
@@ -290,26 +295,24 @@ export function RequestPane({
               {PROTOCOL_LABELS[option]}
             </option>
           ))}
-        </select>
+        </Select>
 
         {!streaming && protocol !== "webrtc" && (
-          <select
+          <Select
             value={tab.method}
             onChange={(e) => onChange({ method: e.target.value })}
-            className={`cursor-pointer rounded-md border border-edge bg-panel px-2.5 font-mono text-xs font-bold outline-none focus:border-brand ${methodColor(
-              tab.method,
-            )}`}
+            className={`wrk-field mono lg w-28 font-bold ${methodColor(tab.method)}`}
           >
             {HTTP_METHODS.map((m) => (
               <option key={m} value={m} className="text-ink">
                 {m}
               </option>
             ))}
-          </select>
+          </Select>
         )}
 
         {protocol !== "webrtc" && (
-          <input
+          <Input
             value={tab.url}
             spellCheck={false}
             placeholder={
@@ -323,17 +326,17 @@ export function RequestPane({
             onKeyDown={(e) =>
               e.key === "Enter" && (streaming ? onToggleConnection() : onSend())
             }
-            className="min-w-0 flex-1 rounded-md border border-edge bg-panel px-3 py-2 font-mono text-ink outline-none focus:border-brand"
+            className="wrk-field mono lg min-w-0 flex-1"
           />
         )}
 
         {!streaming && protocol !== "webrtc" && (
-          <select
+          <Select
             value={tab.config.httpVersion}
             onChange={(e) =>
               patchConfig({ httpVersion: e.target.value as HttpVersion })
             }
-            className="cursor-pointer rounded-md border border-edge bg-panel px-2 text-xs text-muted outline-none focus:border-brand"
+            className="wrk-field lg w-28 text-muted"
             title="HTTP version"
           >
             {HTTP_VERSIONS.map((version) => (
@@ -341,7 +344,7 @@ export function RequestPane({
                 {version.label}
               </option>
             ))}
-          </select>
+          </Select>
         )}
 
         {streaming ? (
@@ -386,7 +389,7 @@ export function RequestPane({
       >
         <div
           data-tour="request-tabs"
-          className="flex flex-none items-center gap-1 border-b border-edge px-3 py-1.5"
+          className="flex flex-none items-center gap-0.5 border-b border-edge px-2 py-1"
         >
           {visibleTabs.map((key) => (
             <PaneTab
@@ -459,6 +462,8 @@ export function RequestPane({
               onChange={(headers) => onChange({ headers: headers as Header[] })}
               keyPlaceholder="Header"
               valuePlaceholder="Value"
+              suggestName={(query) => matchHeaders(query)}
+              suggestValue={matchHeaderValues}
             />
           )}
           {reqTab === "body" && (

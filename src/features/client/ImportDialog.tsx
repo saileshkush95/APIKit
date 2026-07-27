@@ -1,3 +1,4 @@
+import { Input, Textarea } from "../../shared/components/Field";
 import { useState } from "react";
 import { sendRequest } from "../../shared/lib/api";
 import { importOpenApi, type ImportResult } from "../../shared/lib/openapi";
@@ -12,8 +13,6 @@ interface Props {
   onImport: (nodes: TreeNode[], environment: Omit<Environment, "id">) => void;
 }
 
-const fieldCls =
-  "w-full rounded border border-edge bg-panel px-2 py-1.5 text-xs text-ink outline-none focus:border-brand";
 
 /** Normalises both importers onto one shape for the preview. */
 function analyseDocument(text: string): ImportResult {
@@ -119,21 +118,21 @@ export function ImportDialog({ onClose, onImport }: Props) {
           </div>
 
           {source === "url" ? (
-            <input
+            <Input
               value={url}
               spellCheck={false}
               placeholder="https://api.example.com/openapi.json"
               onChange={(e) => setUrl(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && analyse()}
-              className={`${fieldCls} font-mono`}
+              className={"wrk-field font-mono"}
             />
           ) : (
-            <textarea
+            <Textarea
               value={text}
               spellCheck={false}
               placeholder="Paste an OpenAPI 3 / Swagger 2 document (JSON or YAML), or a Postman collection v2.1"
               onChange={(e) => setText(e.target.value)}
-              className={`${fieldCls} h-40 resize-y font-mono`}
+              className={"wrk-field h-40 resize-y font-mono"}
             />
           )}
 
