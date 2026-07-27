@@ -604,6 +604,35 @@ pub fn list_workspaces(db: State<Db>) -> Result<Vec<WorkspaceMeta>, String> {
     Ok(rows)
 }
 
+/// Workspace list for a peer that is choosing what to pair with.
+pub fn workspace_list(conn: &Connection) -> Result<Vec<WorkspaceMeta>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id, name FROM workspaces WHERE deleted = 0 ORDER BY position")
+        .map_err(to_err)?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(WorkspaceMeta {
+                id: row.get(0)?,
+                name: row.get(1)?,
+            })
+        })
+        .map_err(to_err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(to_err)?;
+    Ok(rows)
+}
+
+pub fn workspace_exists(conn: &Connection, id: &str) -> Result<bool, String> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM workspaces WHERE id = ?1 AND deleted = 0",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(to_err)?;
+    Ok(count > 0)
+}
+
 #[tauri::command]
 pub fn create_workspace(db: State<Db>, name: String) -> Result<WorkspaceMeta, String> {
     let conn = db.0.lock().map_err(to_err)?;
@@ -2057,6 +2086,39 @@ mod tests {
             })
             .unwrap();
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn a_peer_asking_for_an_unknown_workspace_gets_nothing() {
+        // Each machine generates its own workspace ids, so machine B asking A
+        // for B's id finds nothing — the bug behind "sync fetches no requests".
+        // `snapshot` is right to return empty; the transport turns this into a
+        // clear error, and the UI pairs the two ids up front.
+        let mut a = memory_db();
+        write_tree(&mut a, "w", &[request("r1", "Login")]).unwrap();
+
+        let mine = snapshot(&a, "w", 0).unwrap();
+        assert_eq!(mine.rows.len(), 1, "its own workspace has the row");
+
+        let theirs = snapshot(&a, "some-other-machines-id", 0).unwrap();
+        assert!(theirs.rows.is_empty());
+        assert_eq!(theirs.workspace_name, "", "no such workspace here");
+
+        assert!(workspace_exists(&a, "w").unwrap());
+        assert!(!workspace_exists(&a, "some-other-machines-id").unwrap());
+    }
+
+    #[test]
+    fn pairing_on_a_shared_id_syncs_both_ways() {
+        // Once both machines use the same workspace id — which is what the
+        // panel now arranges — rows flow normally.
+        let mut a = memory_db();
+        let mut b = memory_db();
+
+        write_tree(&mut a, "w", &[request("r1", "List APIs")]).unwrap();
+        let report = apply(&mut b, &snapshot(&a, "w", 0).unwrap()).unwrap();
+        assert!(report.applied >= 1);
+        assert_eq!(names(&read_tree(&b, "w").unwrap()), vec!["List APIs"]);
     }
 
     #[test]

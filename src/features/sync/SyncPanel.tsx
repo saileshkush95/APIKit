@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { GithubPanel } from "./GithubPanel";
-import { probePeer, SKEW_WARNING_MS, useSync } from "../../shared/state/sync";
+import { diagnosePeer, listPeerWorkspaces } from "../../shared/lib/api";
+import { SKEW_WARNING_MS, useSync } from "../../shared/state/sync";
 import { useWorkspaces } from "../../shared/state/workspaces";
+import type { WorkspaceMeta } from "../../shared/types";
 
 const fieldCls =
   "rounded border border-edge bg-panel px-2 py-1.5 text-xs text-ink outline-none focus:border-brand";
@@ -24,6 +26,7 @@ export function SyncPanel() {
     autoSyncSecs,
     live,
     connected,
+    watchErrors,
     setLive,
     setToken,
     setPort,
@@ -41,6 +44,9 @@ export function SyncPanel() {
   const [error, setError] = useState<string | null>(null);
   const [probing, setProbing] = useState<string | null>(null);
   const [probeResult, setProbeResult] = useState<Record<string, string>>({});
+  // Workspaces each peer is offering, once fetched.
+  const [offered, setOffered] = useState<Record<string, WorkspaceMeta[]>>({});
+  const [loadingList, setLoadingList] = useState<string | null>(null);
 
   async function guard(action: Promise<unknown>) {
     setError(null);
@@ -51,17 +57,29 @@ export function SyncPanel() {
     }
   }
 
-  async function probe(id: string, host: string) {
+  /** Reads the peer's workspaces so one can be paired with. */
+  async function loadWorkspaces(id: string, host: string, token: string) {
+    setLoadingList(id);
+    setError(null);
+    try {
+      const list = await listPeerWorkspaces(host, token);
+      setOffered((prev) => ({ ...prev, [id]: list }));
+      if (list.length === 0) {
+        setError("That peer has no workspaces to share yet.");
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoadingList(null);
+    }
+  }
+
+  /** Full check: reachable, token accepted, live stream available. */
+  async function probe(id: string, host: string, token: string) {
     setProbing(id);
     try {
-      const skew = await probePeer(host);
-      setProbeResult((prev) => ({
-        ...prev,
-        [id]:
-          Math.abs(skew) > SKEW_WARNING_MS
-            ? `reachable, but its clock is ${Math.round(skew / 1000)}s off`
-            : "reachable",
-      }));
+      const result = await diagnosePeer(host, token);
+      setProbeResult((prev) => ({ ...prev, [id]: result.summary }));
     } catch (e) {
       setProbeResult((prev) => ({ ...prev, [id]: String(e) }));
     } finally {
@@ -210,7 +228,7 @@ export function SyncPanel() {
           {peers.length === 0 ? (
             <p className="p-6 text-center text-xs text-muted">
               No peers yet. Add the address and token shown on another machine
-              that is sharing this workspace.
+              that is sharing, then choose which workspace to sync.
             </p>
           ) : (
             peers.map((peer) => {
@@ -264,7 +282,7 @@ export function SyncPanel() {
 
                     <div className="ml-auto flex items-center gap-2">
                       <button
-                        onClick={() => probe(peer.id, peer.host)}
+                        onClick={() => probe(peer.id, peer.host, peer.token)}
                         disabled={probing === peer.id || peer.host === ""}
                         className="rounded border border-edge px-2 py-1 text-xs text-muted hover:border-brand hover:text-ink disabled:opacity-50"
                       >
@@ -287,20 +305,74 @@ export function SyncPanel() {
                     </div>
                   </div>
 
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] text-muted">Workspace</span>
+                    <select
+                      value={peer.workspaceId}
+                      onChange={(e) => {
+                        const chosen = (offered[peer.id] ?? []).find(
+                          (workspace) => workspace.id === e.target.value,
+                        );
+                        updatePeer(peer.id, {
+                          workspaceId: e.target.value,
+                          workspaceName: chosen?.name ?? "",
+                        });
+                      }}
+                      className={`${fieldCls} min-w-56 cursor-pointer`}
+                    >
+                      {/* Pushing your own workspace creates it on the peer. */}
+                      <option value={active?.id ?? ""}>
+                        Mine — {active?.name ?? "current workspace"}
+                      </option>
+                      {(offered[peer.id] ?? [])
+                        .filter((workspace) => workspace.id !== active?.id)
+                        .map((workspace) => (
+                          <option key={workspace.id} value={workspace.id}>
+                            Theirs — {workspace.name}
+                          </option>
+                        ))}
+                      {peer.workspaceId !== active?.id &&
+                        !(offered[peer.id] ?? []).some(
+                          (workspace) => workspace.id === peer.workspaceId,
+                        ) && (
+                          <option value={peer.workspaceId}>
+                            {peer.workspaceName || "Paired workspace"}
+                          </option>
+                        )}
+                    </select>
+                    <button
+                      onClick={() =>
+                        loadWorkspaces(peer.id, peer.host, peer.token)
+                      }
+                      disabled={loadingList === peer.id || peer.host === ""}
+                      className="rounded border border-edge px-2 py-1 text-xs text-muted hover:border-brand hover:text-ink disabled:opacity-50"
+                    >
+                      {loadingList === peer.id ? "Loading…" : "Load theirs"}
+                    </button>
+                  </div>
+
                   <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px]">
                     {live && peer.enabled && (
                       <span
                         className={
                           connected.has(peer.host.trim())
                             ? "text-ok"
-                            : "text-muted"
+                            : watchErrors[peer.host.trim()]
+                              ? "text-warn"
+                              : "text-muted"
                         }
                       >
-                        ● {connected.has(peer.host.trim()) ? "live" : "connecting…"}
+                        ●{" "}
+                        {connected.has(peer.host.trim())
+                          ? "live"
+                          : (watchErrors[peer.host.trim()] ?? "connecting…")}
                       </span>
                     )}
                     <span className="text-muted">
                       Last sync {ago(peer.lastSyncMs)}
+                      {peer.lastSyncMs !== null && peer.lastError === null
+                        ? ` · sent ${peer.lastPushed ?? 0}, received ${peer.lastPulled ?? 0}`
+                        : ""}
                     </span>
                     {probeResult[peer.id] && (
                       <span className="text-muted">{probeResult[peer.id]}</span>
@@ -315,6 +387,15 @@ export function SyncPanel() {
                     {peer.lastError && (
                       <span className="text-err">{peer.lastError}</span>
                     )}
+                    {peer.lastError === null &&
+                      peer.lastPulled === 0 &&
+                      (peer.lastPushed ?? 0) > 0 &&
+                      peer.workspaceId === active?.id && (
+                        <span className="text-warn">
+                          Sent yours, received nothing — that peer has a
+                          different workspace. Use “Load theirs” to adopt it.
+                        </span>
+                      )}
                   </div>
                 </div>
               );
@@ -350,8 +431,13 @@ export function SyncPanel() {
               stream triggers a pull.
             </li>
             <li>
-              Peers are stored per workspace — pair each workspace you want to
-              share. Full guide in <span className="font-mono">docs/lan-sync.md</span>.
+              Each peer syncs <strong>one workspace</strong>, and both machines
+              must agree on which. Choose “Mine” to push yours over, or “Load
+              theirs” to adopt one of theirs — it then appears in your workspace
+              switcher.
+            </li>
+            <li>
+              Full guide in <span className="font-mono">docs/lan-sync.md</span>.
             </li>
           </ul>
         </div>

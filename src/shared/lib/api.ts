@@ -134,6 +134,14 @@ export function pingPeer(host: string): Promise<number> {
   return invoke<number>("ping_peer", { host });
 }
 
+/** The workspaces a peer offers, for choosing which to pair with. */
+export function listPeerWorkspaces(
+  host: string,
+  token: string,
+): Promise<WorkspaceMeta[]> {
+  return invoke<WorkspaceMeta[]>("list_peer_workspaces", { host, token });
+}
+
 export function syncWithPeer(
   host: string,
   token: string,
@@ -223,13 +231,30 @@ export function onPeerChanged(cb: (host: string) => void): Promise<UnlistenFn> {
   return listen<string>("sync://peer-changed", (event) => cb(event.payload));
 }
 
-/** Fires when a peer stream connects or drops. */
+/** Fires when a peer stream connects or drops, with the reason on failure. */
 export function onWatchState(
-  cb: (host: string, connected: boolean) => void,
+  cb: (host: string, connected: boolean, reason: string) => void,
 ): Promise<UnlistenFn> {
-  return listen<[string, boolean]>("sync://watch-state", (event) =>
-    cb(event.payload[0], event.payload[1]),
+  return listen<[string, boolean, string]>("sync://watch-state", (event) =>
+    cb(event.payload[0], event.payload[1], event.payload[2] ?? ""),
   );
+}
+
+export interface PeerDiagnosis {
+  reachable: boolean;
+  tokenOk: boolean;
+  liveOk: boolean;
+  clockSkewMs: number;
+  workspaces: number;
+  summary: string;
+}
+
+/** Checks a peer end to end and names the first thing that is wrong. */
+export function diagnosePeer(
+  host: string,
+  token: string,
+): Promise<PeerDiagnosis> {
+  return invoke<PeerDiagnosis>("diagnose_peer", { host, token });
 }
 
 // --- Monitoring --------------------------------------------------------------

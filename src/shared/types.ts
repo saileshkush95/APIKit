@@ -205,12 +205,21 @@ export interface SyncPeer {
   host: string;
   token: string;
   enabled: boolean;
+  /**
+   * Which workspace this peer syncs. Both machines must agree on the id, so it
+   * is chosen from the peer's list (or seeded from a workspace you push).
+   */
+  workspaceId: string;
+  workspaceName: string;
   /** Watermarks, so each round only exchanges what changed. */
   pulledWatermark: number;
   pushedWatermark: number;
   lastSyncMs: number | null;
   lastError: string | null;
   lastSkewMs: number | null;
+  /** Result of the last round, so an empty sync is visible rather than silent. */
+  lastPushed: number | null;
+  lastPulled: number | null;
 }
 
 export interface GithubConfig {

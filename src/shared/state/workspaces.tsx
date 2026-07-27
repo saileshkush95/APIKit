@@ -8,6 +8,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -15,9 +16,11 @@ import {
   createWorkspace,
   deleteWorkspace,
   listWorkspaces,
+  onSyncApplied,
   renameWorkspace,
   setSetting,
 } from "../lib/api";
+import { notify } from "../lib/notify";
 import { GLOBAL_SCOPE, invalidateWorkspace, SETTINGS } from "../lib/storage";
 import {
   SplashScreen,
@@ -62,6 +65,36 @@ export function WorkspacesProvider({ children }: { children: ReactNode }) {
     // Mirrored locally so the last workspace is known before the first query.
     localStorage.setItem(SETTINGS.activeWorkspace, id);
     setSetting(GLOBAL_SCOPE, SETTINGS.activeWorkspace, id).catch(() => {});
+  }, []);
+
+  // The listener below is registered once, so it reaches `switchTo` by ref.
+  const switchToRef = useRef(switchTo);
+  switchToRef.current = switchTo;
+
+  // A sync can create a workspace in the database underneath us; without this
+  // the new workspace stays invisible until the app restarts.
+  useEffect(() => {
+    const unlisten = onSyncApplied(() => {
+      listWorkspaces()
+        .then((list) => {
+          setWorkspaces((prev) => {
+            const known = new Set(prev.map((workspace) => workspace.id));
+            for (const workspace of list.filter((w) => !known.has(w.id))) {
+              notify("success", `Received workspace “${workspace.name}”`, {
+                action: {
+                  label: "Open it",
+                  run: () => switchToRef.current(workspace.id),
+                },
+              });
+            }
+            return list;
+          });
+        })
+        .catch(() => {});
+    });
+    return () => {
+      unlisten.then((un) => un());
+    };
   }, []);
 
   const create = useCallback(

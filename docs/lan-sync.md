@@ -47,7 +47,28 @@ On each other machine:
 1. Open **Sync** → **+ Add peer**.
 2. Enter the host (`192.168.1.20:7420`) and the pairing token exactly as shown.
 3. Click **Test** to confirm it is reachable and the clocks agree.
-4. Click **Sync**.
+4. **Choose the workspace** — this step matters, see below.
+5. Click **Sync**.
+
+### Choosing the workspace
+
+Sync pairs **one workspace** at a time, and both machines have to agree on
+which. Every machine generates its own workspace ids, so two workspaces that
+happen to share a name are still different workspaces.
+
+Each peer has a workspace selector:
+
+- **Mine — “Name”** pushes your workspace to that peer. It appears there on
+  the first sync.
+- **Theirs — “Name”** adopts one of theirs. Click **Load theirs** to fetch the
+  list, pick one, and sync — it then shows up in your workspace switcher.
+
+Pick one direction and stay with it. Changing the selection resets that peer's
+watermarks, so the next sync re-checks everything.
+
+Under **Last sync** each peer reports what actually moved, for example
+`sent 12, received 0`. If both numbers stay at 0, the two machines are pointed
+at different workspaces.
 
 ### 3. Keep it in sync
 
@@ -154,7 +175,8 @@ still has it.
 | --- | --- |
 | "cannot reach host" | Wrong address or port, machine asleep, or a firewall blocking the port. Confirm with `curl http://HOST:PORT/ping` |
 | "the peer rejected this pairing token" | Tokens differ — copy it again from the sharing machine |
-| Changes do not appear | Both sides must be on the same workspace; check the workspace name in the header |
+| Changes do not appear, `sent 0, received 0` | The peer is pointed at a different workspace — use **Load theirs** and pick the one you both want |
+| "this peer has no workspace with id …" | Same cause: the workspace you selected does not exist on that machine |
 | A colleague's edit was overwritten | Both edited the same request; the newer timestamp won. Check the clock-skew warning |
 | Deleted item came back | The other machine had not synced since the delete — sync it once more |
 

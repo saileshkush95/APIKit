@@ -179,6 +179,50 @@ async fn route(
         );
     }
 
+    if path == "/workspaces" && method == hyper::Method::GET {
+        let expected = token.lock().map(|t| t.clone()).unwrap_or_default();
+        if !authorized(&req, &expected) {
+            return (
+                json_response(
+                    StatusCode::UNAUTHORIZED,
+                    r#"{"error":"invalid pairing token"}"#.to_string(),
+                ),
+                0,
+            );
+        }
+        let listed = {
+            let conn = match db.0.lock() {
+                Ok(conn) => conn,
+                Err(e) => {
+                    return (
+                        json_response(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            serde_json::json!({ "error": e.to_string() }).to_string(),
+                        ),
+                        0,
+                    )
+                }
+            };
+            crate::store::workspace_list(&conn)
+        };
+        return match listed {
+            Ok(workspaces) => (
+                json_response(
+                    StatusCode::OK,
+                    serde_json::to_string(&workspaces).unwrap_or_default(),
+                ),
+                0,
+            ),
+            Err(e) => (
+                json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    serde_json::json!({ "error": e }).to_string(),
+                ),
+                0,
+            ),
+        };
+    }
+
     if path == "/events" && method == hyper::Method::GET {
         let expected = token.lock().map(|t| t.clone()).unwrap_or_default();
         if !authorized(&req, &expected) {
@@ -242,6 +286,20 @@ async fn route(
     };
 
     let result = (|| -> Result<SyncResponse, String> {
+        // Asking for a workspace this machine has never seen, while sending
+        // nothing to create it, means the two sides were never paired — say so
+        // rather than answering with an empty payload.
+        {
+            let conn = db.0.lock().map_err(|e| e.to_string())?;
+            let known = crate::store::workspace_exists(&conn, &request.workspace_id)?;
+            if !known && request.changes.rows.is_empty() {
+                return Err(format!(
+                    "this peer has no workspace with id {} — pick one of its workspaces to sync",
+                    request.workspace_id
+                ));
+            }
+        }
+
         let applied = {
             let mut conn = db.0.lock().map_err(|e| e.to_string())?;
             apply(&mut conn, &request.changes)?
@@ -397,6 +455,139 @@ pub async fn ping_peer(host: String) -> Result<i64, String> {
         .ok_or_else(|| "peer did not answer with a clock".to_string())
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerDiagnosis {
+    pub reachable: bool,
+    pub token_ok: bool,
+    /// Whether the peer supports the live event stream (older builds do not).
+    pub live_ok: bool,
+    pub clock_skew_ms: i64,
+    pub workspaces: usize,
+    /// One sentence naming the first thing that is wrong, or that all is well.
+    pub summary: String,
+}
+
+/// Checks a peer end to end: reachable, token accepted, live stream available.
+/// Each step names its own failure, so "connecting…" is never the whole story.
+#[tauri::command]
+pub async fn diagnose_peer(host: String, token: String) -> Result<PeerDiagnosis, String> {
+    let base = host.trim().trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let mut report = PeerDiagnosis {
+        reachable: false,
+        token_ok: false,
+        live_ok: false,
+        clock_skew_ms: 0,
+        workspaces: 0,
+        summary: String::new(),
+    };
+
+    let ping = client
+        .get(format!("http://{base}/ping"))
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await;
+    let Ok(ping) = ping else {
+        report.summary =
+            format!("Cannot reach {base}. Check the address, and that the other machine is sharing.");
+        return Ok(report);
+    };
+    report.reachable = true;
+
+    if let Ok(value) = ping.json::<serde_json::Value>().await {
+        if let Some(peer_now) = value.get("now").and_then(|n| n.as_i64()) {
+            report.clock_skew_ms = peer_now - now_ms();
+        }
+    }
+
+    let workspaces = client
+        .get(format!("http://{base}/workspaces"))
+        .bearer_auth(&token)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await;
+    match workspaces {
+        Ok(response) if response.status().is_success() => {
+            report.token_ok = true;
+            if let Ok(list) = response.json::<Vec<crate::store::WorkspaceMeta>>().await {
+                report.workspaces = list.len();
+            }
+        }
+        Ok(response) if response.status() == reqwest::StatusCode::UNAUTHORIZED => {
+            report.summary = "The pairing token does not match.".into();
+            return Ok(report);
+        }
+        Ok(_) => {
+            report.summary =
+                "Reachable, but it cannot list workspaces — that machine is on an older build. Pull and rebuild it.".into();
+            return Ok(report);
+        }
+        Err(e) => {
+            report.summary = format!("Reachable, but listing workspaces failed: {e}");
+            return Ok(report);
+        }
+    }
+
+    let events = client
+        .get(format!("http://{base}/events"))
+        .bearer_auth(&token)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await;
+    report.live_ok = matches!(&events, Ok(response) if response.status().is_success());
+
+    report.summary = if !report.live_ok {
+        "Sync works, but live updates are unavailable — that machine is on an older build. Pull and rebuild it.".into()
+    } else if report.clock_skew_ms.abs() > 30_000 {
+        format!(
+            "Ready, but its clock is {}s off — the machine running fast wins conflicts.",
+            report.clock_skew_ms / 1000
+        )
+    } else {
+        format!(
+            "Ready — {} workspace{} available.",
+            report.workspaces,
+            if report.workspaces == 1 { "" } else { "s" }
+        )
+    };
+
+    Ok(report)
+}
+
+/// The workspaces a peer is offering, so the user can pick which to pair with.
+#[tauri::command]
+pub async fn list_peer_workspaces(
+    host: String,
+    token: String,
+) -> Result<Vec<crate::store::WorkspaceMeta>, String> {
+    let url = format!("http://{}/workspaces", host.trim().trim_end_matches('/'));
+    let response = reqwest::Client::new()
+        .get(&url)
+        .bearer_auth(&token)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("cannot reach {host}: {e}"))?;
+
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err("the peer rejected this pairing token".into());
+    }
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(
+            "the peer is running an older build that cannot list workspaces — update it".into(),
+        );
+    }
+    if !response.status().is_success() {
+        return Err(format!("peer returned {}", response.status()));
+    }
+
+    response
+        .json()
+        .await
+        .map_err(|e| format!("malformed reply from peer: {e}"))
+}
+
 /// One sync round trip with a peer: push what changed here, apply what changed
 /// there.
 #[tauri::command]
@@ -515,9 +706,33 @@ pub async fn sync_watch_peer(
                 .send()
                 .await;
 
+            let failure = match &attempt {
+                Ok(response) if response.status().is_success() => None,
+                Ok(response) => Some(match response.status().as_u16() {
+                    401 => "the peer rejected this pairing token".to_string(),
+                    404 => "the peer is running an older build with no live stream — update it"
+                        .to_string(),
+                    other => format!("the peer answered {other}"),
+                }),
+                Err(e) if e.is_connect() => {
+                    Some(format!("cannot reach {key} — is it sharing?"))
+                }
+                Err(e) => Some(e.to_string()),
+            };
+
+            if let Some(reason) = &failure {
+                let _ = app.emit(
+                    "sync://watch-state",
+                    (key.clone(), false, reason.clone()),
+                );
+            }
+
             match attempt {
                 Ok(response) if response.status().is_success() => {
-                    let _ = app.emit("sync://watch-state", (key.clone(), true));
+                    let _ = app.emit(
+                        "sync://watch-state",
+                        (key.clone(), true, String::new()),
+                    );
                     let mut stream = response.bytes_stream();
                     loop {
                         tokio::select! {
@@ -540,7 +755,13 @@ pub async fn sync_watch_peer(
                 _ => {}
             }
 
-            let _ = app.emit("sync://watch-state", (key.clone(), false));
+            if failure.is_none() {
+                // The stream was open and then ended.
+                let _ = app.emit(
+                    "sync://watch-state",
+                    (key.clone(), false, "the live stream closed".to_string()),
+                );
+            }
             if *cancel_rx.borrow() {
                 break;
             }

@@ -78,6 +78,8 @@ pub fn run() {
             sync::sync_server_status,
             sync::ping_peer,
             sync::sync_with_peer,
+            sync::list_peer_workspaces,
+            sync::diagnose_peer,
             sync::notify_local_change,
             sync::sync_watch_peer,
             sync::sync_unwatch_peer,

@@ -32,7 +32,12 @@ import {
   syncWithPeer,
 } from "../lib/api";
 import { notifyError } from "../lib/notify";
-import { invalidateWorkspace, newId, workspaceDataOnce } from "../lib/storage";
+import {
+  GLOBAL_SCOPE,
+  invalidateWorkspace,
+  newId,
+  workspaceDataOnce,
+} from "../lib/storage";
 import { useWorkspaceId } from "./workspaces";
 import type { SyncPeer, SyncServerStatus } from "../types";
 
@@ -50,6 +55,8 @@ interface SyncValue {
   live: boolean;
   /** Peers whose event stream is currently connected. */
   connected: Set<string>;
+  /** Why a peer's stream is not connected, keyed by host. */
+  watchErrors: Record<string, string>;
   /** Bumped when a sync changed the database, to prompt a reload. */
   revision: number;
   setToken: (token: string) => void;
@@ -68,6 +75,8 @@ interface SyncValue {
 const SyncContext = createContext<SyncValue | null>(null);
 
 const PEERS_KEY = "syncPeers";
+/** Peers live in global settings: a peer is a machine, not a workspace. */
+const PEERS_SCOPE = GLOBAL_SCOPE;
 const CONFIG_KEY = "syncConfig";
 
 function randomToken(): string {
@@ -91,6 +100,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const [autoSyncSecs, setAutoSyncSecsState] = useState(0);
   const [live, setLiveState] = useState(false);
   const [connected, setConnected] = useState<Set<string>>(new Set());
+  const [watchErrors, setWatchErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [revision, setRevision] = useState(0);
   const [ready, setReady] = useState(false);
@@ -107,7 +117,22 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       .then((workspace) => {
         if (cancelled) return;
         try {
-          setPeers(JSON.parse(workspace.settings[PEERS_KEY] ?? "[]") as SyncPeer[]);
+          // Peers used to be stored per workspace; anything found there is
+          // adopted once and then kept globally.
+          const stored = JSON.parse(
+            workspace.settings[PEERS_KEY] ?? "[]",
+          ) as SyncPeer[];
+          setPeers(
+            stored.map((peer) => ({
+              ...peer,
+              // Older peers had no target, which is exactly why they synced
+              // nothing — default them to the workspace they were added under.
+              workspaceId: peer.workspaceId || workspaceId,
+              workspaceName: peer.workspaceName || "",
+              lastPushed: peer.lastPushed ?? null,
+              lastPulled: peer.lastPulled ?? null,
+            })),
+          );
         } catch {
           setPeers([]);
         }
@@ -140,7 +165,9 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   // Persist peer list and server config per workspace.
   useEffect(() => {
     if (!ready) return;
-    setSetting(workspaceId, PEERS_KEY, JSON.stringify(peers)).catch(() => {});
+    setSetting(PEERS_SCOPE, PEERS_KEY, JSON.stringify(peers)).catch((e) =>
+      notifyError("Could not save the peer list", e),
+    );
   }, [peers, ready, workspaceId]);
 
   useEffect(() => {
@@ -177,10 +204,11 @@ export function SyncProvider({ children }: { children: ReactNode }) {
 
       setBusy((prev) => new Set(prev).add(id));
       try {
+        const target = peer.workspaceId || latest.current.workspaceId;
         const outcome = await syncWithPeer(
           peer.host,
           peer.token,
-          latest.current.workspaceId,
+          target,
           peer.pulledWatermark,
           peer.pushedWatermark,
         );
@@ -195,6 +223,8 @@ export function SyncProvider({ children }: { children: ReactNode }) {
                   lastSyncMs: Date.now(),
                   lastError: null,
                   lastSkewMs: skew,
+                  lastPushed: outcome.pushed,
+                  lastPulled: outcome.pulled,
                 }
               : candidate,
           ),
@@ -254,13 +284,14 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       );
       if (peer) syncPeer(peer.id);
     });
-    const unlistenState = onWatchState((host, isConnected) => {
+    const unlistenState = onWatchState((host, isConnected, reason) => {
       setConnected((prev) => {
         const next = new Set(prev);
         if (isConnected) next.add(host);
         else next.delete(host);
         return next;
       });
+      setWatchErrors((prev) => ({ ...prev, [host]: isConnected ? "" : reason }));
     });
     return () => {
       unlistenChanged.then((un) => un());
@@ -312,6 +343,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       autoSyncSecs,
       live,
       connected,
+      watchErrors,
       revision,
       setToken: setTokenState,
       setPort: setPortState,
@@ -335,16 +367,33 @@ export function SyncProvider({ children }: { children: ReactNode }) {
             host: "",
             token: "",
             enabled: true,
+            // Defaults to the workspace open right now; the panel lets the user
+            // pick one of the peer's instead.
+            workspaceId: latest.current.workspaceId,
+            workspaceName: "",
             pulledWatermark: 0,
             pushedWatermark: 0,
             lastSyncMs: null,
             lastError: null,
             lastSkewMs: null,
+            lastPushed: null,
+            lastPulled: null,
           },
         ]),
       updatePeer: (id, patch) =>
         setPeers((prev) =>
-          prev.map((peer) => (peer.id === id ? { ...peer, ...patch } : peer)),
+          prev.map((peer) => {
+            if (peer.id !== id) return peer;
+            const next = { ...peer, ...patch };
+            // A different workspace means the old watermarks describe nothing.
+            if (patch.workspaceId && patch.workspaceId !== peer.workspaceId) {
+              next.pulledWatermark = 0;
+              next.pushedWatermark = 0;
+              next.lastPushed = null;
+              next.lastPulled = null;
+            }
+            return next;
+          }),
         ),
       removePeer: (id) => setPeers((prev) => prev.filter((peer) => peer.id !== id)),
       syncPeer,
@@ -359,6 +408,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       autoSyncSecs,
       live,
       connected,
+      watchErrors,
       revision,
       syncPeer,
       syncAll,
