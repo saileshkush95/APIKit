@@ -1,8 +1,8 @@
 # Proxy setup guide
 
-WebRequestKit's proxy intercepts HTTP and HTTPS traffic from any device that can
+APIKit's proxy intercepts HTTP and HTTPS traffic from any device that can
 reach this machine. HTTPS interception works by re-signing traffic with a CA
-certificate that WebRequestKit generates on first run — so every client needs two
+certificate that APIKit generates on first run — so every client needs two
 things:
 
 1. **Proxy configured** → this machine's IP and the proxy port (default `8080`).
@@ -46,14 +46,14 @@ export https_proxy=http://127.0.0.1:8080
 
 1. Open the exported `.pem` — Keychain Access opens.
 2. Add it to the **System** (or **login**) keychain.
-3. Find "WebRequestKit CA" → double-click → **Trust** → *When using this
+3. Find "APIKit CA" → double-click → **Trust** → *When using this
    certificate* → **Always Trust**. Close and authenticate.
 
 CLI equivalent:
 
 ```sh
 sudo security add-trusted-cert -d -r trustRoot \
-  -k /Library/Keychains/System.keychain ~/Downloads/webrequestkit-ca.pem
+  -k /Library/Keychains/System.keychain ~/Downloads/apikit-ca.pem
 ```
 
 ---
@@ -82,7 +82,7 @@ $env:HTTPS_PROXY = "http://127.0.0.1:8080"
 CLI equivalent (elevated):
 
 ```powershell
-certutil -addstore -f "ROOT" webrequestkit-ca.pem
+certutil -addstore -f "ROOT" apikit-ca.pem
 ```
 
 ---
@@ -106,14 +106,14 @@ export https_proxy=http://127.0.0.1:8080
 Debian/Ubuntu:
 
 ```sh
-sudo cp webrequestkit-ca.pem /usr/local/share/ca-certificates/webrequestkit.crt
+sudo cp apikit-ca.pem /usr/local/share/ca-certificates/apikit.crt
 sudo update-ca-certificates
 ```
 
 Fedora/RHEL:
 
 ```sh
-sudo cp webrequestkit-ca.pem /etc/pki/ca-trust/source/anchors/
+sudo cp apikit-ca.pem /etc/pki/ca-trust/source/anchors/
 sudo update-ca-trust
 ```
 
@@ -174,7 +174,7 @@ Emulators: use `10.0.2.2` for the host machine, or start with
 1. Serve or AirDrop the `.pem` to the device and open it in Safari.
 2. Settings → **Profile Downloaded** → Install.
 3. **Then trust it explicitly:** Settings → General → About → **Certificate Trust
-   Settings** → enable full trust for "WebRequestKit CA".
+   Settings** → enable full trust for "APIKit CA".
 
 Step 3 is required — without it every HTTPS request still fails.
 

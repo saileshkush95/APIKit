@@ -2,9 +2,39 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri + React + Typescript</title>
+    <title>APIKit</title>
+    <script>
+      // Applied before any stylesheet paints, so the splash screen opens in the
+      // user's theme and accent colour rather than flashing the dark default.
+      // Mirrors what the theme and settings stores read on start.
+      try {
+        var mode = localStorage.getItem("theme") || "system";
+        var dark =
+          mode === "dark" ||
+          (mode === "system" &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        document.documentElement.style.colorScheme = dark ? "dark" : "light";
+
+        var settings = JSON.parse(localStorage.getItem("appSettings") || "{}");
+        if (settings.accentColor) {
+          document.documentElement.style.setProperty(
+            "--color-brand",
+            settings.accentColor,
+          );
+        }
+        if (settings.monoFont) {
+          document.documentElement.style.setProperty(
+            "--font-mono",
+            settings.monoFont,
+          );
+        }
+      } catch (e) {
+        /* first run, or storage unavailable: the defaults are fine */
+      }
+    </script>
   </head>
 
   <body>

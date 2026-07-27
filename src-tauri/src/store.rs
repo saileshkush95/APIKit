@@ -339,6 +339,41 @@ CREATE INDEX IF NOT EXISTS idx_comments_request  ON comments(request_id);
 
 const DEFAULT_WORKSPACE_NAME: &str = "My Workspace";
 
+/// Identifiers this app has shipped under. The data directory is derived from
+/// the bundle identifier, so renaming the product moves it — anything found
+/// under a previous name is adopted on first run rather than left behind.
+const LEGACY_IDENTIFIERS: &[&str] = &["com.sandeep.webrequestkit"];
+
+/// Copies a previous installation's files across, once, if this one is empty.
+fn adopt_legacy_data(dir: &std::path::Path) -> Result<Option<String>, String> {
+    if dir.join("workspace.db").exists() {
+        return Ok(None);
+    }
+    let Some(parent) = dir.parent() else {
+        return Ok(None);
+    };
+
+    for identifier in LEGACY_IDENTIFIERS {
+        let legacy = parent.join(identifier);
+        if !legacy.join("workspace.db").exists() {
+            continue;
+        }
+        // Everything in the directory matters: the database, and the proxy's
+        // CA key and certificate.
+        let entries =
+            std::fs::read_dir(&legacy).map_err(|e| format!("read {identifier}: {e}"))?;
+        for entry in entries.flatten() {
+            if entry.path().is_file() {
+                let destination = dir.join(entry.file_name());
+                std::fs::copy(entry.path(), &destination)
+                    .map_err(|e| format!("copy {:?}: {e}", entry.file_name()))?;
+            }
+        }
+        return Ok(Some((*identifier).to_string()));
+    }
+    Ok(None)
+}
+
 /// Opens (creating if needed) the workspace database in the app data dir.
 pub fn init(app: &AppHandle) -> Result<Db, String> {
     let dir = app
@@ -346,6 +381,11 @@ pub fn init(app: &AppHandle) -> Result<Db, String> {
         .app_data_dir()
         .map_err(|e| format!("no app data dir: {e}"))?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("create app data dir: {e}"))?;
+
+    if let Some(adopted) = adopt_legacy_data(&dir)? {
+        // The old directory is left untouched, so a downgrade still works.
+        eprintln!("apikit: adopted workspace data from {adopted}");
+    }
 
     let conn = Connection::open(dir.join("workspace.db"))
         .map_err(|e| format!("open workspace database: {e}"))?;

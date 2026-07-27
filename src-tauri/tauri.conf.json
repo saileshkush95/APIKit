@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "webrequestkit",
+  "productName": "APIKit",
   "version": "0.1.0",
-  "identifier": "com.sandeep.webrequestkit",
+  "identifier": "com.sandeep.apikit",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -12,13 +12,12 @@
   "app": {
     "windows": [
       {
-        "title": "WebRequestKit",
+        "title": "APIKit",
         "width": 1200,
         "height": 780,
         "minWidth": 720,
         "minHeight": 500,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true
+        "decorations": false
       }
     ],
     "security": {

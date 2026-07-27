@@ -1,3 +1,4 @@
+import { LogoMark } from "../../shared/components/Logo";
 import { useOnboarding } from "../../shared/state/onboarding";
 
 interface Props {
@@ -59,10 +60,10 @@ export function WelcomeScreen({
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-canvas/95 p-8 backdrop-blur-sm">
       <div className="w-full max-w-2xl">
-        <div className="text-center">
-          <span className="text-4xl leading-none text-brand">◆</span>
+        <div className="flex flex-col items-center text-center">
+          <LogoMark size={56} />
           <h1 className="mt-3 text-2xl font-semibold tracking-tight text-ink">
-            Welcome to WebRequestKit
+            Welcome to APIKit
           </h1>
           <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted">
             An API client, load tester, mock server, uptime monitor and HTTPS

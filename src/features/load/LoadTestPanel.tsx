@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import {
   onLoadProgress,
   runLoadTest,
@@ -22,11 +23,6 @@ import {
   type LoadTestKind,
   type TreeNode,
 } from "../../shared/types";
-
-interface Props {
-  /** Opens the collection runner on a folder (used by the Chain preset). */
-  onOpenRunner: (folderId: string | null) => void;
-}
 
 const fieldCls =
   "rounded border border-edge bg-panel px-2 py-1 text-xs text-ink outline-none focus:border-brand";
@@ -57,7 +53,10 @@ function latencyTone(value: number, baseline: number): string {
   return "text-ok";
 }
 
-export function LoadTestPanel({ onOpenRunner }: Props) {
+export function LoadTestPanel() {
+  const navigate = useNavigate();
+  const onOpenRunner = (folderId: string | null) =>
+    navigate({ to: "/runner", search: folderId ? { folder: folderId } : {} });
   const { active } = useActiveRequest();
   const { tree } = useCollection();
   const { vars } = useEnvironments();

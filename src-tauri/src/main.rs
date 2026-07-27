@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    webrequestkit_lib::run()
+    apikit_lib::run()
 }

@@ -6,7 +6,7 @@
 //! These commands keep them in the macOS Keychain, Windows Credential Manager
 //! or the Linux Secret Service instead.
 
-const SERVICE: &str = "com.webrequestkit.apikit";
+const SERVICE: &str = "com.sandeep.apikit";
 
 fn entry(key: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(SERVICE, key).map_err(|e| format!("keychain unavailable: {e}"))

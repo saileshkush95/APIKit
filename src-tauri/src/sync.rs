@@ -173,7 +173,7 @@ async fn route(
         return (
             json_response(
                 StatusCode::OK,
-                serde_json::json!({ "app": "webrequestkit", "now": now_ms() }).to_string(),
+                serde_json::json!({ "app": "apikit", "now": now_ms() }).to_string(),
             ),
             0,
         );
@@ -948,7 +948,7 @@ mod tests {
         .await
         .expect("json");
 
-        assert_eq!(value["app"], "webrequestkit");
+        assert_eq!(value["app"], "apikit");
         assert!(value["now"].as_i64().unwrap_or(0) > 0);
     }
 

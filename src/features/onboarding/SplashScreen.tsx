@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { LogoMark } from "../../shared/components/Logo";
 
 interface Props {
   /** What the app is doing, shown under the title. */
@@ -27,14 +28,14 @@ export function SplashScreen({ status = "Opening your workspace…" }: Props) {
     >
       <div className="flex flex-col items-center gap-4">
         <div className="relative">
-          <span className="text-5xl leading-none text-brand">◆</span>
-          <span className="absolute inset-0 animate-ping text-5xl leading-none text-brand opacity-20">
-            ◆
-          </span>
+          <LogoMark size={64} />
+          <div className="absolute inset-0 animate-ping opacity-20">
+            <LogoMark size={64} />
+          </div>
         </div>
         <div className="text-center">
           <h1 className="text-xl font-semibold tracking-tight text-ink">
-            WebRequestKit
+            APIKit
           </h1>
           <p className="mt-1 text-xs text-muted">
             API client, mock server and proxy in one place

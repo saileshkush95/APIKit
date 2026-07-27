@@ -35,13 +35,13 @@ pub fn show_main_window(app: &AppHandle) {
 /// hidden, so it is always installed — background mode only changes what
 /// closing the window does.
 pub fn init_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let show = MenuItem::with_id(app, "show", "Open WebRequestKit", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Open APIKit", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
 
     let mut builder = TrayIconBuilder::with_id("main")
         .menu(&menu)
-        .tooltip("WebRequestKit — monitors running")
+        .tooltip("APIKit — monitors running")
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_main_window(app),

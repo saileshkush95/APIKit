@@ -11,7 +11,7 @@
 use serde::{Deserialize, Serialize};
 
 const API: &str = "https://api.github.com";
-const USER_AGENT: &str = concat!("WebRequestKit/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("APIKit/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]

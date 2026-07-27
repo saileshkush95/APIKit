@@ -133,7 +133,7 @@ fn summarize(phase: &LoadPhase, samples: Samples, elapsed: Duration) -> PhaseRep
 
 fn build_client(spec: &HttpRequestSpec) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
-        .user_agent(concat!("WebRequestKit/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("APIKit/", env!("CARGO_PKG_VERSION")))
         // Connection reuse is what makes a load test measure the service
         // rather than TLS handshakes.
         .pool_max_idle_per_host(256);

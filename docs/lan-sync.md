@@ -1,6 +1,6 @@
 # Local network sync
 
-WebRequestKit is local-first: every machine keeps its own database and works
+APIKit is local-first: every machine keeps its own database and works
 offline. Sync exchanges only the rows that changed since last time, and where
 two people edited the same request, **the newer edit wins**.
 
@@ -184,5 +184,5 @@ To check a peer from the terminal:
 
 ```sh
 curl http://192.168.1.20:7420/ping
-# {"app":"webrequestkit","now":1769500000000}
+# {"app":"apikit","now":1769500000000}
 ```

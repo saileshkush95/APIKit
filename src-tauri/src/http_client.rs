@@ -86,7 +86,7 @@ pub async fn send_request(spec: HttpRequestSpec) -> Result<HttpResponseData, Str
         .map_err(|e| format!("invalid HTTP method: {e}"))?;
 
     let mut builder = reqwest::Client::builder()
-        .user_agent(concat!("WebRequestKit/", env!("CARGO_PKG_VERSION")));
+        .user_agent(concat!("APIKit/", env!("CARGO_PKG_VERSION")));
 
     if let Some(ms) = spec.timeout_ms {
         builder = builder.timeout(std::time::Duration::from_millis(ms));

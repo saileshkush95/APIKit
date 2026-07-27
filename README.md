@@ -1,4 +1,4 @@
-# WebRequestKit
+# APIKit
 
 A desktop **API testing tool with a built-in MITM proxy interceptor**, built
 with Tauri (Rust) + React + TypeScript.
@@ -60,7 +60,7 @@ proxy on `127.0.0.1:<port>`. Every request/response pair is captured into a
 `Flow`, stored in shared state, and emitted to the UI as a `proxy://flow` event
 for a live view.
 
-To intercept HTTPS you must trust the CA that WebRequestKit generates on first
+To intercept HTTPS you must trust the CA that APIKit generates on first
 run. Open the **Certificate…** panel in the Proxy tab for the on-disk path and
 install instructions (macOS: add to Keychain → System → *Always Trust*).
 

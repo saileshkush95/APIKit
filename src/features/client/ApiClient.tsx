@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { CollectionSidebar } from "./CollectionSidebar";
 import { ImportDialog } from "./ImportDialog";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -140,13 +141,14 @@ function sameDraft(a: RequestDraft, b: RequestDraft): boolean {
 }
 
 interface ApiClientProps {
-  /** Opens the runner on a folder (or the whole collection when null). */
-  onRun: (folderId: string | null) => void;
   /** A request from the welcome screen; the timestamp makes it repeatable. */
   intent?: { kind: "new" | "import"; at: number } | null;
 }
 
-export function ApiClient({ onRun, intent }: ApiClientProps) {
+export function ApiClient({ intent }: ApiClientProps) {
+  const navigate = useNavigate();
+  const onRun = (folderId: string | null) =>
+    navigate({ to: "/runner", search: folderId ? { folder: folderId } : {} });
   const workspaceId = useWorkspaceId();
   const { tree, setTree, expanded, toggleExpanded } = useCollection();
   const {

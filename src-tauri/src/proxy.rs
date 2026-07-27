@@ -263,10 +263,10 @@ fn generate_ca() -> Result<(String, String), String> {
         CertificateParams::new(Vec::<String>::new()).map_err(|e| e.to_string())?;
     params
         .distinguished_name
-        .push(DnType::CommonName, "WebRequestKit CA");
+        .push(DnType::CommonName, "APIKit CA");
     params
         .distinguished_name
-        .push(DnType::OrganizationName, "WebRequestKit");
+        .push(DnType::OrganizationName, "APIKit");
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     params.key_usages = vec![
         KeyUsagePurpose::KeyCertSign,
