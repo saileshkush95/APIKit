@@ -646,9 +646,31 @@ export function RequestPane({
           </div>
         )}
         {!tab.loading && !tab.error && !tab.response && (
-          <div className="flex flex-1 items-center justify-center p-6 text-center text-muted">
-            Send a request to see the response.
-          </div>
+          <>
+            {/* The same tabs the response will have, so the pane keeps its
+                shape instead of appearing only once something arrives. */}
+            <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-1 px-2 py-1">
+              <div className="flex flex-wrap gap-0.5">
+                {["Body", "Cookies", "Request", "Headers", "Test Results"].map(
+                  (label, index) => (
+                    <span
+                      key={label}
+                      className={`flex items-center rounded px-2.5 py-1 text-xs ${
+                        index === 0
+                          ? "bg-elevated font-medium text-ink"
+                          : "text-muted"
+                      }`}
+                    >
+                      {label}
+                    </span>
+                  ),
+                )}
+              </div>
+            </div>
+            <div className="flex flex-1 items-center justify-center border-t border-edge p-6 text-center text-muted">
+              Send a request to see the response.
+            </div>
+          </>
         )}
         {!tab.loading && tab.response && (
           <ResponseViewer
