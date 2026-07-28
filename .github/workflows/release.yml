@@ -25,6 +25,10 @@ jobs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history and tags: the notes are built from the commit range
+          # since the previous release.
+          fetch-depth: 0
 
       - name: Work out the tag
         id: tag
@@ -42,10 +46,37 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${{ steps.tag.outputs.tag }}"
-          gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --prerelease \
-              --target "$GITHUB_SHA" --title "APIKit $tag" \
-              --notes "Downloads for Windows, macOS (Intel and Apple Silicon) and Linux are attached below."
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          # Commit subjects since the previous tag, so the notes say what
+          # actually changed instead of the same sentence every time.
+          previous=$(git describe --tags --abbrev=0 "$tag^" 2>/dev/null || true)
+          if [ -n "$previous" ]; then
+            changes=$(git log --no-merges --pretty='- %s' "$previous..$tag")
+          else
+            changes=$(git log --no-merges --pretty='- %s' -20)
+          fi
+
+          notes=$(cat <<NOTES
+          $changes
+
+          ## Installing
+
+          These builds are not code-signed, so the first launch needs one extra step.
+
+          - **macOS** — right-click the app and choose *Open*, or run
+            \`xattr -cr /Applications/APIKit.app\`
+          - **Windows** — SmartScreen shows a warning: choose *More info* → *Run anyway*
+          - **Linux** — the AppImage needs \`chmod +x\` before it will run
+
+          Downloads for Windows, macOS (Intel and Apple Silicon) and Linux are attached below.
+          NOTES
+          )
+
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --prerelease \
+            --target "$GITHUB_SHA" --title "APIKit $tag" --notes "$notes"
 
   build:
     needs: release
