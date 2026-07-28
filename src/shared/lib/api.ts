@@ -426,6 +426,11 @@ export function stopProxy(): Promise<void> {
   return invoke<void>("stop_proxy");
 }
 
+/** Points this computer's HTTP/HTTPS proxy at APIKit (or back to none). */
+export function setSystemProxy(enable: boolean, port: number): Promise<void> {
+  return invoke<void>("set_system_proxy", { enable, port });
+}
+
 export function proxyStatus(): Promise<ProxyStatus> {
   return invoke<ProxyStatus>("proxy_status");
 }

@@ -10,6 +10,7 @@ mod secrets;
 mod store;
 mod sync;
 mod stream;
+mod system_proxy;
 
 use background::BackgroundMode;
 use cookies::CookieState;
@@ -164,12 +165,20 @@ pub fn run() {
             load::stop_load_test,
             proxy::start_proxy,
             proxy::stop_proxy,
+            system_proxy::set_system_proxy,
             proxy::proxy_status,
             proxy::get_flows,
             proxy::clear_flows,
             proxy::get_ca_certificate_pem,
             proxy::ca_certificate_path,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app, event| {
+            // Whatever ends the process, the OS must not be left pointing at a
+            // proxy that no longer exists.
+            if let tauri::RunEvent::Exit = event {
+                system_proxy::restore_on_exit();
+            }
+        });
 }

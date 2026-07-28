@@ -7,6 +7,7 @@ import {
   getFlows,
   onProxyFlow,
   proxyStatus,
+  setSystemProxy,
   startProxy,
   stopProxy,
 } from "../../shared/lib/api";
@@ -57,6 +58,10 @@ export function ProxyPanel() {
   // Off by default: on the LAN, anyone on the network can route through us.
   const [lan, setLan] = useState(
     () => localStorage.getItem("proxyLan") === "1",
+  );
+  // Point the OS at the proxy while it runs, and back to none on stop.
+  const [system, setSystem] = useState(
+    () => localStorage.getItem("proxySystem") === "1",
   );
   const [flows, setFlows] = useState<Flow[]>([]);
   const [selected, setSelected] = useState<Flow | null>(null);
@@ -120,8 +125,29 @@ export function ProxyPanel() {
     setBusy(true);
     setError(null);
     try {
-      if (status.running) await stopProxy();
-      else await startProxy(port, lan);
+      if (status.running) {
+        await stopProxy();
+        if (system) {
+          // Losing the OS setting matters more than how the stop went: a
+          // machine left pointing at a dead proxy has no working network.
+          await setSystemProxy(false, port).catch((e) =>
+            notifyError("Could not restore the system proxy", e),
+          );
+        }
+      } else {
+        await startProxy(port, lan);
+        if (system) {
+          try {
+            await setSystemProxy(true, port);
+            notify("success", "This computer now routes through APIKit");
+          } catch (e) {
+            notifyError(
+              "Proxy is running, but the system setup failed — configure it manually",
+              e,
+            );
+          }
+        }
+      }
       setStatus(await proxyStatus());
     } catch (e) {
       setError(String(e));
@@ -191,6 +217,24 @@ export function ProxyPanel() {
             className="accent-[var(--color-brand)]"
           />
           Local network
+        </label>
+        <label
+          className={`flex items-center gap-1.5 text-xs text-muted ${
+            status.running ? "opacity-60" : "cursor-pointer"
+          }`}
+          title="While the proxy runs, this computer's HTTP/HTTPS traffic is routed through it automatically — no manual system settings. Restored to direct when you stop the proxy. Install the CA certificate first so HTTPS keeps working."
+        >
+          <input
+            type="checkbox"
+            checked={system}
+            disabled={status.running}
+            onChange={(e) => {
+              setSystem(e.target.checked);
+              localStorage.setItem("proxySystem", e.target.checked ? "1" : "0");
+            }}
+            className="accent-[var(--color-brand)]"
+          />
+          Use for this computer
         </label>
         <span
           className={`h-2.5 w-2.5 rounded-full ${
