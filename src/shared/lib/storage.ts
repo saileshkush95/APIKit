@@ -15,6 +15,7 @@ export const SETTINGS = {
   theme: "theme",
   mockPort: "mockPort",
   loadTests: "loadTests",
+  runnerHistory: "runnerHistory",
   sidebarWidth: "sidebarWidth",
   sidebarCollapsed: "sidebarCollapsed",
 } as const;

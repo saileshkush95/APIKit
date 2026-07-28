@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { CookieManager } from "./CookieManager";
+import { ShortcutsPanel } from "./ShortcutsPanel";
 import { Toggle } from "../../shared/components/Toggle";
 import { cookiesEnabled, setCookiesEnabled } from "../../shared/lib/api";
 import { notifyError } from "../../shared/lib/notify";
@@ -49,6 +50,7 @@ type Category =
   | "cookies"
   | "background"
   | "identity"
+  | "shortcuts"
   | "about";
 
 const CATEGORIES: { key: Category; label: string; icon: string }[] = [
@@ -57,6 +59,7 @@ const CATEGORIES: { key: Category; label: string; icon: string }[] = [
   { key: "cookies", label: "Cookies", icon: "◎" },
   { key: "background", label: "Background", icon: "⏾" },
   { key: "identity", label: "Identity", icon: "◉" },
+  { key: "shortcuts", label: "Shortcuts", icon: "⌘" },
   { key: "about", label: "About", icon: "ⓘ" },
 ];
 
@@ -399,6 +402,8 @@ export function SettingsPanel() {
               </Row>
             </Section>
           )}
+
+          {category === "shortcuts" && <ShortcutsPanel />}
 
           {category === "about" && (
             <Section

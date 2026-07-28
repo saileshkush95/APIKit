@@ -2,10 +2,20 @@ import { Input, Select } from "../../shared/components/Field";
 import { Toggle } from "../../shared/components/Toggle";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { cancelRequest, readTextFile } from "../../shared/lib/api";
+import { save } from "@tauri-apps/plugin-dialog";
+import {
+  cancelRequest,
+  loadWorkspaceData,
+  readTextFile,
+  setSetting,
+  writeTextFile,
+} from "../../shared/lib/api";
+import { usePersist } from "../../shared/lib/persist";
+import { SETTINGS } from "../../shared/lib/storage";
+import { useWorkspaceId } from "../../shared/state/workspaces";
 import { parseDataFile, type DataSet } from "../../shared/lib/dataFile";
 import { executeRequest } from "../../shared/lib/execute";
-import { notifyError } from "../../shared/lib/notify";
+import { notify, notifyError } from "../../shared/lib/notify";
 import { findNode, isFolder } from "../../shared/lib/tree";
 import { methodColor, statusColor } from "../../shared/lib/ui";
 import { environmentVars } from "../../shared/lib/vars";
@@ -22,6 +32,31 @@ interface Entry {
   path: string[];
 }
 
+/** A finished run, kept so the view can be left and come back to. */
+interface RunSummary {
+  id: string;
+  atMs: number;
+  target: string;
+  environment: string;
+  iterations: number;
+  total: number;
+  passed: number;
+  failed: number;
+  errored: number;
+  timeMs: number;
+  /** Enough of each row to render the table again without re-running. */
+  rows: {
+    name: string;
+    path: string[];
+    method: string;
+    iteration: number;
+    status: number | null;
+    timeMs: number;
+    error: string | null;
+    assertions: { passed: boolean; message: string }[];
+  }[];
+}
+
 interface RunResult extends Entry {
   /** 1-based run number when iterating the collection more than once. */
   iteration: number;
@@ -31,6 +66,54 @@ interface RunResult extends Entry {
   error: string | null;
   results: AssertionResult[];
   body: string;
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * JUnit XML, which is what CI dashboards read. One testcase per request, a
+ * failure element per failed assertion, and an error element when the request
+ * itself never completed.
+ */
+function junitXml(summary: RunSummary): string {
+  const cases = summary.rows
+    .map((row) => {
+      const name = escapeXml(
+        [...row.path, row.name].join(" / ") +
+          (summary.iterations > 1 ? ` #${row.iteration}` : ""),
+      );
+      const body = [
+        ...(row.error
+          ? [`      <error message="${escapeXml(row.error)}"/>`]
+          : []),
+        ...row.assertions
+          .filter((assertion) => !assertion.passed)
+          .map(
+            (assertion) =>
+              `      <failure message="${escapeXml(assertion.message)}"/>`,
+          ),
+      ].join("\n");
+      const time = (row.timeMs / 1000).toFixed(3);
+      return body === ""
+        ? `    <testcase name="${name}" time="${time}"/>`
+        : `    <testcase name="${name}" time="${time}">\n${body}\n    </testcase>`;
+    })
+    .join("\n");
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<testsuites name="APIKit" tests="${summary.total}" failures="${summary.failed}" errors="${summary.errored}" time="${(summary.timeMs / 1000).toFixed(3)}">`,
+    `  <testsuite name="${escapeXml(summary.target)}" tests="${summary.total}" failures="${summary.failed}" errors="${summary.errored}" timestamp="${new Date(summary.atMs).toISOString()}">`,
+    cases,
+    "  </testsuite>",
+    "</testsuites>",
+  ].join("\n");
 }
 
 /** Depth-first list of requests, so runs follow the visible sidebar order. */
@@ -75,6 +158,11 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
   const [iterations, setIterations] = useState(1);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<RunResult[]>([]);
+  // Finished runs, so a result set survives leaving the view — the whole point
+  // of a runner is comparing this run with the last one.
+  const [history, setHistory] = useState<RunSummary[]>([]);
+  const [historyReady, setHistoryReady] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [currentName, setCurrentName] = useState<string | null>(null);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   // Requests the user has unticked; everything else in `entries` runs.
@@ -88,6 +176,30 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
   // The in-flight request's cancel handle, so Stop aborts it immediately
   // instead of waiting out the timeout.
   const inFlightRef = useRef<string | null>(null);
+
+  const workspaceId = useWorkspaceId();
+
+  useEffect(() => {
+    let cancelled = false;
+    setHistoryReady(false);
+    // Read fresh, not the shared startup snapshot: this panel writes the same
+    // record, and a stale read would overwrite newer runs.
+    loadWorkspaceData(workspaceId)
+      .then((workspace) => {
+        if (cancelled) return;
+        const raw = workspace.settings[SETTINGS.runnerHistory];
+        setHistory(raw ? (JSON.parse(raw) as RunSummary[]) : []);
+      })
+      .catch(() => {})
+      .finally(() => !cancelled && setHistoryReady(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+
+  usePersist(history, historyReady, (value) =>
+    setSetting(workspaceId, SETTINGS.runnerHistory, JSON.stringify(value)),
+  );
 
   const folders = useMemo(() => folderOptions(tree), [tree]);
 
@@ -219,6 +331,83 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
     setCurrentName(null);
     setRunning(false);
     inFlightRef.current = null;
+    // Snapshot the run before the next one replaces `results`.
+    setResults((finished) => {
+      if (finished.length > 0) record(finished);
+      return finished;
+    });
+  }
+
+  /** Keeps the last 20 runs; older ones are of no use and cost storage. */
+  function record(rows: RunResult[]) {
+    const summary: RunSummary = {
+      id: `${Date.now()}`,
+      atMs: Date.now(),
+      target:
+        targetId === ""
+          ? "Entire collection"
+          : (folders.find((folder) => folder.id === targetId)?.label.replace(
+              /^(— )+/,
+              "",
+            ) ?? "Folder"),
+      environment:
+        environmentId === ""
+          ? (active?.name ?? "none")
+          : (environments.find((env) => env.id === environmentId)?.name ??
+            "none"),
+      iterations: effectiveIterations,
+      total: rows.length,
+      passed: rows.reduce(
+        (sum, row) => sum + row.results.filter((a) => a.passed).length,
+        0,
+      ),
+      failed: rows.reduce(
+        (sum, row) => sum + row.results.filter((a) => !a.passed).length,
+        0,
+      ),
+      errored: rows.filter((row) => row.error).length,
+      timeMs: rows.reduce((sum, row) => sum + row.timeMs, 0),
+      rows: rows.map((row) => ({
+        name: row.request.name,
+        path: row.path,
+        method: row.request.method,
+        iteration: row.iteration,
+        status: row.status,
+        timeMs: row.timeMs,
+        error: row.error,
+        assertions: row.results.map((a) => ({
+          passed: a.passed,
+          message: a.message,
+        })),
+      })),
+    };
+    setHistory((prev) => [summary, ...prev].slice(0, 20));
+  }
+
+  /** Saves a run as JSON, or as JUnit XML for a CI report. */
+  async function exportRun(summary: RunSummary, format: "json" | "junit") {
+    const path = await save({
+      title: "Save run",
+      defaultPath: `run-${new Date(summary.atMs)
+        .toISOString()
+        .slice(0, 19)
+        .replace(/[:T]/g, "-")}.${format === "junit" ? "xml" : "json"}`,
+      filters: [
+        { name: format === "junit" ? "JUnit XML" : "JSON", extensions: [format === "junit" ? "xml" : "json"] },
+      ],
+    });
+    if (!path) return;
+
+    const contents =
+      format === "json"
+        ? JSON.stringify(summary, null, 2)
+        : junitXml(summary);
+    try {
+      await writeTextFile(path, contents);
+      notify("success", `Saved to ${path}`);
+    } catch (e) {
+      notifyError("Could not save the run", e);
+    }
   }
 
   return (
@@ -420,7 +609,8 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
       </details>
 
       {/* Summary */}
-      {(results.length > 0 || running) && (
+      {(results.length > 0 || running || history.length > 0) && (
+        <>
         <div className="flex flex-none items-center gap-4 border-b border-edge px-4 py-2 text-xs">
           <span className="text-muted">
             {results.length}/{entries.length * effectiveIterations} run
@@ -442,11 +632,94 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
             title="Show only rows that errored or failed an assertion"
           />
           {currentName && (
-            <span className="ml-auto truncate text-muted">
-              Sending {currentName}…
-            </span>
+            <span className="truncate text-muted">Sending {currentName}…</span>
           )}
+          <div className="ml-auto flex flex-none items-center gap-1.5">
+            {results.length > 0 && !running && (
+              <>
+                <span className="text-muted">Export</span>
+                <button
+                  onClick={() => history[0] && exportRun(history[0], "json")}
+                  className="rounded border border-edge px-2 py-0.5 text-muted hover:border-brand hover:text-ink"
+                >
+                  JSON
+                </button>
+                <button
+                  onClick={() => history[0] && exportRun(history[0], "junit")}
+                  className="rounded border border-edge px-2 py-0.5 text-muted hover:border-brand hover:text-ink"
+                  title="JUnit XML, the format CI dashboards read"
+                >
+                  JUnit
+                </button>
+              </>
+            )}
+            {history.length > 0 && (
+              <button
+                onClick={() => setShowHistory((prev) => !prev)}
+                className={`rounded border px-2 py-0.5 ${
+                  showHistory
+                    ? "border-brand text-ink"
+                    : "border-edge text-muted hover:border-brand hover:text-ink"
+                }`}
+              >
+                History {history.length}
+              </button>
+            )}
+          </div>
         </div>
+
+        {showHistory && (
+          <div className="max-h-48 flex-none overflow-auto border-b border-edge bg-panel">
+            {history.map((run) => (
+              <div
+                key={run.id}
+                className="flex items-center gap-3 border-b border-edge px-4 py-1.5 text-[11px] last:border-0"
+              >
+                <span className="w-36 flex-none text-muted">
+                  {new Date(run.atMs).toLocaleString()}
+                </span>
+                <span className="min-w-0 flex-1 truncate">
+                  {run.target}
+                  <span className="text-muted"> · {run.environment}</span>
+                </span>
+                <span className="flex-none text-ok">{run.passed} passed</span>
+                <span
+                  className={`flex-none ${
+                    run.failed + run.errored > 0 ? "text-err" : "text-muted"
+                  }`}
+                >
+                  {run.failed + run.errored} failed
+                </span>
+                <span className="w-16 flex-none text-right font-mono text-muted">
+                  {run.timeMs} ms
+                </span>
+                <button
+                  onClick={() => exportRun(run, "json")}
+                  className="flex-none rounded px-1.5 text-muted hover:text-ink"
+                  title="Export as JSON"
+                >
+                  JSON
+                </button>
+                <button
+                  onClick={() => exportRun(run, "junit")}
+                  className="flex-none rounded px-1.5 text-muted hover:text-ink"
+                  title="Export as JUnit XML"
+                >
+                  JUnit
+                </button>
+              </div>
+            ))}
+            <div className="px-4 py-1.5">
+              <button
+                onClick={() => setHistory([])}
+                className="text-[11px] text-muted hover:text-err"
+              >
+                Clear history
+              </button>
+            </div>
+          </div>
+        )}
+        </>
       )}
 
       {/* Results */}
