@@ -5,6 +5,7 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { revealMainWindow, useMinimumDuration } from "../features/onboarding/splash";
+import { checkForUpdate } from "../shared/lib/updater";
 import { Toaster } from "../shared/components/Toaster";
 import { ConfirmProvider } from "../shared/state/confirm";
 import { useWorkspacesStore } from "../shared/state/workspaces";
@@ -96,6 +97,15 @@ function App() {
   // bring it back. Once the workspace is open, this window takes over.
   useEffect(() => {
     if (!splashing) revealMainWindow();
+  }, [splashing]);
+
+  // One quiet update check per app start, once the workspace is up and the
+  // window is visible. Dev builds skip it — the dev version never matches a
+  // release and the notice would only be noise.
+  useEffect(() => {
+    if (splashing || !import.meta.env.PROD) return;
+    const timer = setTimeout(() => checkForUpdate(), 5_000);
+    return () => clearTimeout(timer);
   }, [splashing]);
 
   if (splashing) return null;

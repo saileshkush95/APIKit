@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { CookieManager } from "./CookieManager";
 import { Toggle } from "../../shared/components/Toggle";
 import { cookiesEnabled, setCookiesEnabled } from "../../shared/lib/api";
@@ -7,6 +8,7 @@ import { Input, Select } from "../../shared/components/Field";
 import { useOnboarding } from "../../shared/state/onboarding";
 import { useSettings } from "../../shared/state/settings";
 import { useTheme, type ThemeMode } from "../../shared/state/theme";
+import { checkForUpdate } from "../../shared/lib/updater";
 import type { AppSettings, HttpVersion } from "../../shared/types";
 
 const ACCENTS = [
@@ -100,10 +102,22 @@ function Row({
 export function SettingsPanel() {
   const [category, setCategory] = useState<Category>("general");
   const [jarEnabled, setJarEnabled] = useState(true);
+  const [version, setVersion] = useState("");
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     cookiesEnabled().then(setJarEnabled).catch(() => {});
+    getVersion().then(setVersion).catch(() => {});
   }, []);
+
+  async function runUpdateCheck() {
+    setChecking(true);
+    try {
+      await checkForUpdate(true);
+    } finally {
+      setChecking(false);
+    }
+  }
 
   async function toggleJar(enabled: boolean) {
     setJarEnabled(enabled);
@@ -424,6 +438,22 @@ export function SettingsPanel() {
             </Section>
           )}
 
+          {category === "about" && (
+            <Section
+              title="Updates"
+              description="New versions are checked automatically on start; updates install in one click and restart the app."
+            >
+              <Row label="Version" hint={version ? `APIKit ${version}` : undefined}>
+                <button
+                  onClick={runUpdateCheck}
+                  disabled={checking}
+                  className="rounded border border-edge px-2.5 py-1 text-xs text-muted hover:border-brand hover:text-ink disabled:opacity-50"
+                >
+                  {checking ? "Checking…" : "Check for updates"}
+                </button>
+              </Row>
+            </Section>
+          )}
           {category === "about" && (
             <Section
               title="Getting started"

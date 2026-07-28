@@ -1,6 +1,6 @@
 name: Release
 
-# Builds APIKit for every platform and attaches the installers to a draft
+# Builds APIKit for every platform and attaches the installers to a published
 # GitHub release. Runs when a version tag is pushed (`git tag v0.1.0 &&
 # git push --tags`) or manually from the Actions tab.
 on:
@@ -10,7 +10,41 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The release is created once, up front and already published. If the build
+  # jobs are left to create it, the four of them race and the assets end up
+  # scattered across several draft releases.
+  release:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            # Manual run: derive the tag from the app version.
+            version=$(python3 -c "import json; print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+            echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create the release if it does not exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "APIKit $tag" \
+              --notes "Downloads for Windows, macOS (Intel and Apple Silicon) and Linux are attached below."
+
   build:
+    needs: release
     permissions:
       contents: write
     strategy:
@@ -56,10 +90,10 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs update packages so the app only installs authentic updates.
+          # This is the free minisign key, not OS code signing.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
-          tagName: v__VERSION__
-          releaseName: "APIKit v__VERSION__"
-          releaseBody: "See the assets below to download and install this version."
-          releaseDraft: true
-          prerelease: false
+          tagName: ${{ needs.release.outputs.tag }}
           args: ${{ matrix.args }}

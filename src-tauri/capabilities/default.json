@@ -12,6 +12,8 @@
     "dialog:default",
     "notification:default",
     "autostart:default",
+    "updater:default",
+    "process:default",
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
