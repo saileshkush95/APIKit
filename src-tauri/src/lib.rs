@@ -56,6 +56,7 @@ pub fn run() {
             }
             app.manage(db);
             background::init_tray(app.handle())?;
+            system_proxy::heal_on_startup(app.handle());
 
             // Insurance against a hidden main window. The frontend normally
             // reveals it as soon as the workspace opens; if that never happens
@@ -174,11 +175,11 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|_app, event| {
+        .run(|app, event| {
             // Whatever ends the process, the OS must not be left pointing at a
             // proxy that no longer exists.
             if let tauri::RunEvent::Exit = event {
-                system_proxy::restore_on_exit();
+                system_proxy::restore_on_exit(app);
             }
         });
 }
