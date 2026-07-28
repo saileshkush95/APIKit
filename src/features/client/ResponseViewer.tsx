@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { saveBinaryFile, writeTextFile } from "../../shared/lib/api";
 import {
   extensionForContentType,
@@ -11,7 +12,7 @@ import {
   type ViewMode,
 } from "../../shared/lib/format";
 import { renderLine, type HighlightLanguage } from "../../shared/lib/highlight";
-import { notifyError, notifySuccess } from "../../shared/lib/notify";
+import { notify, notifyError, notifySuccess } from "../../shared/lib/notify";
 import { formatBytes, methodColor, statusColor } from "../../shared/lib/ui";
 import type {
   AssertionResult,
@@ -161,6 +162,16 @@ export function ResponseViewer({
   const copyMap =
     jsonMap && jsonMap.nodes.length === lines.length ? jsonMap : null;
 
+  /**
+   * The http(s) URL a copied value is, or contains. Trailing punctuation is
+   * dropped so a link at the end of a sentence still opens.
+   */
+  function urlIn(text: string): string | null {
+    const match = /https?:\/\/[^\s"'<>\\]+/.exec(text);
+    if (!match) return null;
+    return match[0].replace(/[.,;:)\]}]+$/, "");
+  }
+
   async function copyNode(line: number) {
     if (!copyMap) return;
     const node = copyMap.nodes[line];
@@ -168,6 +179,22 @@ export function ResponseViewer({
       typeof node === "string" ? node : JSON.stringify(node, null, 2);
     try {
       await navigator.clipboard.writeText(text);
+      // A link is worth more than a copy: offer to follow it, since a URL in a
+      // response is usually there to be visited (redirects, hosted pages).
+      const link = urlIn(text);
+      if (link) {
+        notify("success", "Copied the link", {
+          detail: link,
+          timeoutMs: 8000,
+          action: {
+            label: "Open in browser",
+            run: () => {
+              openUrl(link).catch((e) => notifyError("Could not open it", e));
+            },
+          },
+        });
+        return;
+      }
       notifySuccess(
         `Copied ${text.length > 40 ? `${text.slice(0, 40)}…` : text}`,
       );
