@@ -91,10 +91,7 @@ export function ResponseViewer({
   const [wrap, setWrap] = useState(true);
   // Off by default, and reset per response: this runs code from the server
   // under test, so it must be a deliberate choice each time.
-  const [runScripts, setRunScripts] = useState(false);
-  // Fetches the page again from its own URL, which is the only way one that
-  // depends on cookies or its own API can render.
-  const [live, setLive] = useState(false);
+  const [interactive, setInteractive] = useState(false);
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -186,7 +183,10 @@ export function ResponseViewer({
    * asset — `/_next/static/…`, `styles.css` — would resolve against nothing
    * and 404. A `<base>` pointing at the request URL fixes that.
    */
-  const livePreview = live && runScripts && Boolean(sent?.url);
+  // With a URL to load from, the page runs at its real origin — the only way
+  // one that needs cookies or its own API can work. Without one, scripts still
+  // run against the captured HTML, which is the best that can be done.
+  const livePreview = interactive && Boolean(sent?.url);
 
   const previewDocument = useMemo(() => {
     if (!sent?.url) return response.body;
@@ -490,6 +490,36 @@ export function ResponseViewer({
             </button>
           )}
 
+          {/* Sits with Preview because it is what Preview does, not a
+              separate mode: off renders the captured HTML inertly, on loads
+              the page for real. */}
+          {previewable && preview && !imageSrc && (
+            <Toggle
+              checked={interactive}
+              onChange={setInteractive}
+              label="Interactive"
+              title={
+                sent?.url
+                  ? "Loads the page from its own URL and runs its scripts, so it behaves as in a browser. Off, the captured HTML is shown without executing anything. Turning this on re-sends the request."
+                  : "Runs the page's scripts. Off, the captured HTML is shown without executing anything."
+              }
+            />
+          )}
+
+          {previewable && preview && sent?.url && (
+            <button
+              onClick={() =>
+                openUrl(sent.url).catch((e) =>
+                  notifyError("Could not open it", e),
+                )
+              }
+              className="rounded-md px-2 py-1 text-xs text-muted hover:text-ink"
+              title="Open this page in your browser — the right place for anything that needs a real session"
+            >
+              ↗ Browser
+            </button>
+          )}
+
           <div className="ml-auto flex items-center gap-1">
             {searchOpen && (
               <div className="flex items-center gap-1.5">
@@ -574,42 +604,6 @@ export function ResponseViewer({
             </div>
           ) : preview ? (
             <div className="flex h-full flex-col">
-              <div className="flex flex-none items-center gap-3 border-b border-edge px-2 py-1 text-[11px]">
-                <Toggle
-                  checked={runScripts}
-                  onChange={setRunScripts}
-                  label="Run scripts"
-                  title="Executes the page's JavaScript. Off by default: this is code from the server you are testing."
-                />
-                {sent?.url && runScripts && (
-                  <Toggle
-                    checked={live}
-                    onChange={setLive}
-                    label="Live page"
-                    title="Reloads the page from its own URL instead of showing the captured HTML, so cookies, API calls and relative assets work as they do in a browser. It sends the request again."
-                  />
-                )}
-                <span className="min-w-0 truncate text-muted">
-                  {livePreview
-                    ? "Loaded from its own origin — behaves as it would in a browser."
-                    : runScripts
-                      ? "Scripts run, but the captured HTML has an opaque origin: its own API calls and storage may fail. Turn on Live page for those."
-                      : "Static preview: JavaScript is not executed."}
-                </span>
-                {sent?.url && (
-                  <button
-                    onClick={() =>
-                      openUrl(sent.url).catch((e) =>
-                        notifyError("Could not open it", e),
-                      )
-                    }
-                    className="ml-auto flex-none rounded border border-edge px-2 py-0.5 text-muted hover:border-brand hover:text-ink"
-                    title="Pages that need cookies, redirects or a real origin — a hosted checkout, say — only work in a browser"
-                  >
-                    Open in browser
-                  </button>
-                )}
-              </div>
               {livePreview ? (
                 <iframe
                   // Loaded from its own URL rather than as srcDoc, so the page
@@ -627,7 +621,7 @@ export function ResponseViewer({
                   // Without allow-same-origin the frame gets an opaque origin,
                   // so even with scripts on it cannot reach this app.
                   sandbox={
-                    runScripts ? "allow-scripts allow-forms allow-popups" : ""
+                    interactive ? "allow-scripts allow-forms allow-popups" : ""
                   }
                   srcDoc={previewDocument}
                   title="Response preview"
