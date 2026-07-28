@@ -6,6 +6,10 @@ import { isFolder } from "../../shared/lib/tree";
 import { methodColor } from "../../shared/lib/ui";
 import { TagInput } from "../../shared/components/TagInput";
 import { smtpConfigured } from "../../shared/lib/email";
+import {
+  matchHeaders,
+  matchHeaderValues,
+} from "../../shared/lib/headerSuggestions";
 import { useCollection } from "../../shared/state/collection";
 import { useEnvironments } from "../../shared/state/environments";
 import { useMonitors } from "../../shared/state/monitors";
@@ -479,6 +483,8 @@ export function MonitorPanel() {
                         keyPlaceholder="Header"
                         valuePlaceholder="Value"
                         highlightVariables
+                        suggestName={(query) => matchHeaders(query)}
+                        suggestValue={matchHeaderValues}
                       />
 
                       <div className="mt-2 mb-1 text-[11px] font-semibold text-muted">

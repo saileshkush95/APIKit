@@ -30,8 +30,42 @@ export const REQUEST_HEADERS: string[] = [
   "X-Requested-With",
 ];
 
+/** Response headers, for the mock server's canned replies. */
+export const RESPONSE_HEADERS: string[] = [
+  "Access-Control-Allow-Credentials",
+  "Access-Control-Allow-Headers",
+  "Access-Control-Allow-Methods",
+  "Access-Control-Allow-Origin",
+  "Cache-Control",
+  "Content-Disposition",
+  "Content-Encoding",
+  "Content-Language",
+  "Content-Type",
+  "ETag",
+  "Expires",
+  "Last-Modified",
+  "Location",
+  "Retry-After",
+  "Set-Cookie",
+  "Vary",
+  "WWW-Authenticate",
+  "X-Request-Id",
+  "X-RateLimit-Limit",
+  "X-RateLimit-Remaining",
+];
+
 /** Values that make sense for a given header. */
 const VALUES: Record<string, string[]> = {
+  "access-control-allow-origin": ["*", "{{origin}}"],
+  "access-control-allow-methods": ["GET, POST, PUT, PATCH, DELETE, OPTIONS"],
+  "access-control-allow-headers": ["Content-Type, Authorization"],
+  "access-control-allow-credentials": ["true"],
+  "content-disposition": ['attachment; filename="file.json"', "inline"],
+  "content-encoding": ["gzip", "br", "identity"],
+  location: ["/", "https://example.com"],
+  "retry-after": ["1", "30", "120"],
+  vary: ["Accept-Encoding", "Origin"],
+  "www-authenticate": ['Bearer realm="api"'],
   accept: [
     "application/json",
     "application/xml",

@@ -19,6 +19,11 @@ import {
   startMockServer,
   stopMockServer,
 } from "../../shared/lib/api";
+import {
+  matchHeaders,
+  matchHeaderValues,
+  RESPONSE_HEADERS,
+} from "../../shared/lib/headerSuggestions";
 import { usePersist } from "../../shared/lib/persist";
 import { newId, SETTINGS, workspaceDataOnce } from "../../shared/lib/storage";
 import { methodColor, statusColor } from "../../shared/lib/ui";
@@ -555,6 +560,8 @@ export function MockPanel() {
                   keyPlaceholder="Header"
                   valuePlaceholder="Value"
                   highlightVariables
+                  suggestName={(query) => matchHeaders(query, RESPONSE_HEADERS)}
+                  suggestValue={matchHeaderValues}
                 />
               </div>
 
