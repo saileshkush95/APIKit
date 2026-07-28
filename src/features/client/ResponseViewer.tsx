@@ -6,6 +6,7 @@ import {
   extensionForContentType,
   guessViewMode,
   mapJsonLines,
+  mapMarkupLines,
   parseCookies,
   renderBody,
   VIEW_MODES,
@@ -170,6 +171,16 @@ export function ResponseViewer({
   // Any drift between the mapper and the serializer must fail safe.
   const copyMap =
     jsonMap && jsonMap.nodes.length === lines.length ? jsonMap : null;
+
+  // XML and HTML fold on their elements. Clicking still copies nothing there:
+  // a path and a value are JSON ideas.
+  const markupSpans = useMemo(
+    () =>
+      (mode === "xml" || mode === "html") && !unformatted
+        ? mapMarkupLines(lines)
+        : null,
+    [mode, unformatted, lines],
+  );
 
   /**
    * The http(s) URL a copied value is, or contains. Trailing punctuation is
@@ -641,7 +652,7 @@ export function ResponseViewer({
               wrap={wrap}
               search={search}
               lang={lang}
-              spans={copyMap?.spans ?? null}
+              spans={copyMap?.spans ?? markupSpans}
               canCopyNodes={copyMap !== null}
               onCopyNode={copyNode}
             />

@@ -180,6 +180,65 @@ export function mapJsonLines(root: unknown): JsonLineMap {
   return { nodes, spans, paths: paths.map((p) => p.replace(/^\./, "")) };
 }
 
+/** Elements that never have a closing tag, so they can never open a fold. */
+const VOID_ELEMENTS = new Set([
+  "area",
+  "base",
+  "br",
+  "col",
+  "embed",
+  "hr",
+  "img",
+  "input",
+  "link",
+  "meta",
+  "param",
+  "source",
+  "track",
+  "wbr",
+]);
+
+const TAG = /<\/?([A-Za-z_][\w.:-]*)([^>]*)>/g;
+
+/**
+ * Fold ranges for XML and HTML, in the same shape JSON uses: for each line that
+ * opens an element spanning several lines, the line that closes it.
+ *
+ * Line-based and tolerant on purpose — a response is often a fragment, or
+ * malformed, and an unclosed tag must not lose the folds around it.
+ */
+export function mapMarkupLines(lines: string[]): (number | null)[] {
+  const spans: (number | null)[] = lines.map(() => null);
+  const stack: { name: string; line: number }[] = [];
+
+  lines.forEach((line, index) => {
+    TAG.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = TAG.exec(line)) !== null) {
+      const [full, rawName, rest] = match;
+      const name = rawName.toLowerCase();
+      const closing = full.startsWith("</");
+      const selfClosing = rest.trimEnd().endsWith("/");
+
+      if (full.startsWith("<?") || full.startsWith("<!")) continue;
+      if (closing) {
+        // Unwind to the matching open: an unclosed child must not swallow it.
+        for (let depth = stack.length - 1; depth >= 0; depth--) {
+          if (stack[depth].name !== name) continue;
+          const opened = stack[depth].line;
+          if (opened < index) spans[opened] = index;
+          stack.length = depth;
+          break;
+        }
+      } else if (!selfClosing && !VOID_ELEMENTS.has(name)) {
+        stack.push({ name, line: index });
+      }
+    }
+  });
+
+  return spans;
+}
+
 /** File extension for a response body, from its content type. */
 const EXTENSIONS: [string, string][] = [
   ["application/pdf", ".pdf"],
