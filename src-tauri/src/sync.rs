@@ -98,6 +98,37 @@ pub struct SyncOutcome {
     pub pushed_watermark: i64,
 }
 
+/// Client for talking to a peer.
+///
+/// `no_proxy` is the point: reqwest's default client honours the operating
+/// system's proxy settings, and this app can itself set the system proxy while
+/// capturing traffic. Sync is a direct LAN conversation between two machines,
+/// so routing it through a proxy is wrong — and when that proxy is not running
+/// every peer request fails with a bare "error sending request".
+fn peer_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+/// reqwest's own message stops at "error sending request for url (…)", which
+/// reads the same whether the connection was refused, timed out, or died in a
+/// proxy. The cause chain is what makes a failure diagnosable.
+fn why(error: &dyn std::error::Error) -> String {
+    let mut parts = vec![error.to_string()];
+    let mut source = error.source();
+    while let Some(inner) = source {
+        let text = inner.to_string();
+        // Nested reqwest/hyper errors often repeat the layer above.
+        if !parts.iter().any(|part| part == &text) {
+            parts.push(text);
+        }
+        source = inner.source();
+    }
+    parts.join(" — ")
+}
+
 /// This machine's LAN address, discovered without sending anything.
 pub(crate) fn local_addresses() -> Vec<String> {
     let mut found = Vec::new();
@@ -442,12 +473,12 @@ pub fn sync_server_status(state: State<SyncState>) -> Result<SyncServerStatus, S
 #[tauri::command]
 pub async fn ping_peer(host: String) -> Result<i64, String> {
     let url = format!("http://{}/ping", host.trim().trim_end_matches('/'));
-    let response = reqwest::Client::new()
+    let response = peer_client()
         .get(&url)
         .timeout(std::time::Duration::from_secs(5))
         .send()
         .await
-        .map_err(|e| format!("cannot reach {host}: {e}"))?;
+        .map_err(|e| format!("cannot reach {host}: {}", why(&e)))?;
     let value: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
     value
         .get("now")
@@ -473,7 +504,7 @@ pub struct PeerDiagnosis {
 #[tauri::command]
 pub async fn diagnose_peer(host: String, token: String) -> Result<PeerDiagnosis, String> {
     let base = host.trim().trim_end_matches('/').to_string();
-    let client = reqwest::Client::new();
+    let client = peer_client();
     let mut report = PeerDiagnosis {
         reachable: false,
         token_ok: false,
@@ -562,13 +593,13 @@ pub async fn list_peer_workspaces(
     token: String,
 ) -> Result<Vec<crate::store::WorkspaceMeta>, String> {
     let url = format!("http://{}/workspaces", host.trim().trim_end_matches('/'));
-    let response = reqwest::Client::new()
+    let response = peer_client()
         .get(&url)
         .bearer_auth(&token)
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| format!("cannot reach {host}: {e}"))?;
+        .map_err(|e| format!("cannot reach {host}: {}", why(&e)))?;
 
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
         return Err("the peer rejected this pairing token".into());
@@ -609,7 +640,7 @@ pub async fn sync_with_peer(
     let pushed = outgoing.rows.len();
 
     let url = format!("http://{}/sync", host.trim().trim_end_matches('/'));
-    let response = reqwest::Client::new()
+    let response = peer_client()
         .post(&url)
         .bearer_auth(&token)
         .timeout(std::time::Duration::from_secs(30))
@@ -620,7 +651,7 @@ pub async fn sync_with_peer(
         })
         .send()
         .await
-        .map_err(|e| format!("cannot reach {host}: {e}"))?;
+        .map_err(|e| format!("cannot reach {host}: {}", why(&e)))?;
 
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
         return Err("the peer rejected this pairing token".into());
@@ -693,7 +724,7 @@ pub async fn sync_watch_peer(
 
     let url = format!("http://{}/events", key.trim_end_matches('/'));
     tokio::spawn(async move {
-        let client = reqwest::Client::new();
+        let client = peer_client();
         loop {
             if *cancel_rx.borrow() {
                 break;
@@ -911,7 +942,7 @@ mod tests {
         };
         let sent = outgoing.rows.len();
 
-        let response = reqwest::Client::new()
+        let response = peer_client()
             .post(format!("http://127.0.0.1:{}/sync", harness.port))
             .bearer_auth(token)
             .json(&SyncRequest {
@@ -960,7 +991,7 @@ mod tests {
         let denied = sync_once(&client, &harness, "not-the-token", 0, 0).await;
         assert!(denied.is_err(), "sync must fail with a bad token");
 
-        let events = reqwest::Client::new()
+        let events = peer_client()
             .get(format!("http://127.0.0.1:{}/events", harness.port))
             .bearer_auth("not-the-token")
             .send()
@@ -1015,7 +1046,7 @@ mod tests {
     async fn the_event_stream_announces_changes() {
         let harness = start("secret").await;
 
-        let mut stream = reqwest::Client::new()
+        let mut stream = peer_client()
             .get(format!("http://127.0.0.1:{}/events", harness.port))
             .bearer_auth(&harness.token)
             .send()
