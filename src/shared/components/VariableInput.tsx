@@ -58,6 +58,15 @@ export function VariableInput({
 
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [highlighted, setHighlighted] = useState(0);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  // The list scrolls at 15rem, so moving the highlight past the visible rows
+  // looked like the arrow keys did nothing at all.
+  useEffect(() => {
+    listRef.current
+      ?.querySelector(`[data-index="${highlighted}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [highlighted]);
   const [anchor, setAnchor] = useState<{ start: number } | null>(null);
   const [rect, setRect] = useState<DOMRect | null>(null);
 
@@ -197,6 +206,7 @@ export function VariableInput({
         rect &&
         createPortal(
           <ul
+            ref={listRef}
             role="listbox"
             className="wrk-select-list"
             style={{
@@ -208,7 +218,7 @@ export function VariableInput({
             }}
           >
             {suggestions.map((name, index) => (
-              <li key={name}>
+              <li key={name} data-index={index}>
                 <button
                   type="button"
                   role="option"
