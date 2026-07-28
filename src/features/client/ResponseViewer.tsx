@@ -14,6 +14,7 @@ import {
 import { renderLine, type HighlightLanguage } from "../../shared/lib/highlight";
 import { notify, notifyError, notifySuccess } from "../../shared/lib/notify";
 import { formatBytes, methodColor, statusColor } from "../../shared/lib/ui";
+import { Toggle } from "../../shared/components/Toggle";
 import { useHandoff } from "../../shared/state/handoff";
 import {
   defaultConfig,
@@ -88,6 +89,9 @@ export function ResponseViewer({
   );
   const [preview, setPreview] = useState(false);
   const [wrap, setWrap] = useState(true);
+  // Off by default, and reset per response: this runs code from the server
+  // under test, so it must be a deliberate choice each time.
+  const [runScripts, setRunScripts] = useState(false);
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -173,6 +177,21 @@ export function ResponseViewer({
     if (!match) return null;
     return match[0].replace(/[.,;:)\]}]+$/, "");
   }
+
+  /**
+   * The preview document. `srcDoc` has no URL of its own, so every relative
+   * asset — `/_next/static/…`, `styles.css` — would resolve against nothing
+   * and 404. A `<base>` pointing at the request URL fixes that.
+   */
+  const previewDocument = useMemo(() => {
+    if (!sent?.url) return response.body;
+    if (/<base\b/i.test(response.body)) return response.body;
+    const tag = `<base href="${sent.url.replace(/"/g, "&quot;")}">`;
+    // After <head> when there is one, otherwise at the very top.
+    return /<head[^>]*>/i.test(response.body)
+      ? response.body.replace(/<head[^>]*>/i, (head) => `${head}${tag}`)
+      : `${tag}${response.body}`;
+  }, [response.body, sent?.url]);
 
   /** Host plus last path segment, so the tab is recognisable but not a wall. */
   function linkLabel(link: string): string {
@@ -549,14 +568,44 @@ export function ResponseViewer({
               />
             </div>
           ) : preview ? (
-            <iframe
-              // Sandboxed with no allow-scripts: previewing a response must
-              // never execute code from the server under test.
-              sandbox=""
-              srcDoc={response.body}
-              title="Response preview"
-              className="h-full w-full border-0 bg-white"
-            />
+            <div className="flex h-full flex-col">
+              <div className="flex flex-none items-center gap-2 border-b border-edge px-2 py-1 text-[11px]">
+                <Toggle
+                  checked={runScripts}
+                  onChange={setRunScripts}
+                  label="Run scripts"
+                  title="Executes the page's JavaScript inside a sandboxed frame with its own opaque origin. Off by default: this is code from the server you are testing."
+                />
+                <span className="truncate text-muted">
+                  {runScripts
+                    ? "Scripts enabled — the frame still has no access to this app or its cookies."
+                    : "Static preview: JavaScript is not executed."}
+                </span>
+                {sent?.url && (
+                  <button
+                    onClick={() =>
+                      openUrl(sent.url).catch((e) =>
+                        notifyError("Could not open it", e),
+                      )
+                    }
+                    className="ml-auto flex-none rounded border border-edge px-2 py-0.5 text-muted hover:border-brand hover:text-ink"
+                    title="Pages that need cookies, redirects or a real origin — a hosted checkout, say — only work in a browser"
+                  >
+                    Open in browser
+                  </button>
+                )}
+              </div>
+              <iframe
+                // Without allow-same-origin the frame gets an opaque origin, so
+                // even with scripts on it cannot reach this app's storage.
+                sandbox={
+                  runScripts ? "allow-scripts allow-forms allow-popups" : ""
+                }
+                srcDoc={previewDocument}
+                title="Response preview"
+                className="min-h-0 w-full flex-1 border-0 bg-white"
+              />
+            </div>
           ) : (
             <VirtualBody
               lines={lines}
