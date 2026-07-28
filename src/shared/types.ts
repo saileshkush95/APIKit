@@ -600,6 +600,8 @@ export interface PhaseReport {
   requests: number;
   failures: number;
   statuses: [number, number][];
+  /** Failure kind → count: timeout, connection, TLS, DNS, other. */
+  errors: [string, number][];
   avgMs: number;
   minMs: number;
   maxMs: number;

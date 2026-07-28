@@ -1098,6 +1098,13 @@ export function LoadTestPanel() {
                             {phase.failures > 0 && (
                               <div className="mt-1 text-[11px] text-err">
                                 {phase.failures} failed
+                                {phase.errors?.length ? (
+                                  <span className="block text-[10px]">
+                                    {phase.errors
+                                      .map(([kind, count]) => `${count} ${kind}`)
+                                      .join(", ")}
+                                  </span>
+                                ) : null}
                               </div>
                             )}
                           </div>
@@ -1118,6 +1125,7 @@ export function LoadTestPanel() {
                                 "p99",
                                 "max",
                                 "Statuses",
+                                "Errors",
                               ].map((heading) => (
                                 <th key={heading} className="p-2">
                                   {heading}
@@ -1159,6 +1167,19 @@ export function LoadTestPanel() {
                                       ([status, count]) => `${status}×${count}`,
                                     )
                                     .join("  ") || "—"}
+                                </td>
+                                <td className="p-2 font-mono">
+                                  {phase.errors?.length ? (
+                                    <span className="text-err">
+                                      {phase.errors
+                                        .map(
+                                          ([kind, count]) => `${kind}×${count}`,
+                                        )
+                                        .join("  ")}
+                                    </span>
+                                  ) : (
+                                    <span className="text-muted">—</span>
+                                  )}
                                 </td>
                               </tr>
                             ))}

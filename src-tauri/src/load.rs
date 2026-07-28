@@ -47,6 +47,8 @@ pub struct PhaseReport {
     pub failures: u64,
     /// Status code counts, as "200" → １, so the UI can show a breakdown.
     pub statuses: Vec<(u16, u64)>,
+    /// Failure kind → count: timeout, connection, TLS, DNS, other.
+    pub errors: Vec<(String, u64)>,
     pub avg_ms: f64,
     pub min_ms: f64,
     pub max_ms: f64,
@@ -83,6 +85,8 @@ struct Samples {
     latencies: Vec<f64>,
     failures: u64,
     statuses: std::collections::HashMap<u16, u64>,
+    /// Failure kind → count, so a report can say *why* it failed.
+    errors: std::collections::HashMap<String, u64>,
 }
 
 fn percentile(sorted: &[f64], pct: f64) -> f64 {
@@ -110,6 +114,10 @@ fn summarize(phase: &LoadPhase, samples: Samples, elapsed: Duration) -> PhaseRep
     let mut statuses: Vec<(u16, u64)> = samples.statuses.into_iter().collect();
     statuses.sort_by_key(|(status, _)| *status);
 
+    // Commonest first: that is the one worth acting on.
+    let mut errors: Vec<(String, u64)> = samples.errors.into_iter().collect();
+    errors.sort_by(|a, b| b.1.cmp(&a.1));
+
     PhaseReport {
         label: phase.label.clone(),
         vus: phase.vus,
@@ -117,6 +125,7 @@ fn summarize(phase: &LoadPhase, samples: Samples, elapsed: Duration) -> PhaseRep
         requests,
         failures: samples.failures,
         statuses,
+        errors,
         avg_ms: if latencies.is_empty() {
             0.0
         } else {
@@ -152,6 +161,36 @@ fn build_client(spec: &HttpRequestSpec) -> Result<reqwest::Client, String> {
     builder.build().map_err(|e| e.to_string())
 }
 
+/// Which kind of failure this was. "connection refused" and "timed out" call
+/// for completely different fixes, and a bare failure count hides that.
+fn classify(error: &reqwest::Error) -> String {
+    if error.is_timeout() {
+        return "timeout".into();
+    }
+    if error.is_connect() {
+        return "connection".into();
+    }
+    if error.is_redirect() {
+        return "too many redirects".into();
+    }
+    if error.is_body() || error.is_decode() {
+        return "bad response body".into();
+    }
+    // The cause is where TLS and DNS failures actually describe themselves.
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(current) = source {
+        let text = current.to_string().to_lowercase();
+        if text.contains("certificate") || text.contains("tls") || text.contains("handshake") {
+            return "TLS".into();
+        }
+        if text.contains("dns") || text.contains("resolve") {
+            return "DNS".into();
+        }
+        source = current.source();
+    }
+    "other".into()
+}
+
 async fn one_request(
     client: &reqwest::Client,
     method: &reqwest::Method,
@@ -170,7 +209,7 @@ async fn one_request(
             request = request.body(body.clone());
         }
     }
-    let response = request.send().await.map_err(|e| e.to_string())?;
+    let response = request.send().await.map_err(|e| classify(&e))?;
     let status = response.status().as_u16();
     // Drain the body so the connection can be reused.
     let _ = response.bytes().await;
@@ -229,7 +268,10 @@ pub async fn run_load_test(
                                     guard.failures += 1;
                                 }
                             }
-                            Err(_) => guard.failures += 1,
+                            Err(kind) => {
+                                guard.failures += 1;
+                                *guard.errors.entry(kind).or_insert(0) += 1;
+                            }
                         }
                     }
 
