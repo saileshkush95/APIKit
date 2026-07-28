@@ -185,8 +185,22 @@ export function ResponseViewer({
     }
   }
 
-  async function copyNode(line: number) {
+  async function copyNode(line: number, wantPath = false) {
     if (!copyMap) return;
+    // Clicking the property name copies where the value lives; clicking the
+    // value copies the value itself.
+    if (wantPath) {
+      const path = copyMap.paths[line];
+      if (path) {
+        try {
+          await navigator.clipboard.writeText(path);
+          notifySuccess(`Copied path ${path}`);
+        } catch {
+          /* clipboard access can be denied */
+        }
+        return;
+      }
+    }
     const node = copyMap.nodes[line];
     const text =
       typeof node === "string" ? node : JSON.stringify(node, null, 2);
@@ -196,6 +210,12 @@ export function ResponseViewer({
       // response is usually there to be visited (redirects, hosted pages).
       const link = urlIn(text);
       if (link) {
+        // The key it was found under names the tab far better than the URL —
+        // "redirectUrl" beats "test-gateway.tillpayments.com/NGQxZWIy…".
+        const key = copyMap.paths[line]?.split(/[.[]/).filter(Boolean).pop();
+        const tabName = key
+          ? key.replace(/["\]]/g, "")
+          : linkLabel(link);
         notify("success", "Copied the link", {
           detail: link,
           timeoutMs: 10_000,
@@ -207,7 +227,7 @@ export function ResponseViewer({
               run: () =>
                 useHandoff.getState().hand({
                   kind: "draft",
-                  name: linkLabel(link),
+                  name: tabName,
                   draft: {
                     method: "GET",
                     url: link,
@@ -765,7 +785,7 @@ function VirtualBody({
   spans: (number | null)[] | null;
   /** JSON bodies: clicking a line copies the node on it. */
   canCopyNodes: boolean;
-  onCopyNode: (line: number) => void;
+  onCopyNode: (line: number, wantPath: boolean) => void;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -846,13 +866,18 @@ function VirtualBody({
         className={`relative min-w-0 flex-1 pr-3 pl-3 ${
           wrapped ? "break-words whitespace-pre-wrap" : "whitespace-pre"
         } ${canCopyNodes ? "cursor-pointer hover:bg-elevated/60" : ""}`}
-        title={canCopyNodes ? "Click to copy this node" : undefined}
-        onClick={() => {
+        title={
+          canCopyNodes
+            ? "Click the value to copy it, or the key to copy its path"
+            : undefined
+        }
+        onClick={(event) => {
           if (!canCopyNodes) return;
           // A drag to select text must never trigger a copy.
           const selection = window.getSelection();
           if (selection && !selection.isCollapsed) return;
-          onCopyNode(actual);
+          const target = event.target as HTMLElement;
+          onCopyNode(actual, target.dataset.token === "key");
         }}
       >
         {close !== null && (

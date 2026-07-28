@@ -131,7 +131,13 @@ export function tokenizeLine(
 function tokenNode(token: Token, key: React.Key, from = 0, to?: number): ReactNode {
   const text = to === undefined ? token.text.slice(from) : token.text.slice(from, to);
   return token.cls ? (
-    <span key={key} className={token.cls}>
+    <span
+      key={key}
+      className={token.cls}
+      // Marks property names so a click can tell a key from a value — the
+      // response viewer copies the path for one and the value for the other.
+      data-token={token.cls === KEY ? "key" : undefined}
+    >
       {text}
     </span>
   ) : (

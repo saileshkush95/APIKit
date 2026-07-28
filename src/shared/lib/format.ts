@@ -137,6 +137,8 @@ export interface JsonLineMap {
   nodes: unknown[];
   /** For a line that opens a multi-line container, its closing line. */
   spans: (number | null)[];
+  /** Path to each line's node, e.g. `data.items[0].id`; "" at the root. */
+  paths: string[];
 }
 
 /**
@@ -148,26 +150,34 @@ export interface JsonLineMap {
 export function mapJsonLines(root: unknown): JsonLineMap {
   const nodes: unknown[] = [];
   const spans: (number | null)[] = [];
-  function push(node: unknown): number {
+  const paths: string[] = [];
+  function push(node: unknown, path: string): number {
     nodes.push(node);
     spans.push(null);
+    paths.push(path);
     return nodes.length - 1;
   }
-  function walk(value: unknown): void {
+  function walk(value: unknown, path: string): void {
     if (value !== null && typeof value === "object") {
-      const children = Array.isArray(value)
-        ? value
-        : Object.values(value as Record<string, unknown>);
-      const open = push(value);
+      const children: [string, unknown][] = Array.isArray(value)
+        ? value.map((child, index) => [`[${index}]`, child])
+        : Object.entries(value as Record<string, unknown>).map(([key, child]) => [
+            // Keys that are not plain identifiers need bracket form to stay
+            // valid as a path.
+            /^[A-Za-z_$][\w$]*$/.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`,
+            child,
+          ]);
+      const open = push(value, path);
       if (children.length === 0) return; // "[]" / "{}" render on one line
-      for (const child of children) walk(child);
-      spans[open] = push(value);
+      for (const [step, child] of children) walk(child, `${path}${step}`);
+      spans[open] = push(value, path);
     } else {
-      push(value);
+      push(value, path);
     }
   }
-  walk(root);
-  return { nodes, spans };
+  walk(root, "");
+  // A leading "." from the first object level reads as noise.
+  return { nodes, spans, paths: paths.map((p) => p.replace(/^\./, "")) };
 }
 
 /** File extension for a response body, from its content type. */
