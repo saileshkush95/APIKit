@@ -149,6 +149,15 @@ export function LoadTestPanel() {
     };
   }, []);
 
+  // Clearing a run (or switching test type) must not strand the view on a tab
+  // whose contents just disappeared.
+  useEffect(() => {
+    if (tab === "live" && !(running || latency.length > 0)) setTab("setup");
+    if (tab === "results" && report === null && assertionRun === null) {
+      setTab("setup");
+    }
+  }, [tab, running, latency.length, report, assertionRun]);
+
   /** Saves the finished report as JSON or CSV. */
   async function exportReport(format: "json" | "csv") {
     if (!report) return;
@@ -200,6 +209,10 @@ export function LoadTestPanel() {
     setReport(null);
     setAssertionRun(null);
     setError(null);
+    // The previous run's results belong to the previous test type.
+    setLatency([]);
+    setThroughput([]);
+    setTab("setup");
   }
 
   /** Copies method, URL, headers and body from the request open in the client. */
@@ -318,6 +331,11 @@ export function LoadTestPanel() {
 
   const folders = folderOptions(tree);
   const baseline = report?.phases[0]?.avgMs ?? 0;
+
+  // A tab with nothing behind it is worse than no tab: the pane just looks
+  // broken. Live and Results unlock once there is something in them.
+  const hasLive = running || latency.length > 0;
+  const hasResults = report !== null || assertionRun !== null;
 
   return (
     <div className="flex min-h-0 w-full">
@@ -457,23 +475,26 @@ export function LoadTestPanel() {
             <div className="flex flex-none items-center gap-1 border-b border-edge px-2">
               {(
                 [
-                  ["setup", "Setup", ""],
-                  ["live", "Live", running ? "●" : ""],
+                  ["setup", "Setup", "", true],
+                  ["live", "Live", running ? "●" : "", hasLive],
                   [
                     "results",
                     "Results",
                     report ? String(report.phases.length) : "",
+                    hasResults,
                   ],
                 ] as const
-              ).map(([key, label, badge]) => (
+              ).map(([key, label, badge, enabled]) => (
                 <button
                   key={key}
-                  onClick={() => setTab(key)}
-                  className={`-mb-px border-b-2 px-3 py-1.5 text-xs ${
+                  onClick={() => enabled && setTab(key)}
+                  disabled={!enabled}
+                  title={enabled ? undefined : "Nothing to show yet — run a test"}
+                  className={`-mb-px flex-none border-b-2 px-3 py-1.5 text-xs ${
                     tab === key
                       ? "border-brand font-medium text-ink"
                       : "border-transparent text-muted hover:text-ink"
-                  }`}
+                  } ${enabled ? "" : "cursor-default opacity-40 hover:text-muted"}`}
                 >
                   {label}
                   {badge !== "" && (
@@ -481,7 +502,7 @@ export function LoadTestPanel() {
                   )}
                 </button>
               ))}
-              <span className="ml-auto text-[11px] text-muted">
+              <span className="ml-auto min-w-0 truncate pl-3 text-[11px] text-muted">
                 {active
                   ? `headers, auth and body from “${active.name}”`
                   : "no request open — sending bare requests"}
