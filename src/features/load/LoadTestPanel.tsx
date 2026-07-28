@@ -149,15 +149,6 @@ export function LoadTestPanel() {
     };
   }, []);
 
-  // Clearing a run (or switching test type) must not strand the view on a tab
-  // whose contents just disappeared.
-  useEffect(() => {
-    if (tab === "live" && !(running || latency.length > 0)) setTab("setup");
-    if (tab === "results" && report === null && assertionRun === null) {
-      setTab("setup");
-    }
-  }, [tab, running, latency.length, report, assertionRun]);
-
   /** Saves the finished report as JSON or CSV. */
   async function exportReport(format: "json" | "csv") {
     if (!report) return;
@@ -484,17 +475,15 @@ export function LoadTestPanel() {
                     hasResults,
                   ],
                 ] as const
-              ).map(([key, label, badge, enabled]) => (
+              ).map(([key, label, badge]) => (
                 <button
                   key={key}
-                  onClick={() => enabled && setTab(key)}
-                  disabled={!enabled}
-                  title={enabled ? undefined : "Nothing to show yet — run a test"}
+                  onClick={() => setTab(key)}
                   className={`-mb-px flex-none border-b-2 px-3 py-1.5 text-xs ${
                     tab === key
                       ? "border-brand font-medium text-ink"
                       : "border-transparent text-muted hover:text-ink"
-                  } ${enabled ? "" : "cursor-default opacity-40 hover:text-muted"}`}
+                  }`}
                 >
                   {label}
                   {badge !== "" && (
@@ -667,6 +656,10 @@ export function LoadTestPanel() {
                   {kind === "assertions" ? (
                     <p className="text-[11px] text-muted">
                       Assertion suites report in the Results tab.
+                    </p>
+                  ) : !hasLive ? (
+                    <p className="p-6 text-center text-xs text-muted">
+                      Latency and throughput are charted here while a test runs.
                     </p>
                   ) : (
                     <div className="grid gap-3 lg:grid-cols-2">

@@ -617,6 +617,26 @@ export interface LoadReport {
   cancelled: boolean;
 }
 
+/**
+ * A saved load test. Tests are listed in the sidebar like requests are in the
+ * client, so a tuned soak or spike is kept rather than rebuilt each time.
+ */
+export interface LoadTest {
+  id: string;
+  name: string;
+  kind: LoadTestKind;
+  method: string;
+  url: string;
+  phases: LoadPhase[];
+  thinkTimeMs: number;
+  /** Iterations for the assertion suite. */
+  iterations: number;
+  /** Pinned environment; null follows whichever is active. */
+  environmentId: string | null;
+  /** Target folder for a chain test. */
+  folderId: string | null;
+}
+
 export interface LoadProgress {
   phaseIndex: number;
   label: string;

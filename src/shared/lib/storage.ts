@@ -14,6 +14,7 @@ export const SETTINGS = {
   expandedFolders: "expandedFolders",
   theme: "theme",
   mockPort: "mockPort",
+  loadTests: "loadTests",
   sidebarWidth: "sidebarWidth",
   sidebarCollapsed: "sidebarCollapsed",
 } as const;
