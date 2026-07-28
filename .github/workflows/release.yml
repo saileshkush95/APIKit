@@ -10,19 +10,19 @@ on:
   workflow_dispatch:
 
 jobs:
-  # The release is created once, up front, as a draft. If the build jobs are
-  # left to create it, the four of them race and the assets end up scattered
-  # across several drafts; if it is published up front, `releases/latest`
-  # points at an empty release for the length of the build and the updater's
-  # latest.json 404s. A draft is invisible to `releases/latest`, so the feed
-  # keeps serving the previous version until `publish` flips this one live.
+  # Created once, up front, as a prerelease. Three constraints have to hold at
+  # the same time: the build jobs must not race to create it (that scattered
+  # assets across several releases), it must be reachable by tag so they can
+  # upload to it (a draft is not — it has no tag until published), and it must
+  # stay out of `releases/latest` until it actually has assets, or the
+  # updater's latest.json 404s for the length of the build. A prerelease is
+  # the one state that satisfies all three.
   release:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
-      id: ${{ steps.draft.outputs.id }}
     steps:
       - uses: actions/checkout@v4
 
@@ -37,21 +37,15 @@ jobs:
             echo "tag=v$version" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create the draft release if it does not exist
-        id: draft
+      - name: Create the release if it does not exist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${{ steps.tag.outputs.tag }}"
           gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft \
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --prerelease \
               --target "$GITHUB_SHA" --title "APIKit $tag" \
               --notes "Downloads for Windows, macOS (Intel and Apple Silicon) and Linux are attached below."
-          # The build jobs need the id, not the tag: a draft is not reachable
-          # by tag, which is why looking it up that way failed.
-          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
-                 --jq ".[] | select(.tag_name == \"$tag\") | .id" | head -1)
-          echo "id=$id" >> "$GITHUB_OUTPUT"
 
   build:
     needs: release
@@ -105,7 +99,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
-          releaseId: ${{ needs.release.outputs.id }}
+          tagName: ${{ needs.release.outputs.tag }}
           args: ${{ matrix.args }}
 
   # Only now does the release become visible to `releases/latest` — and so to
@@ -123,4 +117,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${{ needs.release.outputs.tag }}"
-          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest
