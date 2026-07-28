@@ -60,7 +60,7 @@ lettre = { version = "0.11", default-features = false, features = [
 
 # Streaming protocols: WebSocket / Socket.IO / GraphQL subscriptions, and MQTT
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
-rumqttc = "0.24"
+rumqttc = "0.25"
 url = "2"
 
 # Async runtime

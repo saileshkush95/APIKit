@@ -221,6 +221,10 @@ export const useMonitorsStore = create<MonitorsStore>()((set, get) => {
           vars: runVars,
           settings,
           onVariables: environments.setVariables,
+          // Without the tree, "inherit from parent" auth silently resolves to
+          // none — so a monitor on a folder that carries the credentials
+          // reported failures that were not real.
+          tree,
         });
         totalMs += result.timeMs;
         if (!isHealthy(result)) {

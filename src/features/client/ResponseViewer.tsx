@@ -357,8 +357,10 @@ export function ResponseViewer({
   return (
     <>
       {/* Tabs + status */}
-      <div className="flex flex-none items-center gap-3 px-2 py-1">
-        <div className="flex gap-0.5">
+      {/* Wraps rather than clipping: split side by side, this row is half as
+          wide and every tab still has to be reachable. */}
+      <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-1 px-2 py-1">
+        <div className="flex flex-wrap gap-0.5">
           <Tab
             active={activeTab === "body"}
             onClick={() => onTabChange("body")}
@@ -419,7 +421,7 @@ export function ResponseViewer({
           </Tab>
         </div>
 
-        <div className="ml-auto flex items-center gap-3 pr-1 font-mono text-xs">
+        <div className="ml-auto flex flex-none items-center gap-3 pr-1 font-mono text-xs">
           <span
             className={`rounded px-1.5 py-0.5 font-bold ${statusColor(
               response.status,

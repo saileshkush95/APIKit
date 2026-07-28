@@ -194,6 +194,14 @@ export function RequestPane({
   /** The two resizable panes; the drag ratio is relative to this box. */
   const splitRef = useRef<HTMLDivElement>(null);
   const [split, setSplit] = useState(0.5);
+  // Stacked or side by side. A wide window suits columns — a long response and
+  // a long request body are both easier to read without scrolling.
+  const [layout, setLayout] = useState<"vertical" | "horizontal">(() =>
+    localStorage.getItem("clientLayout") === "horizontal"
+      ? "horizontal"
+      : "vertical",
+  );
+  const columns = layout === "horizontal";
   const [dragging, setDragging] = useState(false);
   const [showCode, setShowCode] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -243,12 +251,19 @@ export function RequestPane({
     // back to a caret whenever it leaves the divider.
     const { userSelect, cursor } = document.body.style;
     document.body.style.userSelect = "none";
-    document.body.style.cursor = "row-resize";
+    document.body.style.cursor = columns ? "col-resize" : "row-resize";
 
     function onMove(e: MouseEvent) {
       const box = splitRef.current?.getBoundingClientRect();
-      if (!box || box.height === 0) return;
-      const ratio = (e.clientY - box.top) / box.height;
+      if (!box) return;
+      const ratio = columns
+        ? box.width === 0
+          ? null
+          : (e.clientX - box.left) / box.width
+        : box.height === 0
+          ? null
+          : (e.clientY - box.top) / box.height;
+      if (ratio === null) return;
       setSplit(Math.min(0.85, Math.max(0.15, ratio)));
     }
     function onUp() {
@@ -262,7 +277,7 @@ export function RequestPane({
       document.body.style.userSelect = userSelect;
       document.body.style.cursor = cursor;
     };
-  }, [dragging]);
+  }, [dragging, columns]);
 
   // ⌘S / ⌘↵ / ⌘T are handled once at the window level in `ApiClient`.
 
@@ -438,10 +453,15 @@ export function RequestPane({
       {protocol === "webrtc" ? (
         <WebRtcPanel config={tab.config} onConfigChange={patchConfig} />
       ) : (
-        <div ref={splitRef} className="flex min-h-0 flex-1 flex-col">
+        <div
+          ref={splitRef}
+          className={`flex min-h-0 min-w-0 flex-1 ${columns ? "flex-row" : "flex-col"}`}
+        >
       {/* Request builder */}
       <div
-        className="flex min-h-0 flex-col border-t border-edge"
+        // No border on the divider's side: the divider draws its own line, and
+        // the two together read as a double rule.
+        className={`flex min-h-0 min-w-0 flex-col ${columns ? "" : "border-t border-edge"}`}
         style={{ flexBasis: `${split * 100}%`, flexGrow: 0, flexShrink: 1 }}
       >
         <div
@@ -576,10 +596,18 @@ export function RequestPane({
           e.preventDefault();
           setDragging(true);
         }}
-        className="group relative h-1.5 flex-none cursor-row-resize select-none"
+        className={`group relative flex-none select-none ${
+          columns ? "w-1.5 cursor-col-resize" : "h-1.5 cursor-row-resize"
+        }`}
         title="Drag to resize"
       >
-        <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-edge group-hover:bg-brand" />
+        <div
+          className={`absolute bg-edge group-hover:bg-brand ${
+            columns
+              ? "inset-y-0 left-1/2 w-px -translate-x-1/2"
+              : "inset-x-0 top-1/2 h-px -translate-y-1/2"
+          }`}
+        />
       </div>
 
       {/* Response, or the live session for streaming protocols */}
@@ -593,7 +621,24 @@ export function RequestPane({
           onClear={onClearStream}
         />
       ) : (
-      <section className="flex min-h-0 flex-1 flex-col">
+      <section className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        {/* Layout switch, in the response's own corner: it is the pane whose
+            shape people want to change. */}
+        <button
+          onClick={() => {
+            const next = columns ? "vertical" : "horizontal";
+            setLayout(next);
+            localStorage.setItem("clientLayout", next);
+          }}
+          className="absolute top-1 right-1 z-10 rounded px-1.5 py-1 text-[11px] text-muted hover:bg-elevated hover:text-ink"
+          title={
+            columns
+              ? "Stack the response under the request"
+              : "Put the response beside the request"
+          }
+        >
+          {columns ? "⬓" : "◧"}
+        </button>
         {tab.loading && <LoadingResponse onCancel={onCancel} />}
         {!tab.loading && tab.error && (
           <div className="m-3 whitespace-pre-wrap rounded-md border border-err bg-err/10 p-3 font-mono text-xs text-err">
