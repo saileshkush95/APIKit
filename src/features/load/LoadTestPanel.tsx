@@ -587,6 +587,19 @@ export function LoadTestPanel() {
             <div className="flex flex-none items-center gap-2 border-b border-edge p-2">
               <Select
                 size="compact"
+                value={kind}
+                onChange={(e) => choose(e.target.value as LoadTestKind)}
+                className="w-32 flex-none cursor-pointer"
+                title={presetFor(kind).blurb}
+              >
+                {PRESETS.map((preset) => (
+                  <option key={preset.kind} value={preset.kind}>
+                    {preset.label}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                size="compact"
                 value={method}
                 onChange={(e) => setMethod(e.target.value)}
                 className={`w-24 flex-none cursor-pointer font-mono font-bold ${methodColor(
@@ -686,30 +699,6 @@ export function LoadTestPanel() {
             </div>
 
             <div className="min-h-0 flex-1 overflow-auto p-3">
-              {tab === "setup" && (
-                <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-edge pb-3">
-                  <span className="text-[11px] text-muted">Test type</span>
-                  {PRESETS.map((preset) => (
-                    <button
-                      key={preset.kind}
-                      onClick={() => choose(preset.kind)}
-                      title={preset.blurb}
-                      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] ${
-                        kind === preset.kind
-                          ? "border-brand bg-brand/10 text-ink"
-                          : "border-edge text-muted hover:border-brand hover:text-ink"
-                      }`}
-                    >
-                      <span className={preset.accent}>{preset.icon}</span>
-                      {preset.label}
-                    </button>
-                  ))}
-                  <span className="w-full text-[11px] text-muted">
-                    {presetFor(kind).blurb}
-                  </span>
-                </div>
-              )}
-
               {tab === "setup" &&
                 (kind === "assertions" ? (
                   <label className="flex items-center gap-2 text-xs text-muted">

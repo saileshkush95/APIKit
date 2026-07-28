@@ -1,4 +1,5 @@
 import { Input, Select } from "../../shared/components/Field";
+import { Toggle } from "../../shared/components/Toggle";
 import { useEffect, useState } from "react";
 import { RouteContextMenu, type MenuState } from "./RouteContextMenu";
 import { RouteTree } from "./RouteTree";
@@ -29,7 +30,13 @@ import { usePersist } from "../../shared/lib/persist";
 import { newId, SETTINGS, workspaceDataOnce } from "../../shared/lib/storage";
 import { methodColor, statusColor } from "../../shared/lib/ui";
 import { useWorkspaceId } from "../../shared/state/workspaces";
-import type { MockHit, MockRoute, MockStatus } from "../../shared/types";
+import {
+  MOCK_MODES,
+  type MockHit,
+  type MockMode,
+  type MockRoute,
+  type MockStatus,
+} from "../../shared/types";
 import { notifyError } from "../../shared/lib/notify";
 
 const MOCK_METHODS = [
@@ -56,6 +63,13 @@ function newRoute(parentId: string | null = null): MockRoute {
     parentId,
     isFolder: false,
     name: "",
+    mode: "static",
+    proxyTarget: "",
+    matchQuery: "",
+    matchHeaders: [],
+    matchBody: "",
+    failPercent: 0,
+    cors: true,
   };
 }
 
@@ -81,7 +95,9 @@ export function MockPanel() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [editorTab, setEditorTab] = useState<"body" | "headers">("body");
+  const [editorTab, setEditorTab] = useState<
+    "body" | "headers" | "matching" | "behaviour"
+  >("body");
 
   const [status, setStatus] = useState<MockStatus>({
     running: false,
@@ -106,6 +122,13 @@ export function MockPanel() {
             parentId: route.parentId ?? null,
             isFolder: route.isFolder ?? false,
             name: route.name ?? "",
+            mode: route.mode || "static",
+            proxyTarget: route.proxyTarget ?? "",
+            matchQuery: route.matchQuery ?? "",
+            matchHeaders: route.matchHeaders ?? [],
+            matchBody: route.matchBody ?? "",
+            failPercent: route.failPercent ?? 0,
+            cors: route.cors ?? false,
           })),
         );
         setSelectedId(
@@ -563,6 +586,23 @@ export function MockPanel() {
                   />
                   ms
                 </label>
+                <Select
+                  size="compact"
+                  value={selected.mode}
+                  onChange={(e) =>
+                    update(selected.id, { mode: e.target.value as MockMode })
+                  }
+                  className="w-28 flex-none cursor-pointer"
+                  title={
+                    MOCK_MODES.find((mode) => mode.value === selected.mode)?.blurb
+                  }
+                >
+                  {MOCK_MODES.map((mode) => (
+                    <option key={mode.value} value={mode.value}>
+                      {mode.label}
+                    </option>
+                  ))}
+                </Select>
                 <button
                   onClick={bulkDelete}
                   className="flex-none rounded border border-edge px-2 py-1 text-[11px] text-muted hover:border-err hover:text-err"
@@ -571,11 +611,27 @@ export function MockPanel() {
                 </button>
               </div>
 
+              {selected.mode === "proxy" && (
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="text-[11px] text-muted">Forward to</span>
+                  <Input
+                    size="compact"
+                    mono
+                    value={selected.proxyTarget}
+                    spellCheck={false}
+                    placeholder="https://api.example.com"
+                    onChange={(e) =>
+                      update(selected.id, { proxyTarget: e.target.value })
+                    }
+                    className="min-w-0 flex-1"
+                  />
+                </div>
+              )}
+
               <p className="mb-2 text-[11px] text-muted">
+                {MOCK_MODES.find((mode) => mode.value === selected.mode)?.blurb}{" "}
                 A trailing <code className="font-mono text-brand">*</code>{" "}
-                matches any suffix, e.g.{" "}
-                <code className="font-mono">/api/users/*</code>. Routes are
-                matched top to bottom, in list order.
+                matches any suffix. Routes are matched top to bottom.
               </p>
 
               {/* Response parts as tabs, like the client's request editor. */}
@@ -588,6 +644,20 @@ export function MockPanel() {
                       "Headers",
                       selected.headers.filter((h) => h.name.trim() !== "").length ||
                         "",
+                    ],
+                    [
+                      "matching",
+                      "Matching",
+                      selected.matchQuery ||
+                      selected.matchBody ||
+                      selected.matchHeaders.some((h) => h.name.trim() !== "")
+                        ? "●"
+                        : "",
+                    ],
+                    [
+                      "behaviour",
+                      "Behaviour",
+                      selected.failPercent > 0 || selected.delayMs > 0 ? "●" : "",
                     ],
                   ] as const
                 ).map(([key, label, badge]) => (
@@ -625,14 +695,122 @@ export function MockPanel() {
               </div>
 
               <div className={editorTab === "body" ? "" : "hidden"}>
-                <textarea
-                  value={selected.body}
-                  spellCheck={false}
-                  placeholder='{\n  "ok": true\n}'
-                  onChange={(e) => update(selected.id, { body: e.target.value })}
-                  className="h-64 w-full resize-y rounded-md border border-edge bg-panel p-2 font-mono text-[12px] leading-relaxed text-ink outline-none focus:border-brand"
-                />
+                {selected.mode === "proxy" ? (
+                  <p className="p-4 text-center text-[11px] text-muted">
+                    Proxy mode returns the upstream server's response, so this
+                    route has no body of its own.
+                  </p>
+                ) : (
+                  <>
+                    {selected.mode === "sequence" && (
+                      <p className="mb-1 text-[11px] text-muted">
+                        Separate each response with a line containing{" "}
+                        <code className="font-mono text-brand">---</code>.
+                      </p>
+                    )}
+                    <textarea
+                      value={selected.body}
+                      spellCheck={false}
+                      onChange={(e) =>
+                        update(selected.id, { body: e.target.value })
+                      }
+                      className="h-64 w-full resize-y rounded-md border border-edge bg-panel p-2 font-mono text-[12px] leading-relaxed text-ink outline-none focus:border-brand"
+                    />
+                  </>
+                )}
               </div>
+
+              {editorTab === "matching" && (
+                <div className="flex flex-col gap-3">
+                  <p className="text-[11px] text-muted">
+                    Extra conditions, so several routes can share a path and
+                    answer different requests. Empty conditions are ignored.
+                  </p>
+                  <label className="flex flex-col gap-1 text-[11px] text-muted">
+                    Required query pairs
+                    <Input
+                      size="compact"
+                      mono
+                      value={selected.matchQuery}
+                      spellCheck={false}
+                      placeholder="status=active&page=1"
+                      onChange={(e) =>
+                        update(selected.id, { matchQuery: e.target.value })
+                      }
+                      className="w-96 max-w-full"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-[11px] text-muted">
+                    Body contains
+                    <Input
+                      size="compact"
+                      mono
+                      value={selected.matchBody}
+                      spellCheck={false}
+                      placeholder='"userId": 42'
+                      onChange={(e) =>
+                        update(selected.id, { matchBody: e.target.value })
+                      }
+                      className="w-96 max-w-full"
+                    />
+                  </label>
+                  <div>
+                    <div className="mb-1 text-[11px] text-muted">
+                      Required headers — a name with no value only requires the
+                      header to be present
+                    </div>
+                    <KeyValueEditor
+                      rows={
+                        selected.matchHeaders.length
+                          ? selected.matchHeaders
+                          : [{ name: "", value: "" }]
+                      }
+                      onChange={(matchHeaders) =>
+                        update(selected.id, { matchHeaders })
+                      }
+                      keyPlaceholder="Header"
+                      valuePlaceholder="Expected value"
+                      suggestName={(query) => matchHeaders(query)}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {editorTab === "behaviour" && (
+                <div className="flex flex-col gap-3">
+                  <label className="flex items-center gap-2 text-[11px] text-muted">
+                    Fail
+                    <Input
+                      size="compact"
+                      mono
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={selected.failPercent}
+                      onChange={(e) =>
+                        update(selected.id, {
+                          failPercent: Math.min(
+                            100,
+                            Math.max(0, Number(e.target.value)),
+                          ),
+                        })
+                      }
+                      className="w-16"
+                    />
+                    % of requests with a 500, to exercise a client's error
+                    handling
+                  </label>
+                  <Toggle
+                    checked={selected.cors}
+                    onChange={(cors) => update(selected.id, { cors })}
+                    label="CORS — answer preflights and allow any origin"
+                  />
+                  <p className="text-[11px] text-muted">
+                    Delay is set beside the status code, and applies before the
+                    response is produced.
+                  </p>
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex flex-1 items-center justify-center text-muted">

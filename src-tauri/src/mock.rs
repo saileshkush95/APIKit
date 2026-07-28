@@ -64,14 +64,202 @@ fn method_matches(pattern: &str, method: &str) -> bool {
     pattern.eq_ignore_ascii_case("ANY") || pattern.eq_ignore_ascii_case(method)
 }
 
-fn find_route<'a>(routes: &'a [MockRoute], method: &str, path: &str) -> Option<&'a MockRoute> {
+/// The conditions beyond method and path: a route can require query pairs,
+/// headers, or a substring of the body, so several routes can share a path and
+/// answer different requests.
+fn conditions_match(
+    route: &MockRoute,
+    query: Option<&str>,
+    headers: &hyper::HeaderMap,
+    body: &str,
+) -> bool {
+    for pair in route.match_query.split('&') {
+        let pair = pair.trim();
+        if pair.is_empty() {
+            continue;
+        }
+        let present = query
+            .map(|q| q.split('&').any(|candidate| candidate.trim() == pair))
+            .unwrap_or(false);
+        if !present {
+            return false;
+        }
+    }
+
+    for header in &route.match_headers {
+        if header.name.trim().is_empty() {
+            continue;
+        }
+        let actual = headers
+            .get(header.name.trim())
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("");
+        if header.value.trim().is_empty() {
+            // A name with no value only requires the header to be present.
+            if actual.is_empty() {
+                return false;
+            }
+        } else if actual != header.value.trim() {
+            return false;
+        }
+    }
+
+    if !route.match_body.trim().is_empty() && !body.contains(route.match_body.trim()) {
+        return false;
+    }
+
+    true
+}
+
+fn find_route<'a>(
+    routes: &'a [MockRoute],
+    method: &str,
+    path: &str,
+    query: Option<&str>,
+    headers: &hyper::HeaderMap,
+    body: &str,
+) -> Option<&'a MockRoute> {
     // Folder rows carry no response; they only give the list its shape.
     routes.iter().find(|r| {
         !r.is_folder
             && r.enabled
             && method_matches(&r.method, method)
             && path_matches(&r.path, path)
+            && conditions_match(r, query, headers, body)
     })
+}
+
+/// Cheap xorshift seeded from the clock. Mock randomness needs to be varied,
+/// not cryptographic, and this avoids a dependency for it.
+fn pseudo_random() -> u64 {
+    let mut seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64 ^ (d.as_secs() << 17))
+        .unwrap_or(0x2545F491)
+        | 1;
+    seed ^= seed << 13;
+    seed ^= seed >> 7;
+    seed ^= seed << 17;
+    seed
+}
+
+/// Substitutes `{{…}}` placeholders in a template response.
+fn render_template(
+    body: &str,
+    method: &str,
+    path: &str,
+    query: Option<&str>,
+    headers: &hyper::HeaderMap,
+    request_body: &str,
+) -> String {
+    let mut out = String::with_capacity(body.len());
+    let bytes: Vec<char> = body.chars().collect();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == '{' && i + 1 < bytes.len() && bytes[i + 1] == '{' {
+            if let Some(end) = body[i..].find("}}") {
+                let token = body[i + 2..i + end].trim().to_string();
+                out.push_str(&resolve_token(
+                    &token,
+                    method,
+                    path,
+                    query,
+                    headers,
+                    request_body,
+                ));
+                // Advance past the placeholder in char terms.
+                let consumed = body[i..i + end + 2].chars().count();
+                i += consumed;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
+fn resolve_token(
+    token: &str,
+    method: &str,
+    path: &str,
+    query: Option<&str>,
+    headers: &hyper::HeaderMap,
+    request_body: &str,
+) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+
+    if let Some(name) = token.strip_prefix("query.") {
+        return query
+            .and_then(|q| {
+                q.split('&').find_map(|pair| {
+                    let (key, value) = pair.split_once('=')?;
+                    (key == name).then(|| value.to_owned())
+                })
+            })
+            .unwrap_or_default();
+    }
+    if let Some(name) = token.strip_prefix("header.") {
+        return headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_owned();
+    }
+
+    match token {
+        "uuid" => {
+            // Version-4 shaped, from two pseudo-random words.
+            let (a, b) = (pseudo_random(), pseudo_random());
+            format!(
+                "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
+                a as u32,
+                (a >> 32) as u16,
+                (b & 0xfff) as u16,
+                ((b >> 12) as u16 & 0x3fff) | 0x8000,
+                (b >> 26) & 0xffff_ffff_ffff
+            )
+        }
+        "timestamp" => now.as_secs().to_string(),
+        "now" => crate::mock::iso_now(),
+        "randomInt" => (pseudo_random() % 1000).to_string(),
+        "method" => method.to_owned(),
+        "path" => path.to_owned(),
+        "body" => request_body.to_owned(),
+        // An unknown placeholder is left as written, so a typo is visible
+        // rather than silently blanking part of the response.
+        other => format!("{{{{{other}}}}}"),
+    }
+}
+
+/// RFC 3339 timestamp without pulling in a date library.
+fn iso_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let days = secs / 86_400;
+    let rem = secs % 86_400;
+    // Civil-from-days, Howard Hinnant's algorithm.
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{year:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
 }
 
 fn now_ms() -> u64 {
@@ -81,41 +269,217 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Permissive CORS, so a browser app can call the mock from any origin.
+fn cors_headers(builder: hyper::http::response::Builder) -> hyper::http::response::Builder {
+    builder
+        .header("access-control-allow-origin", "*")
+        .header(
+            "access-control-allow-methods",
+            "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS",
+        )
+        .header("access-control-allow-headers", "*")
+}
+
+/// Forwards the request to a real server, so a mock can stand in for part of an
+/// API while the rest passes through.
+async fn proxy_response(
+    route: &MockRoute,
+    method: &str,
+    path: &str,
+    query: Option<&str>,
+    headers: &hyper::HeaderMap,
+    body: &str,
+) -> Response<Full<Bytes>> {
+    let target = route.proxy_target.trim().trim_end_matches('/');
+    if target.is_empty() {
+        return Response::builder()
+            .status(StatusCode::BAD_GATEWAY)
+            .header("content-type", "application/json")
+            .body(Full::new(Bytes::from(
+                r#"{"error":"proxy mode has no target URL"}"#,
+            )))
+            .unwrap();
+    }
+
+    let url = match query {
+        Some(q) if !q.is_empty() => format!("{target}{path}?{q}"),
+        _ => format!("{target}{path}"),
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap_or_default();
+    let mut request = client.request(
+        reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET),
+        &url,
+    );
+    for (name, value) in headers {
+        // Host belongs to the mock's address, not the upstream's.
+        if name.as_str().eq_ignore_ascii_case("host") {
+            continue;
+        }
+        if let Ok(text) = value.to_str() {
+            request = request.header(name.as_str(), text);
+        }
+    }
+    if !body.is_empty() {
+        request = request.body(body.to_owned());
+    }
+
+    match request.send().await {
+        Ok(upstream) => {
+            let status = upstream.status();
+            let upstream_headers = upstream.headers().clone();
+            let bytes = upstream.bytes().await.unwrap_or_default();
+            let mut builder = Response::builder().status(status.as_u16());
+            for (name, value) in &upstream_headers {
+                // Re-chunking is ours to decide; copying these would lie.
+                if matches!(
+                    name.as_str(),
+                    "transfer-encoding" | "content-length" | "connection"
+                ) {
+                    continue;
+                }
+                builder = builder.header(name.as_str(), value.as_bytes());
+            }
+            if route.cors {
+                builder = cors_headers(builder);
+            }
+            builder
+                .body(Full::new(Bytes::from(bytes)))
+                .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+        }
+        Err(e) => Response::builder()
+            .status(StatusCode::BAD_GATEWAY)
+            .header("content-type", "application/json")
+            .body(Full::new(Bytes::from(format!(
+                r#"{{"error":"proxy to {url} failed: {e}"}}"#
+            ))))
+            .unwrap(),
+    }
+}
+
 async fn handle(
     req: Request<hyper::body::Incoming>,
     routes: Arc<RwLock<Vec<MockRoute>>>,
     hits: Arc<AtomicU64>,
+    sequence: Arc<Mutex<std::collections::HashMap<String, usize>>>,
     app: AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let method = req.method().as_str().to_string();
     let path = req.uri().path().to_string();
+    let query = req.uri().query().map(|q| q.to_string());
+    let headers = req.headers().clone();
+    // Conditional matching and templates both need the body, so it is read up
+    // front rather than only for the routes that turn out to use it.
+    let request_body = {
+        use http_body_util::BodyExt;
+        req.into_body()
+            .collect()
+            .await
+            .map(|collected| String::from_utf8_lossy(&collected.to_bytes()).into_owned())
+            .unwrap_or_default()
+    };
 
     // Clone the match out so the lock is not held across the delay/await.
     let matched = {
         let guard = routes.read().unwrap();
-        find_route(&guard, &method, &path).cloned()
+        find_route(
+            &guard,
+            &method,
+            &path,
+            query.as_deref(),
+            &headers,
+            &request_body,
+        )
+        .cloned()
     };
 
     hits.fetch_add(1, Ordering::Relaxed);
 
+    // A browser's preflight never carries the real method, so a CORS route has
+    // to answer OPTIONS itself or nothing else it serves is reachable.
+    let preflight = method.eq_ignore_ascii_case("OPTIONS")
+        && matched.as_ref().map(|route| route.cors).unwrap_or(false);
+
     let response = match &matched {
+        Some(route) if preflight => cors_headers(
+            Response::builder()
+                .status(StatusCode::NO_CONTENT)
+                .header("access-control-max-age", "600"),
+        )
+        .body(Full::new(Bytes::new()))
+        .unwrap(),
+
         Some(route) => {
             if route.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(route.delay_ms)).await;
             }
-            let status =
-                StatusCode::from_u16(route.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-            let mut builder = Response::builder().status(status);
-            for header in &route.headers {
-                if !header.name.trim().is_empty() {
-                    builder = builder.header(&header.name, &header.value);
+
+            // Fault injection comes before the mode: the point is to exercise a
+            // client's error handling on a route that otherwise succeeds.
+            if route.fail_percent > 0
+                && (pseudo_random() % 100) < route.fail_percent as u64
+            {
+                let mut builder = Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header("content-type", "application/json");
+                if route.cors {
+                    builder = cors_headers(builder);
                 }
+                builder
+                    .body(Full::new(Bytes::from(
+                        r#"{"error":"injected failure"}"#,
+                    )))
+                    .unwrap()
+            } else if route.mode == "proxy" {
+                proxy_response(route, &method, &path, query.as_deref(), &headers, &request_body)
+                    .await
+            } else {
+                let body = match route.mode.as_str() {
+                    "template" => render_template(
+                        &route.body,
+                        &method,
+                        &path,
+                        query.as_deref(),
+                        &headers,
+                        &request_body,
+                    ),
+                    "sequence" => {
+                        // Successive calls walk the `---` separated bodies and
+                        // then repeat, which is how a stateful flow is mocked.
+                        let parts: Vec<&str> = route
+                            .body
+                            .split("\n---\n")
+                            .map(|part| part.trim_matches('\n'))
+                            .collect();
+                        let mut guard = sequence.lock().unwrap();
+                        let index = guard.entry(route.id.clone()).or_insert(0);
+                        let picked = parts[*index % parts.len().max(1)].to_string();
+                        *index += 1;
+                        picked
+                    }
+                    _ => route.body.clone(),
+                };
+
+                let status = StatusCode::from_u16(route.status)
+                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+                let mut builder = Response::builder().status(status);
+                for header in &route.headers {
+                    if !header.name.trim().is_empty() {
+                        builder = builder.header(&header.name, &header.value);
+                    }
+                }
+                if route.cors {
+                    builder = cors_headers(builder);
+                }
+                builder
+                    .body(Full::new(Bytes::from(body)))
+                    .unwrap_or_else(|_| {
+                        Response::new(Full::new(Bytes::from_static(b"invalid mock response")))
+                    })
             }
-            builder
-                .body(Full::new(Bytes::from(route.body.clone())))
-                .unwrap_or_else(|_| {
-                    Response::new(Full::new(Bytes::from_static(b"invalid mock response")))
-                })
         }
         None => Response::builder()
             .status(StatusCode::NOT_FOUND)
@@ -169,6 +533,9 @@ pub async fn start_mock_server(
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let routes = state.routes.clone();
     let hits = state.hits.clone();
+    // Per-route position for "sequence" mode, reset with each server start.
+    let sequence: Arc<Mutex<std::collections::HashMap<String, usize>>> =
+        Arc::new(Mutex::new(std::collections::HashMap::new()));
 
     tokio::spawn(async move {
         let mut shutdown_rx = shutdown_rx;
@@ -181,10 +548,17 @@ pub async fn start_mock_server(
                     let Ok((stream, _)) = accepted else { continue };
                     let routes = routes.clone();
                     let hits = hits.clone();
+                    let sequence = sequence.clone();
                     let app = app.clone();
                     tokio::spawn(async move {
                         let service = service_fn(move |req| {
-                            handle(req, routes.clone(), hits.clone(), app.clone())
+                            handle(
+                                req,
+                                routes.clone(),
+                                hits.clone(),
+                                sequence.clone(),
+                                app.clone(),
+                            )
                         });
                         let _ = hyper::server::conn::http1::Builder::new()
                             .serve_connection(TokioIo::new(stream), service)

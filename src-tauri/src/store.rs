@@ -125,6 +125,51 @@ pub struct MockRoute {
     /// Folder name; routes are labelled by their path instead.
     #[serde(default)]
     pub name: String,
+
+    // --- Behaviour beyond replaying a fixed body -------------------------
+    // These live together in one JSON column, so adding another mock feature
+    // does not mean another schema migration.
+    /// "static", "template", "sequence" or "proxy".
+    #[serde(default)]
+    pub mode: String,
+    /// Base URL that "proxy" mode forwards to.
+    #[serde(default)]
+    pub proxy_target: String,
+    /// Query pairs that must all be present, in `a=1&b=2` form.
+    #[serde(default)]
+    pub match_query: String,
+    /// Headers that must all be present with these values.
+    #[serde(default)]
+    pub match_headers: Vec<Header>,
+    /// Substring the request body must contain.
+    #[serde(default)]
+    pub match_body: String,
+    /// Percentage of matching requests answered with a 500 instead.
+    #[serde(default)]
+    pub fail_percent: u8,
+    /// Answer preflights and add permissive CORS headers.
+    #[serde(default)]
+    pub cors: bool,
+}
+
+/// The `advanced` column: everything above that is not its own column.
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct MockAdvanced {
+    #[serde(default)]
+    mode: String,
+    #[serde(default)]
+    proxy_target: String,
+    #[serde(default)]
+    match_query: String,
+    #[serde(default)]
+    match_headers: Vec<Header>,
+    #[serde(default)]
+    match_body: String,
+    #[serde(default)]
+    fail_percent: u8,
+    #[serde(default)]
+    cors: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -484,6 +529,7 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         "ALTER TABLE mock_routes ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE mock_routes ADD COLUMN is_folder INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE mock_routes ADD COLUMN name TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE mock_routes ADD COLUMN advanced TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE monitors ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE monitors ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE monitors ADD COLUMN sig TEXT NOT NULL DEFAULT ''",
@@ -1280,13 +1326,18 @@ pub fn read_mock_routes(conn: &Connection, workspace_id: &str) -> Result<Vec<Moc
     let mut stmt = conn
         .prepare(
             "SELECT id, enabled, method, path, status, headers, body, delay_ms,
-                    parent_id, is_folder, name
+                    parent_id, is_folder, name, advanced
              FROM mock_routes WHERE workspace_id = ?1 AND deleted = 0 ORDER BY position",
         )
         .map_err(to_err)?;
     let routes = stmt
         .query_map(params![workspace_id], |row| {
             let headers: String = row.get(5)?;
+            let advanced: MockAdvanced = row
+                .get::<_, String>(11)
+                .ok()
+                .and_then(|raw| serde_json::from_str(&raw).ok())
+                .unwrap_or_default();
             Ok(MockRoute {
                 id: row.get(0)?,
                 enabled: row.get::<_, i64>(1)? != 0,
@@ -1302,6 +1353,13 @@ pub fn read_mock_routes(conn: &Connection, workspace_id: &str) -> Result<Vec<Moc
                     .filter(|value| !value.is_empty()),
                 is_folder: row.get::<_, i64>(9).unwrap_or(0) != 0,
                 name: row.get::<_, String>(10).unwrap_or_default(),
+                mode: advanced.mode,
+                proxy_target: advanced.proxy_target,
+                match_query: advanced.match_query,
+                match_headers: advanced.match_headers,
+                match_body: advanced.match_body,
+                fail_percent: advanced.fail_percent,
+                cors: advanced.cors,
             })
         })
         .map_err(to_err)?
@@ -1325,6 +1383,16 @@ pub fn save_mock_routes(
     for (position, route) in routes.iter().enumerate() {
         kept.insert(route.id.clone());
         let headers = serde_json::to_string(&route.headers).map_err(to_err)?;
+        let advanced = serde_json::to_string(&MockAdvanced {
+            mode: route.mode.clone(),
+            proxy_target: route.proxy_target.clone(),
+            match_query: route.match_query.clone(),
+            match_headers: route.match_headers.clone(),
+            match_body: route.match_body.clone(),
+            fail_percent: route.fail_percent,
+            cors: route.cors,
+        })
+        .map_err(to_err)?;
         let sig = sig_of(&[
             &(route.enabled as i64).to_string(),
             &route.method,
@@ -1337,13 +1405,16 @@ pub fn save_mock_routes(
             route.parent_id.as_deref().unwrap_or(""),
             &(route.is_folder as i64).to_string(),
             &route.name,
+            &advanced,
         ]);
         if existing.get(&route.id) != Some(&sig) {
             tx.execute(
                 "INSERT INTO mock_routes
                    (id, workspace_id, enabled, method, path, status, headers, body, delay_ms,
-                    position, updated_at, deleted, sig, parent_id, is_folder, name)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, ?13, ?14, ?15)
+                    position, updated_at, deleted, sig, parent_id, is_folder, name,
+                    advanced)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, ?13, ?14, ?15,
+                         ?16)
                  ON CONFLICT(id) DO UPDATE SET
                    workspace_id = excluded.workspace_id,
                    enabled      = excluded.enabled,
@@ -1359,7 +1430,8 @@ pub fn save_mock_routes(
                    sig          = excluded.sig,
                    parent_id    = excluded.parent_id,
                    is_folder    = excluded.is_folder,
-                   name         = excluded.name",
+                   name         = excluded.name,
+                   advanced     = excluded.advanced",
                 params![
                     route.id,
                     workspace_id,
@@ -1375,7 +1447,8 @@ pub fn save_mock_routes(
                     sig,
                     route.parent_id.as_deref().unwrap_or(""),
                     route.is_folder as i64,
-                    route.name
+                    route.name,
+                    advanced
                 ],
             )
             .map_err(to_err)?;

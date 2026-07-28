@@ -759,7 +759,49 @@ export interface MockRoute {
   isFolder: boolean;
   /** Folder name; routes are labelled by their path instead. */
   name: string;
+  /** How the response is produced. */
+  mode: MockMode;
+  /** Base URL that "proxy" mode forwards to. */
+  proxyTarget: string;
+  /** Query pairs that must all be present, in `a=1&b=2` form. */
+  matchQuery: string;
+  /** Headers that must all be present with these values. */
+  matchHeaders: Header[];
+  /** Substring the request body must contain. */
+  matchBody: string;
+  /** Percentage of matching requests answered with a 500 instead. */
+  failPercent: number;
+  /** Answer preflights and add permissive CORS headers. */
+  cors: boolean;
 }
+
+export type MockMode = "static" | "template" | "sequence" | "proxy";
+
+export const MOCK_MODES: { value: MockMode; label: string; blurb: string }[] = [
+  {
+    value: "static",
+    label: "Static",
+    blurb: "Always returns the body exactly as written.",
+  },
+  {
+    value: "template",
+    label: "Dynamic",
+    blurb:
+      "Substitutes {{uuid}}, {{now}}, {{timestamp}}, {{randomInt}}, {{method}}, {{path}}, {{body}}, {{query.name}} and {{header.name}} per request.",
+  },
+  {
+    value: "sequence",
+    label: "Sequence",
+    blurb:
+      "Cycles through bodies separated by a line containing ---, so successive calls differ. Useful for polling a job that eventually completes.",
+  },
+  {
+    value: "proxy",
+    label: "Proxy",
+    blurb:
+      "Forwards the request to a real server and returns its response, so part of an API can be mocked while the rest passes through.",
+  },
+];
 
 export interface MockStatus {
   running: boolean;
