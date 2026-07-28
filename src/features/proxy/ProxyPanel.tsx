@@ -14,6 +14,7 @@ import {
   trustCaCertificate,
 } from "../../shared/lib/api";
 import { Input, Select } from "../../shared/components/Field";
+import { Modal } from "../../shared/components/Modal";
 import { ProxySetupGuide } from "./ProxySetupGuide";
 import type { Flow, Header, ProxyStatus } from "../../shared/types";
 import { generateCode } from "../../shared/lib/codegen";
@@ -29,6 +30,19 @@ function shortPath(url: string): string {
   } catch {
     return url;
   }
+}
+
+/**
+ * Status filter: a class like "2xx", the literal "none" for requests with no
+ * response, or an exact code typed by the user.
+ */
+function matchesStatus(status: number | null, filter: string): boolean {
+  if (filter === "none") return status == null;
+  if (status == null) return false;
+  if (filter.endsWith("xx")) {
+    return Math.floor(status / 100) === Number(filter[0]);
+  }
+  return String(status) === filter;
 }
 
 /** Path without the query, plus the query as pairs — long URLs are unreadable
@@ -81,6 +95,7 @@ export function ProxyPanel() {
   const [appFilter, setAppFilter] = useState("");
   const [methodFilter, setMethodFilter] = useState("");
   const [hostFilter, setHostFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
   const [detailTab, setDetailTab] = useState<
     "query" | "reqHeaders" | "reqBody" | "resHeaders" | "resBody"
   >("reqHeaders");
@@ -213,11 +228,17 @@ export function ProxyPanel() {
   const methods = unique(flows.map((flow) => flow.method));
   const hosts = unique(flows.map((flow) => flow.host));
 
+  // The address other devices can actually reach; loopback is the fallback
+  // only when there is no network interface to offer.
+  const lanAddress =
+    status.addresses.find((address) => address !== "127.0.0.1") ?? "127.0.0.1";
+
   const needle = query.trim().toLowerCase();
   const visible = flows.filter((flow) => {
     if (appFilter && flow.app !== appFilter) return false;
     if (methodFilter && flow.method !== methodFilter) return false;
     if (hostFilter && flow.host !== hostFilter) return false;
+    if (statusFilter && !matchesStatus(flow.status, statusFilter)) return false;
     if (needle === "") return true;
     return (
       flow.url.toLowerCase().includes(needle) ||
@@ -268,62 +289,59 @@ export function ProxyPanel() {
   return (
     <div className="flex min-h-0 w-full flex-col">
       {/* Toolbar */}
-      <div className="flex flex-none items-center gap-3 border-b border-edge p-3 px-4">
+      <div className="flex flex-none items-center gap-2 border-b border-edge px-3 py-1.5">
         <button
           onClick={toggle}
           disabled={busy}
-          className={`rounded-md px-4 py-2 font-semibold text-white disabled:opacity-50 ${
+          className={`rounded px-3 py-1 text-xs font-semibold text-white disabled:opacity-50 ${
             status.running ? "bg-err" : "bg-brand hover:bg-brand-bright"
           }`}
         >
-          {status.running ? "Stop proxy" : "Start proxy"}
+          {status.running ? "Stop" : "Start proxy"}
         </button>
-        <label className="flex items-center gap-1.5 text-xs text-muted">
-          Port
-          <input
-            type="number"
-            value={port}
-            disabled={status.running}
-            onChange={(e) => setPort(Number(e.target.value))}
-            className="w-[70px] rounded-md border border-edge bg-elevated px-2 py-1.5 font-mono text-ink outline-none focus:border-brand disabled:opacity-60"
-          />
-        </label>
+        <Input
+          size="compact"
+          mono
+          type="number"
+          value={port}
+          disabled={status.running}
+          title="Port"
+          onChange={(e) => setPort(Number(e.target.value))}
+          className="w-[68px] flex-none"
+        />
         <span
-          className={`h-2.5 w-2.5 rounded-full ${
-            status.running ? "bg-ok shadow-[0_0_8px_var(--color-ok)]" : "bg-muted"
+          className={`h-2 w-2 flex-none rounded-full ${
+            status.running ? "bg-ok shadow-[0_0_6px_var(--color-ok)]" : "bg-muted"
           }`}
         />
-        <span className="font-mono text-xs text-muted">
+        <span className="truncate font-mono text-[11px] text-muted">
           {status.running
-            ? `Listening on ${(status.addresses.length > 0
-                ? status.addresses
-                : ["127.0.0.1"]
-              )
-                .map((address) => `${address}:${status.port}`)
-                .join("  ·  ")}`
+            ? // The loopback address is implied and never what a phone needs,
+              // so only the reachable address is worth the space.
+              `${lanAddress}:${status.port}`
             : "Stopped"}
         </span>
         <div className="flex-1" />
         <button
           onClick={() => setShowSetup((prev) => !prev)}
-          className={`rounded-md border px-3 py-1.5 ${
+          className={`rounded border px-2 py-1 text-[11px] ${
             showSetup
               ? "border-brand bg-elevated text-ink"
-              : "border-edge bg-elevated hover:border-brand"
+              : "border-edge text-muted hover:border-brand hover:text-ink"
           }`}
         >
           Setup guide
         </button>
         <button
           onClick={loadCert}
-          className="rounded-md border border-edge bg-elevated px-3 py-1.5 hover:border-brand"
+          className="rounded border border-edge px-2 py-1 text-[11px] text-muted hover:border-brand hover:text-ink"
         >
           Certificate…
         </button>
         <button
           onClick={onClear}
           disabled={flows.length === 0}
-          className="rounded-md border border-edge bg-elevated px-3 py-1.5 hover:border-brand disabled:opacity-45"
+          className="rounded border border-edge px-2 py-1 text-[11px] text-muted hover:border-brand hover:text-ink disabled:opacity-45"
         >
           Clear ({flows.length})
         </button>
@@ -336,60 +354,52 @@ export function ProxyPanel() {
       )}
 
       {showCert && (
-        <div className="m-4 rounded-lg border border-edge bg-panel p-4">
-          <div className="flex items-center justify-between">
-            <strong>Trust the APIKit CA to intercept HTTPS</strong>
-            <button
-              onClick={() => setShowCert(false)}
-              className="px-1.5 text-lg text-muted hover:text-err"
-            >
-              ×
-            </button>
+        <Modal
+          title="Trust the APIKit CA to intercept HTTPS"
+          onClose={() => setShowCert(false)}
+        >
+          <div className="p-4 text-xs">
+            <ol className="list-decimal pl-5 leading-7 text-muted">
+              <li>
+                Point the device's HTTP proxy at{" "}
+                <code className="rounded bg-elevated px-1.5 font-mono text-ink">
+                  {lanAddress}:{status.port ?? port}
+                </code>
+                . This computer is configured automatically.
+              </li>
+              <li>
+                Install &amp; trust the CA certificate on disk at:
+                <br />
+                <code className="rounded bg-elevated px-1.5 font-mono text-ink">
+                  {certPath}
+                </code>
+              </li>
+              <li>
+                Per-platform instructions (macOS, Windows, Linux, Android, iOS)
+                are in the <strong>Setup guide</strong>.
+              </li>
+            </ol>
+            <details className="mt-3">
+              <summary className="cursor-pointer text-muted">Show PEM</summary>
+              <pre className="mt-2 max-h-[300px] overflow-auto rounded-md border border-edge bg-panel p-2 font-mono text-[11.5px]">
+                {certPem}
+              </pre>
+            </details>
           </div>
-          <ol className="my-2 list-decimal pl-5 leading-7 text-muted">
-            <li>
-              Point your browser/system HTTP proxy at{" "}
-              <code className="rounded bg-elevated px-1.5 font-mono text-ink">
-                {(status.addresses.length > 0
-                  ? status.addresses
-                  : ["127.0.0.1"]
-                )
-                  .map((address) => `${address}:${port}`)
-                  .join(" or ")}
-              </code>
-              .
-            </li>
-            <li>
-              Install &amp; trust the CA certificate on disk at:
-              <br />
-              <code className="rounded bg-elevated px-1.5 font-mono text-ink">
-                {certPath}
-              </code>
-            </li>
-            <li>
-              Per-platform instructions (macOS, Windows, Linux, Android, iOS)
-              are in the <strong>Setup guide</strong>.
-            </li>
-          </ol>
-          <details>
-            <summary className="cursor-pointer">Show PEM</summary>
-            <pre className="mt-2 max-h-[300px] overflow-auto rounded-md border border-edge bg-panel p-2 font-mono text-[11.5px]">
-              {certPem}
-            </pre>
-          </details>
-        </div>
+        </Modal>
       )}
 
-      {showSetup ? (
-        <ProxySetupGuide
-          host={
-            status.addresses.find((address) => address !== "127.0.0.1") ??
-            "127.0.0.1"
-          }
-          port={status.port ?? port}
-        />
-      ) : (
-      /* Flow list + detail */
+      {showSetup && (
+        <Modal
+          title="Proxy setup guide"
+          width="max-w-4xl"
+          onClose={() => setShowSetup(false)}
+        >
+          <ProxySetupGuide host={lanAddress} port={status.port ?? port} />
+        </Modal>
+      )}
+
+      {/* Flow list + detail */}
       <div
         ref={splitRef}
         className="grid min-h-0 flex-1"
@@ -435,6 +445,19 @@ export function ProxyPanel() {
             </Select>
             <Select
               size="compact"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-28 flex-none cursor-pointer"
+            >
+              <option value="">All status</option>
+              <option value="2xx">2xx success</option>
+              <option value="3xx">3xx redirect</option>
+              <option value="4xx">4xx client</option>
+              <option value="5xx">5xx server</option>
+              <option value="none">No response</option>
+            </Select>
+            <Select
+              size="compact"
               value={appFilter}
               onChange={(e) => setAppFilter(e.target.value)}
               className="w-36 flex-none cursor-pointer"
@@ -449,13 +472,15 @@ export function ProxyPanel() {
             {(needle !== "" ||
               appFilter !== "" ||
               methodFilter !== "" ||
-              hostFilter !== "") && (
+              hostFilter !== "" ||
+              statusFilter !== "") && (
               <button
                 onClick={() => {
                   setQuery("");
                   setAppFilter("");
                   setMethodFilter("");
                   setHostFilter("");
+                  setStatusFilter("");
                 }}
                 className="rounded px-1.5 py-1 text-[11px] text-muted hover:text-ink"
                 title="Clear filters"
@@ -675,7 +700,6 @@ export function ProxyPanel() {
           )}
         </div>
       </div>
-      )}
     </div>
   );
 }
