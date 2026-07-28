@@ -235,7 +235,21 @@ export interface AppSettings {
   startAtLogin: boolean;
   /** Name attached to comments you write. */
   userName: string;
+  // SMTP, for monitor email notifications. The password lives in the OS
+  // keychain (`secretGet("smtpPassword")`), never here.
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecurity: SmtpSecurity;
+  smtpUsername: string;
+  /** The From address of outgoing mail. Empty → the username doubles as it. */
+  smtpFrom: string;
+  /** Display name next to the From address. */
+  smtpFromName: string;
+  /** Default recipients for monitors that don't set their own, comma-separated. */
+  smtpDefaultTo: string;
 }
+
+export type SmtpSecurity = "ssl" | "starttls" | "none";
 
 // --- LAN sync ----------------------------------------------------------------
 
@@ -325,6 +339,13 @@ export function defaultSettings(): AppSettings {
     runInBackground: false,
     startAtLogin: false,
     userName: "",
+    smtpHost: "",
+    smtpPort: 587,
+    smtpSecurity: "starttls",
+    smtpUsername: "",
+    smtpFrom: "",
+    smtpFromName: "APIKit",
+    smtpDefaultTo: "",
   };
 }
 
@@ -512,6 +533,14 @@ export interface Monitor {
   /** Environment to run against; null uses whichever is active. */
   environmentId: string | null;
   notify: boolean;
+  /** Email when the monitor starts failing and again when it recovers. */
+  emailNotify: boolean;
+  /** Recipients, comma-separated. */
+  emailTo: string;
+  /** Email only after this many consecutive failed checks (flap damping). */
+  emailAfter: number;
+  /** Also email when the monitor turns healthy again. */
+  emailRecovery: boolean;
   // Used when `targetKind` is "url" — an endpoint checked directly, without a
   // saved request behind it.
   method: string;

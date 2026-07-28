@@ -1,6 +1,6 @@
 [package]
 name = "apikit"
-version = "0.1.0"
+version = "0.1.1"
 description = "API client, mock server, load tester and HTTPS proxy"
 authors = ["you"]
 edition = "2021"
@@ -47,6 +47,16 @@ reqwest = { version = "0.12", default-features = false, features = [
 
 # Parsing the `Expires` attribute of a Set-Cookie header
 httpdate = "1"
+
+# SMTP, for monitor email notifications. rustls keeps it off OpenSSL, matching
+# the rest of the app.
+lettre = { version = "0.11", default-features = false, features = [
+    "builder",
+    "smtp-transport",
+    "hostname",
+    "tokio1",
+    "tokio1-rustls-tls",
+] }
 
 # Streaming protocols: WebSocket / Socket.IO / GraphQL subscriptions, and MQTT
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }

@@ -4,9 +4,13 @@ import { useMemo, useState } from "react";
 import { KeyValueEditor } from "../../shared/components/KeyValueEditor";
 import { isFolder } from "../../shared/lib/tree";
 import { methodColor } from "../../shared/lib/ui";
+import { TagInput } from "../../shared/components/TagInput";
+import { smtpConfigured } from "../../shared/lib/email";
 import { useCollection } from "../../shared/state/collection";
 import { useEnvironments } from "../../shared/state/environments";
 import { useMonitors } from "../../shared/state/monitors";
+import { useSettings } from "../../shared/state/settings";
+import { SmtpSettings } from "./SmtpSettings";
 import {
   HTTP_METHODS,
   MONITOR_INTERVALS,
@@ -16,6 +20,13 @@ import {
   type TreeNode,
 } from "../../shared/types";
 
+
+type MonitorSection = "checks" | "email";
+
+const SECTIONS: { key: MonitorSection; label: string; icon: string }[] = [
+  { key: "checks", label: "Health checks", icon: "◉" },
+  { key: "email", label: "Email alerts", icon: "✉" },
+];
 
 function options(
   nodes: TreeNode[],
@@ -72,7 +83,10 @@ export function MonitorPanel() {
     useMonitors();
   const { tree } = useCollection();
   const { environments } = useEnvironments();
+  const { settings } = useSettings();
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [section, setSection] = useState<MonitorSection>("checks");
+  const smtpOk = smtpConfigured(settings);
 
   const byMonitor = useMemo(() => {
     const map = new Map<string, MonitorRun[]>();
@@ -99,11 +113,40 @@ export function MonitorPanel() {
   }
 
   return (
-    <div className="min-h-0 w-full overflow-auto">
+    <div className="flex min-h-0 w-full">
+      {/* Section list, mirroring the Settings page */}
+      <nav className="flex w-52 flex-none flex-col border-r border-edge p-3">
+        <h1 className="px-2 pb-3 text-base font-semibold">Monitors</h1>
+        {SECTIONS.map((entry) => (
+          <button
+            key={entry.key}
+            onClick={() => setSection(entry.key)}
+            className={`flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-xs ${
+              section === entry.key
+                ? "bg-elevated font-medium text-ink"
+                : "text-muted hover:bg-elevated/60 hover:text-ink"
+            }`}
+          >
+            <span className="w-4 flex-none text-center text-[13px]">
+              {entry.icon}
+            </span>
+            {entry.label}
+          </button>
+        ))}
+        <p className="mt-auto px-2 text-[11px] leading-relaxed text-muted">
+          Checks run while the app is open.
+        </p>
+      </nav>
+
+      <div className="min-h-0 min-w-0 flex-1 overflow-auto">
       <div className="mx-auto flex max-w-4xl flex-col gap-3 p-5">
+        {section === "email" && <SmtpSettings />}
+
+        {section === "checks" && (
+        <>
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-base font-semibold">Monitors</h1>
+            <h1 className="text-base font-semibold">Health checks</h1>
             <p className="text-xs text-muted">
               Scheduled health checks. They run while the app is open and record
               every result.
@@ -303,6 +346,14 @@ export function MonitorPanel() {
                       label="Notify on failure"
                     />
 
+                    <Toggle
+                      checked={!!monitor.emailNotify}
+                      onChange={(emailNotify) =>
+                        update(monitor.id, { emailNotify })
+                      }
+                      label="Email"
+                    />
+
                     <div className="ml-auto flex items-center gap-2">
                       <button
                         onClick={() => clearHistory(monitor.id)}
@@ -318,6 +369,58 @@ export function MonitorPanel() {
                       </button>
                     </div>
                   </div>
+
+                  {monitor.emailNotify && (
+                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted">Email to</span>
+                        <TagInput
+                          value={monitor.emailTo ?? ""}
+                          onChange={(emailTo) =>
+                            update(monitor.id, { emailTo })
+                          }
+                          placeholder={
+                            settings.smtpDefaultTo.trim() !== ""
+                              ? `default: ${settings.smtpDefaultTo}`
+                              : "you@example.com"
+                          }
+                          className="w-96 max-w-full"
+                        />
+                      </div>
+                      <label className="flex items-center gap-1.5 text-xs text-muted">
+                        Alert after
+                        <Select
+                          value={monitor.emailAfter ?? 1}
+                          onChange={(e) =>
+                            update(monitor.id, {
+                              emailAfter: Number(e.target.value),
+                            })
+                          }
+                          className="wrk-field cursor-pointer"
+                        >
+                          <option value={1}>the first failure</option>
+                          <option value={2}>2 failures in a row</option>
+                          <option value={3}>3 failures in a row</option>
+                          <option value={5}>5 failures in a row</option>
+                        </Select>
+                      </label>
+                      <Toggle
+                        checked={monitor.emailRecovery ?? true}
+                        onChange={(emailRecovery) =>
+                          update(monitor.id, { emailRecovery })
+                        }
+                        label="Email on recovery"
+                      />
+                      {!smtpOk && (
+                        <button
+                          onClick={() => setSection("email")}
+                          className="text-[11px] text-err underline-offset-2 hover:underline"
+                        >
+                          Set up SMTP under Email alerts first
+                        </button>
+                      )}
+                    </div>
+                  )}
 
                   {monitor.targetKind === "url" && (
                     <div className="mt-3 rounded border border-edge p-3">
@@ -445,6 +548,9 @@ export function MonitorPanel() {
             </section>
           );
         })}
+        </>
+        )}
+      </div>
       </div>
     </div>
   );

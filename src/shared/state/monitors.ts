@@ -7,6 +7,11 @@
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { clearMonitorRuns, recordMonitorRun, saveMonitors } from "../lib/api";
+import {
+  monitorRecipients,
+  sendMonitorEmail,
+  smtpConfigured,
+} from "../lib/email";
 import { executeRequest, isHealthy } from "../lib/execute";
 import { notifyError } from "../lib/notify";
 import { createSaver } from "../lib/save";
@@ -157,6 +162,10 @@ export const useMonitorsStore = create<MonitorsStore>()((set, get) => {
           enabled: false,
           environmentId: useEnvironmentsStore.getState().activeId,
           notify: true,
+          emailNotify: false,
+          emailTo: "",
+          emailAfter: 1,
+          emailRecovery: true,
           method: "GET",
           url: "",
           headers: [],
@@ -241,11 +250,40 @@ export const useMonitorsStore = create<MonitorsStore>()((set, get) => {
             : detail || "all checks passed",
       };
 
+      // How many checks in a row were failing before this one, read before the
+      // new run is inserted.
+      let priorFails = 0;
+      for (const candidate of get().runs) {
+        if (candidate.monitorId !== monitor.id) continue;
+        if (candidate.ok) break;
+        priorFails += 1;
+      }
+
       set({ runs: [run, ...get().runs].slice(0, 500) });
       recordMonitorRun(run).catch((e) =>
         notifyError("Could not record the monitor result", e),
       );
       if (!run.ok && monitor.notify) notifyFailure(monitor, run.detail);
+
+      // Email exactly once per incident: when the failure streak reaches the
+      // monitor's threshold, and (optionally) once more on recovery. Repeat
+      // failures beyond the threshold stay silent, so a 30-second monitor
+      // cannot flood an inbox.
+      const threshold = Math.max(1, monitor.emailAfter ?? 1);
+      const streak = run.ok ? priorFails : priorFails + 1;
+      const shouldEmail = run.ok
+        ? priorFails >= threshold && (monitor.emailRecovery ?? true)
+        : streak === threshold;
+      if (
+        monitor.emailNotify &&
+        shouldEmail &&
+        monitorRecipients(settings, monitor) !== "" &&
+        smtpConfigured(settings)
+      ) {
+        sendMonitorEmail(settings, monitor, run, streak).catch((e) =>
+          notifyError(`Could not email about ${monitor.name}`, e),
+        );
+      }
 
       inFlight.delete(monitor.id);
       const busy = new Set(get().busy);

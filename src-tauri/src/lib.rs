@@ -1,5 +1,6 @@
 mod background;
 mod cookies;
+mod email;
 mod github;
 mod http_client;
 mod load;
@@ -147,6 +148,8 @@ pub fn run() {
             secrets::secret_set,
             secrets::secret_get,
             secrets::secret_delete,
+            email::send_email,
+            email::smtp_check,
             store::set_setting,
             background::set_background_mode,
             background::background_mode,

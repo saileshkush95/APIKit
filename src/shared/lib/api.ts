@@ -246,6 +246,33 @@ export function secretDelete(key: string): Promise<void> {
   return invoke<void>("secret_delete", { key });
 }
 
+// --- Email -------------------------------------------------------------------
+
+export interface SmtpSpec {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  security: string;
+  from: string;
+  fromName: string;
+}
+
+/** Sends a plain-text email; `to` may be several addresses, comma-separated. */
+export function sendEmail(
+  smtp: SmtpSpec,
+  to: string,
+  subject: string,
+  body: string,
+): Promise<void> {
+  return invoke<void>("send_email", { smtp, to, subject, body });
+}
+
+/** Connects and authenticates without sending anything. */
+export function smtpCheck(smtp: SmtpSpec): Promise<void> {
+  return invoke<void>("smtp_check", { smtp });
+}
+
 // --- Live sync ---------------------------------------------------------------
 
 /** Newest change timestamp locally, polled to notice edits worth pushing. */
