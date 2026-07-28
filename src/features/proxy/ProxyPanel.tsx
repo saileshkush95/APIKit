@@ -31,6 +31,25 @@ function shortPath(url: string): string {
   }
 }
 
+/** Path without the query, plus the query as pairs — long URLs are unreadable
+ *  as one string but perfectly clear as a path and a table. */
+function splitUrl(url: string): {
+  origin: string;
+  path: string;
+  params: Header[];
+} {
+  try {
+    const u = new URL(url);
+    return {
+      origin: u.origin,
+      path: u.pathname,
+      params: Array.from(u.searchParams, ([name, value]) => ({ name, value })),
+    };
+  } catch {
+    return { origin: "", path: url, params: [] };
+  }
+}
+
 function HeaderTable({ headers }: { headers: Header[] }) {
   if (headers.length === 0)
     return <div className="p-2 text-muted">None</div>;
@@ -60,8 +79,10 @@ export function ProxyPanel() {
   const [port, setPort] = useState(8080);
   const [query, setQuery] = useState("");
   const [appFilter, setAppFilter] = useState("");
+  const [methodFilter, setMethodFilter] = useState("");
+  const [hostFilter, setHostFilter] = useState("");
   const [detailTab, setDetailTab] = useState<
-    "reqHeaders" | "reqBody" | "resHeaders" | "resBody"
+    "query" | "reqHeaders" | "reqBody" | "resHeaders" | "resBody"
   >("reqHeaders");
   // Percentage of the width given to the flow list, remembered across sessions.
   const [split, setSplit] = useState(() => {
@@ -184,15 +205,19 @@ export function ProxyPanel() {
     }
   }
 
-  // Every app seen so far, so the filter offers real choices rather than a
-  // fixed list.
-  const apps = Array.from(
-    new Set(flows.map((flow) => flow.app).filter(Boolean)),
-  ).sort();
+  // Each dropdown offers what has actually been captured, rather than a fixed
+  // list that is mostly empty.
+  const unique = (values: string[]) =>
+    Array.from(new Set(values.filter(Boolean))).sort();
+  const apps = unique(flows.map((flow) => flow.app));
+  const methods = unique(flows.map((flow) => flow.method));
+  const hosts = unique(flows.map((flow) => flow.host));
 
   const needle = query.trim().toLowerCase();
   const visible = flows.filter((flow) => {
     if (appFilter && flow.app !== appFilter) return false;
+    if (methodFilter && flow.method !== methodFilter) return false;
+    if (hostFilter && flow.host !== hostFilter) return false;
     if (needle === "") return true;
     return (
       flow.url.toLowerCase().includes(needle) ||
@@ -207,6 +232,9 @@ export function ProxyPanel() {
   useEffect(() => {
     function onMove(e: MouseEvent) {
       if (!dragging.current || !splitRef.current) return;
+      // A selection begun before the drag would otherwise keep extending.
+      e.preventDefault();
+      window.getSelection()?.removeAllRanges();
       const box = splitRef.current.getBoundingClientRect();
       const percent = ((e.clientX - box.left) / box.width) * 100;
       setSplit(Math.min(80, Math.max(20, percent)));
@@ -216,6 +244,7 @@ export function ProxyPanel() {
       dragging.current = false;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
+      document.body.style.webkitUserSelect = "";
       setSplit((current) => {
         localStorage.setItem("proxySplit", String(Math.round(current)));
         return current;
@@ -380,9 +409,35 @@ export function ProxyPanel() {
             />
             <Select
               size="compact"
+              value={methodFilter}
+              onChange={(e) => setMethodFilter(e.target.value)}
+              className="w-28 flex-none cursor-pointer"
+            >
+              <option value="">All methods</option>
+              {methods.map((method) => (
+                <option key={method} value={method}>
+                  {method}
+                </option>
+              ))}
+            </Select>
+            <Select
+              size="compact"
+              value={hostFilter}
+              onChange={(e) => setHostFilter(e.target.value)}
+              className="w-44 flex-none cursor-pointer"
+            >
+              <option value="">All hosts</option>
+              {hosts.map((host) => (
+                <option key={host} value={host}>
+                  {host}
+                </option>
+              ))}
+            </Select>
+            <Select
+              size="compact"
               value={appFilter}
               onChange={(e) => setAppFilter(e.target.value)}
-              className="w-40 flex-none cursor-pointer"
+              className="w-36 flex-none cursor-pointer"
             >
               <option value="">All apps</option>
               {apps.map((app) => (
@@ -391,11 +446,16 @@ export function ProxyPanel() {
                 </option>
               ))}
             </Select>
-            {(needle !== "" || appFilter !== "") && (
+            {(needle !== "" ||
+              appFilter !== "" ||
+              methodFilter !== "" ||
+              hostFilter !== "") && (
               <button
                 onClick={() => {
                   setQuery("");
                   setAppFilter("");
+                  setMethodFilter("");
+                  setHostFilter("");
                 }}
                 className="rounded px-1.5 py-1 text-[11px] text-muted hover:text-ink"
                 title="Clear filters"
@@ -465,10 +525,14 @@ export function ProxyPanel() {
         </div>
 
         <div
-          onMouseDown={() => {
+          onMouseDown={(e) => {
+            // Without this the drag starts a text selection in the table.
+            e.preventDefault();
             dragging.current = true;
             document.body.style.cursor = "col-resize";
             document.body.style.userSelect = "none";
+            // WKWebView still wants the prefixed property.
+            document.body.style.webkitUserSelect = "none";
           }}
           onDoubleClick={() => {
             setSplit(58);
@@ -486,9 +550,22 @@ export function ProxyPanel() {
           ) : (
             <>
               <div className="flex-none border-b border-edge p-3">
-                <h3 className="mb-2 break-all text-[13px] font-semibold">
-                  <span className="font-mono">{selected.method}</span>{" "}
-                  {selected.url}
+                <div className="mb-1 flex items-baseline gap-2">
+                  <span className="font-mono text-[13px] font-bold text-brand">
+                    {selected.method}
+                  </span>
+                  <span
+                    className="min-w-0 truncate font-mono text-[11px] text-muted"
+                    title={selected.url}
+                  >
+                    {splitUrl(selected.url).origin}
+                  </span>
+                </div>
+                <h3
+                  className="mb-2 line-clamp-2 font-mono text-[12.5px] font-semibold break-all"
+                  title={selected.url}
+                >
+                  {splitUrl(selected.url).path}
                 </h3>
                 <div className="mb-2 flex items-center gap-2 text-[11px] text-muted">
                   <span
@@ -536,6 +613,7 @@ export function ProxyPanel() {
               <div className="flex flex-none items-center gap-1 border-b border-edge px-2 py-1">
                 {(
                   [
+                    ["query", "Query", splitUrl(selected.url).params.length],
                     ["reqHeaders", "Headers", selected.requestHeaders.length],
                     ["reqBody", "Body", selected.requestBody ? 1 : 0],
                     ["resHeaders", "Resp. headers", selected.responseHeaders.length],
@@ -562,6 +640,14 @@ export function ProxyPanel() {
               </div>
 
               <div className="min-h-0 flex-1 overflow-auto p-3">
+                {detailTab === "query" &&
+                  (splitUrl(selected.url).params.length > 0 ? (
+                    <HeaderTable headers={splitUrl(selected.url).params} />
+                  ) : (
+                    <div className="p-4 text-center text-xs text-muted">
+                      No query parameters.
+                    </div>
+                  ))}
                 {detailTab === "reqHeaders" && (
                   <HeaderTable headers={selected.requestHeaders} />
                 )}
