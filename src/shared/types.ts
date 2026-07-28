@@ -730,6 +730,15 @@ export interface MockRoute {
   headers: Header[];
   body: string;
   delayMs: number;
+  /**
+   * Routes live in folders. The tree is stored flat — a folder is an entry with
+   * `isFolder`, everything points at its parent (null = root) — and depth-first
+   * order is also the order routes are matched in.
+   */
+  parentId: string | null;
+  isFolder: boolean;
+  /** Folder name; routes are labelled by their path instead. */
+  name: string;
 }
 
 export interface MockStatus {

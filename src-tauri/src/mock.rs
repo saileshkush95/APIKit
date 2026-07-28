@@ -65,9 +65,13 @@ fn method_matches(pattern: &str, method: &str) -> bool {
 }
 
 fn find_route<'a>(routes: &'a [MockRoute], method: &str, path: &str) -> Option<&'a MockRoute> {
-    routes
-        .iter()
-        .find(|r| r.enabled && method_matches(&r.method, method) && path_matches(&r.path, path))
+    // Folder rows carry no response; they only give the list its shape.
+    routes.iter().find(|r| {
+        !r.is_folder
+            && r.enabled
+            && method_matches(&r.method, method)
+            && path_matches(&r.path, path)
+    })
 }
 
 fn now_ms() -> u64 {

@@ -1,6 +1,14 @@
-import { Toggle } from "../../shared/components/Toggle";
 import { Input, Select } from "../../shared/components/Field";
 import { useEffect, useState } from "react";
+import { RouteTree } from "./RouteTree";
+import {
+  descendantIds,
+  flatten,
+  moveInto,
+  removeWithChildren,
+  reorder,
+  searchVisible,
+} from "./routeOps";
 import { KeyValueEditor } from "../../shared/components/KeyValueEditor";
 import {
   applyMockRoutes,
@@ -29,7 +37,7 @@ const MOCK_METHODS = [
   "OPTIONS",
 ];
 
-function newRoute(): MockRoute {
+function newRoute(parentId: string | null = null): MockRoute {
   return {
     id: newId(),
     enabled: true,
@@ -39,6 +47,20 @@ function newRoute(): MockRoute {
     headers: [{ name: "Content-Type", value: "application/json" }],
     body: '{\n  "ok": true\n}',
     delayMs: 0,
+    parentId,
+    isFolder: false,
+    name: "",
+  };
+}
+
+function newFolder(parentId: string | null = null): MockRoute {
+  return {
+    ...newRoute(parentId),
+    isFolder: true,
+    name: "New folder",
+    path: "",
+    body: "",
+    headers: [],
   };
 }
 
@@ -48,6 +70,10 @@ export function MockPanel() {
   const [routes, setRoutes] = useState<MockRoute[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
   const [status, setStatus] = useState<MockStatus>({
     running: false,
@@ -64,8 +90,19 @@ export function MockPanel() {
     workspaceDataOnce(workspaceId)
       .then((workspace) => {
         if (cancelled) return;
-        setRoutes(workspace.mockRoutes);
-        setSelectedId(workspace.mockRoutes[0]?.id ?? null);
+        // Rows saved before folders existed have no parent; normalise so the
+        // tree walk sees them at the root.
+        setRoutes(
+          workspace.mockRoutes.map((route) => ({
+            ...route,
+            parentId: route.parentId ?? null,
+            isFolder: route.isFolder ?? false,
+            name: route.name ?? "",
+          })),
+        );
+        setSelectedId(
+          workspace.mockRoutes.find((route) => !route.isFolder)?.id ?? null,
+        );
         const savedPort = Number(workspace.settings[SETTINGS.mockPort]);
         if (Number.isFinite(savedPort) && savedPort > 0) setPort(savedPort);
       })
@@ -117,48 +154,154 @@ export function MockPanel() {
   }
 
   function update(id: string, patch: Partial<MockRoute>) {
-    setRoutes((prev) =>
-      prev.map((route) => (route.id === id ? { ...route, ...patch } : route)),
-    );
+    setRoutes((prev) => {
+      // The matcher reads each route's own flag, so switching a folder off has
+      // to reach the routes inside it.
+      const cascade =
+        patch.enabled !== undefined &&
+        prev.find((route) => route.id === id)?.isFolder
+          ? new Set(descendantIds(prev, id))
+          : new Set<string>();
+      return prev.map((route) =>
+        route.id === id
+          ? { ...route, ...patch }
+          : cascade.has(route.id)
+            ? { ...route, enabled: patch.enabled! }
+            : route,
+      );
+    });
+  }
+
+  /** New items land inside the selected folder, else beside the selection. */
+  function targetParent(): string | null {
+    const current = routes.find((route) => route.id === selectedId);
+    if (!current) return null;
+    return current.isFolder ? current.id : (current.parentId ?? null);
   }
 
   function addRoute() {
-    const route = newRoute();
-    setRoutes((prev) => [...prev, route]);
+    const route = newRoute(targetParent());
+    setRoutes((prev) => reorder([...prev, route]));
     setSelectedId(route.id);
+    setChecked(new Set());
   }
 
+  function addFolder() {
+    const folder = newFolder(targetParent());
+    setRoutes((prev) => reorder([...prev, folder]));
+    setSelectedId(folder.id);
+    setRenamingId(folder.id);
+  }
+
+  /** Click, ⌘-click and shift-click, matching the collection sidebar. */
+  function selectRow(id: string, event: React.MouseEvent) {
+    const visible = flatten(routes, collapsed).map((item) => item.route.id);
+    if (event.shiftKey && selectedId) {
+      const from = visible.indexOf(selectedId);
+      const to = visible.indexOf(id);
+      if (from !== -1 && to !== -1) {
+        const [start, end] = from < to ? [from, to] : [to, from];
+        setChecked(new Set(visible.slice(start, end + 1)));
+        setSelectedId(id);
+        return;
+      }
+    }
+    if (event.metaKey || event.ctrlKey) {
+      setChecked((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        if (selectedId && !next.has(selectedId)) next.add(selectedId);
+        return next;
+      });
+      setSelectedId(id);
+      return;
+    }
+    setChecked(new Set());
+    setSelectedId(id);
+  }
+
+  /** Everything a bulk action applies to: the multi-selection, or the row. */
+  function actionIds(): string[] {
+    if (checked.size > 0) return Array.from(checked);
+    return selectedId ? [selectedId] : [];
+  }
+
+  function bulkSetEnabled(enabled: boolean) {
+    const ids = new Set(
+      actionIds().flatMap((id) => [id, ...descendantIds(routes, id)]),
+    );
+    setRoutes((prev) =>
+      prev.map((route) =>
+        ids.has(route.id) ? { ...route, enabled } : route,
+      ),
+    );
+  }
+
+  function bulkDelete() {
+    const ids = actionIds();
+    setRoutes((prev) => removeWithChildren(prev, ids));
+    if (selectedId && ids.includes(selectedId)) setSelectedId(null);
+    setChecked(new Set());
+  }
+
+  function bulkDuplicate() {
+    const ids = actionIds();
+    // Copies land beside the originals, with fresh ids for the whole subtree.
+    setRoutes((prev) => {
+      const copies: MockRoute[] = [];
+      for (const id of ids) {
+        const source = prev.find((route) => route.id === id);
+        if (!source) continue;
+        const remap = new Map<string, string>();
+        for (const oldId of [id, ...descendantIds(prev, id)]) {
+          remap.set(oldId, newId());
+        }
+        for (const oldId of remap.keys()) {
+          const original = prev.find((route) => route.id === oldId);
+          if (!original) continue;
+          copies.push({
+            ...original,
+            id: remap.get(oldId)!,
+            parentId:
+              original.id === id
+                ? (source.parentId ?? null)
+                : (remap.get(original.parentId ?? "") ?? null),
+            name: original.id === id && original.name ? `${original.name} copy` : original.name,
+          });
+        }
+      }
+      return reorder([...prev, ...copies]);
+    });
+    setChecked(new Set());
+  }
+
+  function move(ids: string[], parentId: string | null, beforeId: string | null) {
+    setRoutes((prev) => moveInto(prev, ids, parentId, beforeId));
+  }
+
+  function rename(id: string, value: string) {
+    const trimmed = value.trim();
+    if (trimmed !== "") {
+      const route = routes.find((candidate) => candidate.id === id);
+      update(id, route?.isFolder ? { name: trimmed } : { path: trimmed });
+    }
+    setRenamingId(null);
+  }
+
+  const visibleIds = searchVisible(routes, search);
   const selected = routes.find((r) => r.id === selectedId) ?? null;
+  const selectionCount = checked.size > 0 ? checked.size : selected ? 1 : 0;
   const baseUrl = status.port ? `http://127.0.0.1:${status.port}` : null;
 
   return (
     <div className="flex min-h-0 w-full flex-col">
       {/* Server controls */}
-      <div className="flex flex-none flex-wrap items-center gap-3 border-b border-edge px-4 py-2.5">
-        <span
-          className={`flex items-center gap-1.5 text-xs ${
-            status.running ? "text-ok" : "text-muted"
-          }`}
-        >
-          <span className="text-base leading-none">●</span>
-          {status.running ? "Running" : "Stopped"}
-        </span>
-
-        <label className="flex items-center gap-1.5 text-xs text-muted">
-          Port
-          <Input
-            type="number"
-            value={port}
-            disabled={status.running}
-            onChange={(e) => setPort(Number(e.target.value))}
-            className={"wrk-field w-24 font-mono disabled:opacity-50"}
-          />
-        </label>
-
+      <div className="flex flex-none flex-wrap items-center gap-2 border-b border-edge px-3 py-1.5">
         <button
           onClick={toggleServer}
           disabled={busy}
-          className={`rounded-md px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-50 ${
+          className={`rounded px-3 py-1 text-xs font-semibold text-white disabled:opacity-50 ${
             status.running
               ? "bg-err hover:opacity-90"
               : "bg-brand hover:bg-brand-bright"
@@ -167,21 +310,52 @@ export function MockPanel() {
           {status.running ? "Stop" : "Start"}
         </button>
 
-        {baseUrl && (
-          <span className="font-mono text-xs text-muted">
-            {baseUrl} · {status.hitCount} hit
-            {status.hitCount === 1 ? "" : "s"}
-          </span>
-        )}
+        <Input
+          size="compact"
+          mono
+          type="number"
+          value={port}
+          disabled={status.running}
+          title="Port"
+          onChange={(e) => setPort(Number(e.target.value))}
+          className="w-[68px] flex-none"
+        />
 
-        {error && <span className="text-xs text-err">{error}</span>}
+        <span
+          className={`h-2 w-2 flex-none rounded-full ${
+            status.running ? "bg-ok shadow-[0_0_6px_var(--color-ok)]" : "bg-muted"
+          }`}
+        />
+        <span className="truncate font-mono text-[11px] text-muted">
+          {baseUrl
+            ? `${baseUrl} · ${status.hitCount} hit${
+                status.hitCount === 1 ? "" : "s"
+              }`
+            : "Stopped"}
+        </span>
+
+        {error && <span className="text-[11px] text-err">{error}</span>}
       </div>
 
       <div className="flex min-h-0 flex-1">
         {/* Route list */}
-        <div className="flex w-64 flex-none flex-col border-r border-edge bg-panel">
-          <div className="flex flex-none items-center justify-between border-b border-edge px-3 py-1.5">
-            <span className="text-xs font-semibold text-muted">Routes</span>
+        <div className="flex w-72 flex-none flex-col border-r border-edge bg-panel">
+          <div className="flex flex-none items-center gap-1 border-b border-edge px-2 py-1">
+            <Input
+              size="compact"
+              value={search}
+              placeholder="Filter routes…"
+              spellCheck={false}
+              onChange={(e) => setSearch(e.target.value)}
+              className="min-w-0 flex-1"
+            />
+            <button
+              onClick={addFolder}
+              className="rounded px-1.5 py-1 text-[11px] leading-none text-muted hover:bg-elevated hover:text-ink"
+              title="New folder"
+            >
+              🗀+
+            </button>
             <button
               onClick={addRoute}
               className="rounded px-1.5 text-base leading-none text-muted hover:bg-elevated hover:text-ink"
@@ -190,57 +364,118 @@ export function MockPanel() {
               +
             </button>
           </div>
-          <div className="min-h-0 flex-1 overflow-auto">
-            {routes.length === 0 && (
-              <p className="px-3 py-3 text-xs leading-relaxed text-muted">
-                No routes yet. Add one to start serving canned responses.
-              </p>
-            )}
-            {routes.map((route) => (
-              <div
-                key={route.id}
-                onClick={() => setSelectedId(route.id)}
-                className={`flex cursor-default items-center gap-2 px-3 py-1.5 text-xs ${
-                  route.id === selectedId
-                    ? "bg-elevated text-ink"
-                    : "text-muted hover:bg-elevated/60"
-                } ${route.enabled ? "" : "opacity-50"}`}
-              >
-                <Toggle
-                  checked={route.enabled}
-                  onChange={(enabled) => update(route.id, { enabled })}
-                  onClick={(e) => e.stopPropagation()}
-                  title="Serve this route"
-                />
-                <span
-                  className={`w-10 flex-none font-mono text-[10px] font-bold ${methodColor(
-                    route.method,
-                  )}`}
+
+          {selectionCount > 1 && (
+            <div className="flex flex-none flex-wrap items-center gap-1 border-b border-edge bg-elevated/50 px-2 py-1 text-[11px]">
+              <span className="text-muted">{selectionCount} selected</span>
+              <div className="ml-auto flex items-center gap-1">
+                <button
+                  onClick={() => bulkSetEnabled(true)}
+                  className="rounded px-1.5 py-0.5 text-muted hover:text-ink"
+                  title="Enable"
                 >
-                  {route.method}
-                </span>
-                <span className="min-w-0 flex-1 truncate font-mono">
-                  {route.path}
-                </span>
-                <span className={`flex-none font-mono ${statusColor(route.status)}`}>
-                  {route.status}
-                </span>
+                  On
+                </button>
+                <button
+                  onClick={() => bulkSetEnabled(false)}
+                  className="rounded px-1.5 py-0.5 text-muted hover:text-ink"
+                  title="Disable"
+                >
+                  Off
+                </button>
+                <button
+                  onClick={bulkDuplicate}
+                  className="rounded px-1.5 py-0.5 text-muted hover:text-ink"
+                >
+                  Duplicate
+                </button>
+                <button
+                  onClick={bulkDelete}
+                  className="rounded px-1.5 py-0.5 text-muted hover:text-err"
+                >
+                  Delete
+                </button>
+                <button
+                  onClick={() => setChecked(new Set())}
+                  className="rounded px-1 py-0.5 text-muted hover:text-ink"
+                  title="Clear selection"
+                >
+                  ✕
+                </button>
               </div>
-            ))}
+            </div>
+          )}
+
+          <div className="min-h-0 flex-1 overflow-auto">
+            <RouteTree
+              routes={routes}
+              selectedId={selectedId}
+              checked={checked}
+              collapsed={collapsed}
+              visibleIds={visibleIds}
+              onSelect={selectRow}
+              onToggleCollapse={(id) =>
+                setCollapsed((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(id)) next.delete(id);
+                  else next.add(id);
+                  return next;
+                })
+              }
+              onUpdate={update}
+              onMove={move}
+              onContextMenu={(id, e) => {
+                e.preventDefault();
+                setSelectedId(id);
+                setRenamingId(id);
+              }}
+              renamingId={renamingId}
+              onRename={rename}
+            />
           </div>
+
+          <p className="flex-none border-t border-edge px-2 py-1 text-[10px] leading-relaxed text-muted">
+            Drag to reorder or nest · right-click to rename · ⌘/shift-click to
+            multi-select
+          </p>
         </div>
 
         {/* Route editor */}
         <div className="flex min-w-0 flex-1 flex-col">
-          {selected ? (
+          {selected?.isFolder ? (
             <div className="min-h-0 flex-1 overflow-auto p-4">
-              <div className="mb-3 flex flex-wrap items-center gap-2">
+              <div className="mb-3 flex items-center gap-2">
+                <span className="text-base">📁</span>
+                <Input
+                  size="compact"
+                  value={selected.name}
+                  placeholder="Folder name"
+                  onChange={(e) => update(selected.id, { name: e.target.value })}
+                  className="w-64"
+                />
+                <button
+                  onClick={bulkDelete}
+                  className="ml-auto rounded border border-edge px-2 py-1 text-[11px] text-muted hover:border-err hover:text-err"
+                >
+                  Delete folder
+                </button>
+              </div>
+              <p className="text-[11px] leading-relaxed text-muted">
+                Folders group routes and do not serve anything themselves.
+                Turning a folder off disables every route inside it. Drag routes
+                onto a folder to move them in.
+              </p>
+            </div>
+          ) : selected ? (
+            <div className="min-h-0 flex-1 overflow-auto p-3">
+              <div className="mb-2 flex flex-wrap items-center gap-1.5">
                 <Select
+                  size="compact"
                   value={selected.method}
                   onChange={(e) =>
                     update(selected.id, { method: e.target.value })
                   }
-                  className={`wrk-field cursor-pointer font-mono font-bold ${methodColor(
+                  className={`w-24 flex-none cursor-pointer font-mono font-bold ${methodColor(
                     selected.method,
                   )}`}
                 >
@@ -251,28 +486,34 @@ export function MockPanel() {
                   ))}
                 </Select>
                 <Input
+                  size="compact"
+                  mono
                   value={selected.path}
                   spellCheck={false}
                   placeholder="/api/users/*"
                   onChange={(e) =>
                     update(selected.id, { path: e.target.value })
                   }
-                  className={"wrk-field min-w-0 flex-1 font-mono"}
+                  className="min-w-0 flex-1"
                 />
-                <label className="flex items-center gap-1.5 text-xs text-muted">
+                <label className="flex flex-none items-center gap-1 text-[11px] text-muted">
                   Status
                   <Input
+                    size="compact"
+                    mono
                     type="number"
                     value={selected.status}
                     onChange={(e) =>
                       update(selected.id, { status: Number(e.target.value) })
                     }
-                    className={"wrk-field w-20 font-mono"}
+                    className="w-16"
                   />
                 </label>
-                <label className="flex items-center gap-1.5 text-xs text-muted">
+                <label className="flex flex-none items-center gap-1 text-[11px] text-muted">
                   Delay
                   <Input
+                    size="compact"
+                    mono
                     type="number"
                     min={0}
                     value={selected.delayMs}
@@ -281,32 +522,27 @@ export function MockPanel() {
                         delayMs: Math.max(0, Number(e.target.value)),
                       })
                     }
-                    className={"wrk-field w-20 font-mono"}
+                    className="w-16"
                   />
                   ms
                 </label>
                 <button
-                  onClick={() => {
-                    setRoutes((prev) =>
-                      prev.filter((r) => r.id !== selected.id),
-                    );
-                    setSelectedId(null);
-                  }}
-                  className="rounded border border-edge px-2 py-1 text-xs text-muted hover:border-err hover:text-err"
+                  onClick={bulkDelete}
+                  className="flex-none rounded border border-edge px-2 py-1 text-[11px] text-muted hover:border-err hover:text-err"
                 >
                   Delete
                 </button>
               </div>
 
-              <p className="mb-3 text-[11px] text-muted">
+              <p className="mb-2 text-[11px] text-muted">
                 A trailing <code className="font-mono text-brand">*</code>{" "}
                 matches any suffix, e.g.{" "}
                 <code className="font-mono">/api/users/*</code>. Routes are
-                matched top to bottom.
+                matched top to bottom, in list order.
               </p>
 
-              <div className="mb-4">
-                <div className="mb-1 text-xs font-semibold text-muted">
+              <div className="mb-3">
+                <div className="mb-1 text-[11px] font-semibold text-muted">
                   Response headers
                 </div>
                 <KeyValueEditor
@@ -322,14 +558,14 @@ export function MockPanel() {
                 />
               </div>
 
-              <div className="mb-1 text-xs font-semibold text-muted">
+              <div className="mb-1 text-[11px] font-semibold text-muted">
                 Response body
               </div>
               <textarea
                 value={selected.body}
                 spellCheck={false}
                 onChange={(e) => update(selected.id, { body: e.target.value })}
-                className="h-56 w-full resize-y rounded-md border border-edge bg-panel p-2.5 font-mono text-[12.5px] leading-relaxed text-ink outline-none focus:border-brand"
+                className="h-56 w-full resize-y rounded-md border border-edge bg-panel p-2 font-mono text-[12px] leading-relaxed text-ink outline-none focus:border-brand"
               />
             </div>
           ) : (

@@ -115,6 +115,16 @@ pub struct MockRoute {
     pub headers: Vec<Header>,
     pub body: String,
     pub delay_ms: u64,
+    /// Routes are organised in folders. The tree is stored flat: a folder is a
+    /// row with `is_folder`, and every row points at its parent (`None` = root).
+    /// Depth-first `position` order is also the order routes are matched in.
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub is_folder: bool,
+    /// Folder name; routes are labelled by their path instead.
+    #[serde(default)]
+    pub name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -470,6 +480,10 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         "ALTER TABLE mock_routes ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE mock_routes ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE mock_routes ADD COLUMN sig TEXT NOT NULL DEFAULT ''",
+        // Folders: existing rows default to routes at the root.
+        "ALTER TABLE mock_routes ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE mock_routes ADD COLUMN is_folder INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE mock_routes ADD COLUMN name TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE monitors ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE monitors ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE monitors ADD COLUMN sig TEXT NOT NULL DEFAULT ''",
@@ -1265,7 +1279,8 @@ pub fn save_tabs(
 pub fn read_mock_routes(conn: &Connection, workspace_id: &str) -> Result<Vec<MockRoute>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, enabled, method, path, status, headers, body, delay_ms
+            "SELECT id, enabled, method, path, status, headers, body, delay_ms,
+                    parent_id, is_folder, name
              FROM mock_routes WHERE workspace_id = ?1 AND deleted = 0 ORDER BY position",
         )
         .map_err(to_err)?;
@@ -1281,6 +1296,12 @@ pub fn read_mock_routes(conn: &Connection, workspace_id: &str) -> Result<Vec<Moc
                 headers: serde_json::from_str(&headers).unwrap_or_default(),
                 body: row.get(6)?,
                 delay_ms: row.get::<_, i64>(7)? as u64,
+                parent_id: row
+                    .get::<_, String>(8)
+                    .ok()
+                    .filter(|value| !value.is_empty()),
+                is_folder: row.get::<_, i64>(9).unwrap_or(0) != 0,
+                name: row.get::<_, String>(10).unwrap_or_default(),
             })
         })
         .map_err(to_err)?
@@ -1313,13 +1334,16 @@ pub fn save_mock_routes(
             &route.body,
             &route.delay_ms.to_string(),
             &position.to_string(),
+            route.parent_id.as_deref().unwrap_or(""),
+            &(route.is_folder as i64).to_string(),
+            &route.name,
         ]);
         if existing.get(&route.id) != Some(&sig) {
             tx.execute(
                 "INSERT INTO mock_routes
                    (id, workspace_id, enabled, method, path, status, headers, body, delay_ms,
-                    position, updated_at, deleted, sig)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12)
+                    position, updated_at, deleted, sig, parent_id, is_folder, name)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, ?13, ?14, ?15)
                  ON CONFLICT(id) DO UPDATE SET
                    workspace_id = excluded.workspace_id,
                    enabled      = excluded.enabled,
@@ -1332,7 +1356,10 @@ pub fn save_mock_routes(
                    position     = excluded.position,
                    updated_at   = excluded.updated_at,
                    deleted      = 0,
-                   sig          = excluded.sig",
+                   sig          = excluded.sig,
+                   parent_id    = excluded.parent_id,
+                   is_folder    = excluded.is_folder,
+                   name         = excluded.name",
                 params![
                     route.id,
                     workspace_id,
@@ -1345,7 +1372,10 @@ pub fn save_mock_routes(
                     route.delay_ms as i64,
                     position as i64,
                     now,
-                    sig
+                    sig,
+                    route.parent_id.as_deref().unwrap_or(""),
+                    route.is_folder as i64,
+                    route.name
                 ],
             )
             .map_err(to_err)?;
