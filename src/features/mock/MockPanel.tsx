@@ -15,6 +15,7 @@ import {
 import { KeyValueEditor } from "../../shared/components/KeyValueEditor";
 import {
   applyMockRoutes,
+  loadWorkspaceData,
   mockStatus,
   onMockHit,
   saveMockRoutes,
@@ -28,7 +29,7 @@ import {
   RESPONSE_HEADERS,
 } from "../../shared/lib/headerSuggestions";
 import { usePersist } from "../../shared/lib/persist";
-import { newId, SETTINGS, workspaceDataOnce } from "../../shared/lib/storage";
+import { newId, SETTINGS } from "../../shared/lib/storage";
 import { methodColor, statusColor } from "../../shared/lib/ui";
 import { useWorkspaceId } from "../../shared/state/workspaces";
 import {
@@ -114,7 +115,11 @@ export function MockPanel() {
 
   useEffect(() => {
     let cancelled = false;
-    workspaceDataOnce(workspaceId)
+    // A fresh read, not the shared once-per-session snapshot: that snapshot is
+    // taken at startup, so a second visit would load the routes from before
+    // this session's edits — and persistence would write them back over the
+    // newer ones.
+    loadWorkspaceData(workspaceId)
       .then((workspace) => {
         if (cancelled) return;
         // Rows saved before folders existed have no parent; normalise so the

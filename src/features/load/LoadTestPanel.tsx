@@ -16,9 +16,9 @@ import {
   SidebarShell,
   SIDEBAR_DEFAULT,
 } from "../client/SidebarShell";
-import { setSetting } from "../../shared/lib/api";
+import { loadWorkspaceData, setSetting } from "../../shared/lib/api";
 import { usePersist } from "../../shared/lib/persist";
-import { newId, SETTINGS, workspaceDataOnce } from "../../shared/lib/storage";
+import { newId, SETTINGS } from "../../shared/lib/storage";
 import { useWorkspaceId } from "../../shared/state/workspaces";
 import { environmentVars } from "../../shared/lib/vars";
 import { runAssertions } from "../../shared/lib/assertions";
@@ -123,7 +123,11 @@ export function LoadTestPanel() {
   useEffect(() => {
     let cancelled = false;
     setListReady(false);
-    workspaceDataOnce(workspaceId)
+    // A fresh read, not the shared once-per-session snapshot: that snapshot is
+    // taken at startup, so on a second visit it would hand back the state from
+    // before these tests were saved — and persistence would then write that
+    // stale list back over them.
+    loadWorkspaceData(workspaceId)
       .then((workspace) => {
         if (cancelled) return;
         const raw = workspace.settings[SETTINGS.loadTests];

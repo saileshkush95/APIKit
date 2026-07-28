@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { MockRoute } from "../../shared/types";
 
 export interface MenuState {
@@ -32,17 +32,24 @@ export function RouteContextMenu({
   onDelete,
   onSetEnabled,
 }: Props) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    function dismiss(event: MouseEvent | KeyboardEvent) {
-      if (event instanceof KeyboardEvent && event.key !== "Escape") return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    function onDown(event: MouseEvent) {
+      // Capture runs before the button's own click, so closing on any mousedown
+      // would unmount the menu and the item would never fire. Presses inside
+      // the menu are left to their buttons, which close it themselves.
+      if (panelRef.current?.contains(event.target as Node)) return;
       onClose();
     }
-    // Capture, so a click anywhere closes before it lands on a row.
-    window.addEventListener("mousedown", dismiss, true);
-    window.addEventListener("keydown", dismiss);
+    window.addEventListener("mousedown", onDown, true);
+    window.addEventListener("keydown", onKey);
     return () => {
-      window.removeEventListener("mousedown", dismiss, true);
-      window.removeEventListener("keydown", dismiss);
+      window.removeEventListener("mousedown", onDown, true);
+      window.removeEventListener("keydown", onKey);
     };
   }, [onClose]);
 
@@ -86,6 +93,7 @@ export function RouteContextMenu({
 
   return (
     <div
+      ref={panelRef}
       className="fixed z-50 min-w-44 overflow-hidden rounded-md border border-edge bg-elevated py-1 shadow-xl"
       // Kept inside the viewport when the click lands near an edge.
       style={{
