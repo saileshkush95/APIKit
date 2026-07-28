@@ -22,6 +22,7 @@ jobs:
       contents: write
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
+      id: ${{ steps.draft.outputs.id }}
     steps:
       - uses: actions/checkout@v4
 
@@ -37,6 +38,7 @@ jobs:
           fi
 
       - name: Create the draft release if it does not exist
+        id: draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -45,6 +47,11 @@ jobs:
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft \
               --target "$GITHUB_SHA" --title "APIKit $tag" \
               --notes "Downloads for Windows, macOS (Intel and Apple Silicon) and Linux are attached below."
+          # The build jobs need the id, not the tag: a draft is not reachable
+          # by tag, which is why looking it up that way failed.
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+                 --jq ".[] | select(.tag_name == \"$tag\") | .id" | head -1)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
 
   build:
     needs: release
@@ -98,7 +105,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
-          tagName: ${{ needs.release.outputs.tag }}
+          releaseId: ${{ needs.release.outputs.id }}
           args: ${{ matrix.args }}
 
   # Only now does the release become visible to `releases/latest` — and so to
