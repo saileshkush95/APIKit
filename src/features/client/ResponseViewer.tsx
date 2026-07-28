@@ -769,6 +769,85 @@ function VirtualBody({
   );
   const gutterWidth = `${String(lines.length).length + 1}ch`;
 
+  /**
+   * One logical line. `wrapped` lines have no fixed height — a long value can
+   * occupy several visual rows, and forcing the height made it overflow onto
+   * the line below.
+   */
+  function lineContent(actual: number, wrapped: boolean) {
+    const close = spans?.[actual] ?? null;
+    const isCollapsed = close !== null && collapsed.has(actual);
+    return (
+      <div
+        style={wrapped ? undefined : { height: LINE_HEIGHT }}
+        // pl-3 reserves the caret's column: absolutely positioned, it would
+        // otherwise sit on top of the line's first characters.
+        className={`relative min-w-0 flex-1 pr-3 pl-3 ${
+          wrapped ? "break-words whitespace-pre-wrap" : "whitespace-pre"
+        } ${canCopyNodes ? "cursor-pointer hover:bg-elevated/60" : ""}`}
+        title={canCopyNodes ? "Click to copy this node" : undefined}
+        onClick={() => {
+          if (!canCopyNodes) return;
+          // A drag to select text must never trigger a copy.
+          const selection = window.getSelection();
+          if (selection && !selection.isCollapsed) return;
+          onCopyNode(actual);
+        }}
+      >
+        {close !== null && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              toggle(actual);
+            }}
+            style={{ height: LINE_HEIGHT, lineHeight: `${LINE_HEIGHT}px` }}
+            className="absolute top-0 left-0 w-3 text-center text-[9px] text-muted select-none hover:text-ink"
+            title={isCollapsed ? "Expand" : "Collapse"}
+          >
+            {isCollapsed ? "▸" : "▾"}
+          </button>
+        )}
+        {renderLine(lines[actual], lang, search)}
+        {isCollapsed && (
+          <span className="text-muted select-none">
+            {" … "}
+            {lines[close].trim()}
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  const gutterCell = (actual: number) => (
+    <div
+      aria-hidden
+      style={{ width: gutterWidth }}
+      className="flex-none border-r border-edge bg-elevated/40 px-2 text-right text-muted select-none"
+    >
+      {actual + 1}
+    </div>
+  );
+
+  // Wrapped bodies pair each number with its own line, so a value spanning
+  // several visual rows cannot drift out of step with the gutter.
+  if (!canVirtualize) {
+    return (
+      <div
+        ref={viewportRef}
+        onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+        className="h-full overflow-auto font-mono text-[12.5px]"
+        style={{ lineHeight: `${LINE_HEIGHT}px` }}
+      >
+        {rows.map((actual) => (
+          <div key={actual} className="flex items-stretch">
+            {gutterCell(actual)}
+            {lineContent(actual, wrap)}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div
       ref={viewportRef}
@@ -776,81 +855,14 @@ function VirtualBody({
       className="h-full overflow-auto font-mono text-[12.5px]"
       style={{ lineHeight: `${LINE_HEIGHT}px` }}
     >
-      <div
-        style={{
-          height: canVirtualize ? rowCount * LINE_HEIGHT : undefined,
-          position: "relative",
-        }}
-      >
-        <div
-          style={{
-            transform: canVirtualize
-              ? `translateY(${first * LINE_HEIGHT}px)`
-              : undefined,
-          }}
-          className="flex"
-        >
-          <div
-            aria-hidden
-            style={{ width: gutterWidth }}
-            className="flex-none border-r border-edge bg-elevated/40 px-2 text-right text-muted select-none"
-          >
-            {rows.map((actual) => (
-              <div key={actual}>{actual + 1}</div>
-            ))}
-          </div>
-          <div
-            className={`min-w-0 flex-1 px-3 ${
-              wrap && !canVirtualize
-                ? "break-words whitespace-pre-wrap"
-                : "whitespace-pre"
-            }`}
-          >
-            {rows.map((actual) => {
-              const close = spans?.[actual] ?? null;
-              const isCollapsed = close !== null && collapsed.has(actual);
-              return (
-                <div
-                  key={actual}
-                  style={{ height: LINE_HEIGHT }}
-                  // pl-3 reserves the caret's column: absolutely positioned, it
-                  // otherwise sits on top of the line's first characters.
-                  className={`relative pl-3 ${
-                    canCopyNodes ? "cursor-pointer hover:bg-elevated/60" : ""
-                  }`}
-                  title={canCopyNodes ? "Click to copy this node" : undefined}
-                  onClick={() => {
-                    if (!canCopyNodes) return;
-                    // A drag to select text must never trigger a copy.
-                    const selection = window.getSelection();
-                    if (selection && !selection.isCollapsed) return;
-                    onCopyNode(actual);
-                  }}
-                >
-                  {close !== null && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggle(actual);
-                      }}
-                      style={{ height: LINE_HEIGHT, lineHeight: `${LINE_HEIGHT}px` }}
-                      className="absolute top-0 left-0 w-3 text-center text-[9px] text-muted select-none hover:text-ink"
-                      title={isCollapsed ? "Expand" : "Collapse"}
-                    >
-                      {isCollapsed ? "▸" : "▾"}
-                    </button>
-                  )}
-                  {renderLine(lines[actual], lang, search)}
-                  {isCollapsed && (
-                    <span className="text-muted select-none">
-                      {" … "}
-                      {lines[close].trim()}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+      <div style={{ height: rowCount * LINE_HEIGHT, position: "relative" }}>
+        <div style={{ transform: `translateY(${first * LINE_HEIGHT}px)` }}>
+          {rows.map((actual) => (
+            <div key={actual} className="flex items-stretch">
+              {gutterCell(actual)}
+              {lineContent(actual, false)}
+            </div>
+          ))}
         </div>
       </div>
     </div>
