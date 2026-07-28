@@ -1,4 +1,5 @@
 mod background;
+mod client_app;
 mod cookies;
 mod email;
 mod github;

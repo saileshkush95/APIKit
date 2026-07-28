@@ -47,7 +47,7 @@ function guides(host: string, port: number): Record<Platform, Guide> {
         {
           title: "Mark it Always Trust",
           detail:
-            'Double-click "WebRequestKit CA" → Trust → When using this certificate → Always Trust.',
+            'Double-click "APIKit CA" → Trust → When using this certificate → Always Trust.',
         },
       ],
       note: "The iOS Simulator uses the Mac keychain, so this covers it too.",
@@ -106,50 +106,84 @@ function guides(host: string, port: number): Record<Platform, Guide> {
     android: {
       proxy: [
         {
-          title: "Wi-Fi → long-press network → Modify network",
-          detail: `Advanced options → Proxy → Manual → hostname ${host}, port ${port}.`,
+          title: "Same Wi-Fi network as this computer",
+          detail: `The phone must reach ${host} — that is this machine's address on the network. 127.0.0.1 would mean the phone itself and never works. A firewall here can also block it.`,
         },
         {
-          title: "Emulator",
+          title: "Settings → Network & internet → tap ⚙ beside your network",
           detail:
-            "Use 10.0.2.2 for this machine, or launch with a proxy flag:",
+            "On older versions: Settings → Wi-Fi → long-press the network → Modify network.",
+        },
+        {
+          title: "Advanced options → Proxy → Manual",
+          detail: `Proxy hostname ${host}, proxy port ${port}, then Save. Leave "Bypass proxy for" empty.`,
+        },
+        {
+          title: "Emulator instead of a phone",
+          detail:
+            "The emulator reaches this machine at 10.0.2.2, not the LAN address:",
           code: `emulator -avd <name> -http-proxy http://10.0.2.2:${port}`,
         },
       ],
       certificate: [
         {
-          title: "Install the CA",
-          detail:
-            "Transfer the .pem (rename to .crt if needed) → Settings → Security → Encryption & credentials → Install a certificate → CA certificate.",
+          title: "Get the file onto the phone",
+          detail: `Serve it from the folder holding the exported certificate, then browse to http://${host}:8000/ on the phone. Email or USB work too. Rename .pem to .crt if Android refuses to open it.`,
+          code: "python3 -m http.server 8000",
         },
         {
-          title: "Android 7+ : apps must opt in to user CAs",
+          title: "Security & privacy → Encryption & credentials",
           detail:
-            "Your own debug builds can trust user certificates with a network security config:",
+            "Install a certificate → CA certificate → Install anyway → pick the file. Searching Settings for “certificate” finds it on any device. A persistent “Network may be monitored” notice afterwards is expected.",
+        },
+        {
+          title: "Android 7+ : apps ignore user CAs by default",
+          detail:
+            "This is the step that catches people out — the certificate is installed correctly and apps still fail. Browsers honour it; other apps need your own debug build to opt in, via res/xml/network_security_config.xml referenced from <application android:networkSecurityConfig=…>:",
           code: `<network-security-config>\n  <debug-overrides>\n    <trust-anchors>\n      <certificates src="user" />\n      <certificates src="system" />\n    </trust-anchors>\n  </debug-overrides>\n</network-security-config>`,
         },
       ],
-      note: "Third-party apps you did not build cannot be intercepted this way — that is by design.",
+      note: "Third-party apps you did not build cannot be intercepted this way — that is by design, not a fault in APIKit.",
     },
     ios: {
       proxy: [
         {
-          title: "Settings → Wi-Fi → ⓘ → Configure Proxy → Manual",
-          detail: `Server ${host}, port ${port}, then Save.`,
+          title: "Same Wi-Fi network as this computer",
+          detail: `The device must reach ${host}, this machine's address on the network. If nothing arrives, check the firewall here.`,
+        },
+        {
+          title: "Settings → Wi-Fi → ⓘ beside the connected network",
+          detail: "Scroll down to Configure Proxy → Manual.",
+        },
+        {
+          title: `Server ${host}, Port ${port}, Authentication off`,
+          detail:
+            "Then tap Save at the top right — it is easy to miss, and nothing applies without it.",
         },
       ],
       certificate: [
         {
-          title: "Install the profile",
-          detail:
-            "AirDrop or download the .pem on the device, then Settings → Profile Downloaded → Install.",
+          title: "Download it in Safari (not Chrome)",
+          detail: `Only Safari can install profiles. Serve the certificate from this computer and open http://${host}:8000/ on the device; AirDrop works too. iOS will say “Profile Downloaded”.`,
+          code: "python3 -m http.server 8000",
         },
         {
-          title: "Enable full trust (required)",
+          title: "Settings → Profile Downloaded → Install",
           detail:
-            "Settings → General → About → Certificate Trust Settings → enable WebRequestKit CA. HTTPS keeps failing until this is done.",
+            "It sits near the top, under your name. Enter your passcode, then Install again. If the banner is missing: Settings → General → VPN & Device Management.",
+        },
+        {
+          title: "Enable full trust — the step everyone misses",
+          detail:
+            "Settings → General → About → scroll to the bottom → Certificate Trust Settings → switch on “APIKit CA”. Until this is on, the certificate is installed but not trusted and every HTTPS request still fails.",
+        },
+        {
+          title: "When you are finished",
+          detail:
+            "Configure Proxy → Off, and remove the CA: Settings → General → VPN & Device Management → the profile → Remove Profile.",
         },
       ],
+      note: "The Simulator uses the Mac's own network settings and keychain, so trusting the CA on macOS covers it — no proxy setup inside the simulator.",
     },
   };
 }

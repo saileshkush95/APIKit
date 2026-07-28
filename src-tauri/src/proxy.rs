@@ -43,6 +43,9 @@ pub struct Flow {
     pub method: String,
     pub url: String,
     pub host: String,
+    /// The application that made the request, or the device address for
+    /// clients elsewhere on the network.
+    pub app: String,
     pub request_headers: Vec<Header>,
     pub request_body: String,
     pub status: Option<u16>,
@@ -144,7 +147,7 @@ struct CaptureHandler {
 impl HttpHandler for CaptureHandler {
     async fn handle_request(
         &mut self,
-        _ctx: &HttpContext,
+        ctx: &HttpContext,
         req: Request<Body>,
     ) -> RequestOrResponse {
         let (parts, body) = req.into_parts();
@@ -175,6 +178,7 @@ impl HttpHandler for CaptureHandler {
             method: parts.method.to_string(),
             url,
             host,
+            app: crate::client_app::describe(ctx.client_addr),
             request_headers: headers_to_vec(&parts.headers),
             request_body: truncate_body(&bytes),
             status: None,

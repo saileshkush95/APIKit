@@ -124,21 +124,57 @@ Firefox and Chrome keep their own stores — import the certificate under
 
 ## Android
 
-**Proxy**
+### 0. Prerequisites
 
-1. Settings → Wi-Fi → long-press your network → **Modify network**.
-2. Advanced options → Proxy → **Manual**.
-3. Hostname = machine IP, Port = `8080` → Save.
+The phone and this computer must be on the **same Wi-Fi network**, and the proxy
+must be running (it listens on the LAN automatically). The Proxy tab's status
+line shows the address to use, e.g. `192.168.1.5:8080` — that IP is what the
+phone needs; `127.0.0.1` means "the phone itself" and will never work.
 
-**Certificate**
+If nothing arrives later, a firewall on this computer is the usual cause. On
+macOS: System Settings → Network → Firewall → Options → allow APIKit.
 
-1. Transfer the `.pem` to the device (rename to `.crt` if the installer ignores
-   it), or serve it over HTTP and download it in the browser.
-2. Settings → Security → **Encryption & credentials** → *Install a certificate*
-   → **CA certificate** → confirm the warning → select the file.
+### 1. Point the phone at the proxy
 
-**Android 7+ caveat:** apps only trust user-installed CAs if their network
-security config opts in. Your own debug builds can allow it with:
+1. Settings → **Network & internet** → Internet → tap the ⚙ beside your network.
+   (Older versions: Settings → Wi-Fi → long-press the network → *Modify network*.)
+2. **Advanced options** → Proxy → **Manual**.
+3. Proxy hostname = this computer's IP, Proxy port = `8080` → **Save**.
+
+Leave "Bypass proxy for" empty while testing.
+
+### 2. Get the certificate onto the phone
+
+Easiest route, no cables: with the proxy running and the phone already
+configured above, open `http://apikit.setup` — actually, simplest is to serve
+the file from this computer:
+
+```sh
+# in the folder holding the exported certificate
+python3 -m http.server 8000
+```
+
+Then browse to `http://<computer-ip>:8000/` on the phone and tap the `.pem`
+file. Alternatively email it to yourself or copy it over USB. If Android
+refuses to open a `.pem`, rename it to `.crt` first.
+
+### 3. Install it as a CA
+
+Settings → **Security & privacy** → More security settings → **Encryption &
+credentials** → *Install a certificate* → **CA certificate** → *Install anyway*
+(confirming the warning) → pick the file.
+
+The exact path varies by manufacturer; searching Settings for "certificate"
+finds it on every device. Success looks like a persistent "Network may be
+monitored" notice — that is expected while the CA is installed.
+
+### 4. Android 7+ : apps must opt in to user CAs
+
+This is the step that surprises people. Since Android 7, apps **ignore
+user-installed CAs by default**, so a correctly installed certificate still
+produces SSL errors in most apps (Chrome and other browsers do honour it).
+
+For an app you build yourself, add a network security config:
 
 ```xml
 <!-- res/xml/network_security_config.xml -->
@@ -152,34 +188,84 @@ security config opts in. Your own debug builds can allow it with:
 </network-security-config>
 ```
 
-Reference it from the manifest's `<application
-android:networkSecurityConfig="@xml/network_security_config">`. Third-party apps
-you do not build cannot be intercepted this way — that is by design.
+and reference it from the manifest:
 
-Emulators: use `10.0.2.2` for the host machine, or start with
-`emulator -avd <name> -http-proxy http://10.0.2.2:8080`.
+```xml
+<application android:networkSecurityConfig="@xml/network_security_config">
+```
+
+`debug-overrides` applies only to debuggable builds, so release builds stay
+strict. Third-party apps you did not build cannot be intercepted this way —
+that is by design, not a bug in APIKit.
+
+### Emulator
+
+The emulator reaches the host at **`10.0.2.2`**, not the LAN IP:
+
+```sh
+emulator -avd <name> -http-proxy http://10.0.2.2:8080
+```
+
+Install the CA the same way (drag the file onto the emulator window), and note
+that a cold boot or wipe removes it again.
 
 ---
 
 ## iOS / iPadOS
 
-**Proxy**
+### 0. Prerequisites
 
-1. Settings → Wi-Fi → tap the ⓘ next to your network.
-2. **Configure Proxy → Manual**.
-3. Server = machine IP, Port = `8080` → Save.
+Same Wi-Fi network as this computer, proxy running, and use the LAN address
+shown in the Proxy tab (e.g. `192.168.1.5:8080`).
 
-**Certificate**
+### 1. Point the device at the proxy
 
-1. Serve or AirDrop the `.pem` to the device and open it in Safari.
-2. Settings → **Profile Downloaded** → Install.
-3. **Then trust it explicitly:** Settings → General → About → **Certificate Trust
-   Settings** → enable full trust for "APIKit CA".
+1. Settings → **Wi-Fi** → tap the ⓘ beside the connected network.
+2. Scroll down → **Configure Proxy** → **Manual**.
+3. Server = this computer's IP, Port = `8080`. Leave Authentication off.
+4. **Save** (top right) — it is easy to miss, and nothing applies without it.
 
-Step 3 is required — without it every HTTPS request still fails.
+### 2. Download the certificate
 
-Simulators trust the Mac's system keychain, so installing the CA on macOS (above)
-covers the iOS Simulator too.
+With the proxy now configured, open **Safari** (this must be Safari — Chrome
+cannot install profiles) and fetch the certificate. Serving it from this
+computer is the least fiddly way:
+
+```sh
+# in the folder holding the exported certificate
+python3 -m http.server 8000
+```
+
+Browse to `http://<computer-ip>:8000/` and tap the `.pem` file. AirDrop works
+too. iOS will say "Profile Downloaded".
+
+### 3. Install the profile
+
+Settings → **Profile Downloaded** (near the top, just under your name) →
+**Install** → enter your passcode → Install → Install. If that banner is
+missing: Settings → General → VPN & Device Management → find the profile there.
+
+### 4. Enable full trust — the step everyone misses
+
+Settings → General → **About** → scroll to the bottom → **Certificate Trust
+Settings** → turn the switch **on** for "APIKit CA" → Continue.
+
+Until this switch is on, the certificate is installed but not trusted, and
+**every HTTPS request still fails**. If your app shows SSL errors after
+installing the profile, this is almost always why.
+
+### Simulator
+
+The iOS Simulator uses the Mac's own network settings and keychain, so trusting
+the CA on macOS (above) covers it — no proxy configuration inside the simulator.
+To be certain, drag the `.pem` onto the running simulator window and it will be
+installed there too.
+
+### Turning it off
+
+Remove the proxy (Configure Proxy → Off) and delete the certificate: Settings →
+General → VPN & Device Management → the profile → **Remove Profile**. Leaving a
+trusted CA installed on a phone is a real security risk.
 
 ---
 

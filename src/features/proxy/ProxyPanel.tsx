@@ -57,6 +57,8 @@ export function ProxyPanel() {
     addresses: [],
   });
   const [port, setPort] = useState(8080);
+  const [query, setQuery] = useState("");
+  const [appFilter, setAppFilter] = useState("");
   const [flows, setFlows] = useState<Flow[]>([]);
   const [selected, setSelected] = useState<Flow | null>(null);
   const [busy, setBusy] = useState(false);
@@ -171,6 +173,24 @@ export function ProxyPanel() {
     }
   }
 
+  // Every app seen so far, so the filter offers real choices rather than a
+  // fixed list.
+  const apps = Array.from(
+    new Set(flows.map((flow) => flow.app).filter(Boolean)),
+  ).sort();
+
+  const needle = query.trim().toLowerCase();
+  const visible = flows.filter((flow) => {
+    if (appFilter && flow.app !== appFilter) return false;
+    if (needle === "") return true;
+    return (
+      flow.url.toLowerCase().includes(needle) ||
+      flow.host.toLowerCase().includes(needle) ||
+      flow.method.toLowerCase().includes(needle) ||
+      String(flow.status ?? "").includes(needle)
+    );
+  });
+
   async function onClear() {
     await clearFlows();
     setFlows([]);
@@ -251,7 +271,7 @@ export function ProxyPanel() {
       {showCert && (
         <div className="m-4 rounded-lg border border-edge bg-panel p-4">
           <div className="flex items-center justify-between">
-            <strong>Trust the WebRequestKit CA to intercept HTTPS</strong>
+            <strong>Trust the APIKit CA to intercept HTTPS</strong>
             <button
               onClick={() => setShowCert(false)}
               className="px-1.5 text-lg text-muted hover:text-err"
@@ -304,11 +324,47 @@ export function ProxyPanel() {
       ) : (
       /* Flow list + detail */
       <div className="grid min-h-0 flex-1 grid-cols-[1.4fr_1fr]">
-        <div className="overflow-auto border-r border-edge">
+        <div className="flex min-h-0 flex-col border-r border-edge">
+          {/* Filters */}
+          <div className="flex flex-none items-center gap-2 border-b border-edge px-2 py-1.5">
+            <input
+              value={query}
+              placeholder="Filter by URL, host, method or status…"
+              spellCheck={false}
+              onChange={(e) => setQuery(e.target.value)}
+              className="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 font-mono text-[11px] text-ink outline-none focus:border-brand"
+            />
+            <select
+              value={appFilter}
+              onChange={(e) => setAppFilter(e.target.value)}
+              className="cursor-pointer rounded border border-edge bg-panel px-1.5 py-1 text-[11px] text-ink outline-none focus:border-brand"
+            >
+              <option value="">All apps</option>
+              {apps.map((app) => (
+                <option key={app} value={app}>
+                  {app}
+                </option>
+              ))}
+            </select>
+            {(needle !== "" || appFilter !== "") && (
+              <button
+                onClick={() => {
+                  setQuery("");
+                  setAppFilter("");
+                }}
+                className="rounded px-1.5 py-1 text-[11px] text-muted hover:text-ink"
+                title="Clear filters"
+              >
+                ✕ {visible.length}/{flows.length}
+              </button>
+            )}
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-auto">
           <table className="w-full border-collapse">
             <thead>
               <tr className="text-left text-[11px] font-medium text-muted">
-                {["#", "Method", "Host", "Path", "Status", "Time"].map((h) => (
+                {["#", "App", "Method", "Host", "Path", "Status", "Time"].map((h) => (
                   <th
                     key={h}
                     className="sticky top-0 border-b border-edge bg-panel p-2"
@@ -319,16 +375,18 @@ export function ProxyPanel() {
               </tr>
             </thead>
             <tbody>
-              {flows.length === 0 && (
+              {visible.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="p-6 text-center text-muted">
-                    {status.running
-                      ? "Waiting for traffic…"
-                      : "Start the proxy and route traffic through it."}
+                  <td colSpan={7} className="p-6 text-center text-muted">
+                    {flows.length > 0
+                      ? "No flows match the filter."
+                      : status.running
+                        ? "Waiting for traffic…"
+                        : "Start the proxy and route traffic through it."}
                   </td>
                 </tr>
               )}
-              {flows.map((f) => (
+              {visible.map((f) => (
                 <tr
                   key={f.id}
                   onClick={() => setSelected(f)}
@@ -337,6 +395,12 @@ export function ProxyPanel() {
                   }`}
                 >
                   <td className="p-2">{f.id}</td>
+                  <td
+                    className="max-w-[120px] truncate p-2 text-muted"
+                    title={f.app}
+                  >
+                    {f.app || "—"}
+                  </td>
                   <td className="p-2 font-mono">{f.method}</td>
                   <td className="max-w-[180px] truncate p-2 font-mono">
                     {f.host}
@@ -352,6 +416,7 @@ export function ProxyPanel() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
 
         <div className="overflow-auto">

@@ -78,6 +78,8 @@ export interface Flow {
   method: string;
   url: string;
   host: string;
+  /** The app that made the request, or a device address for network clients. */
+  app: string;
   requestHeaders: Header[];
   requestBody: string;
   status: number | null;
