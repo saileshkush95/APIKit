@@ -1,0 +1,65 @@
+name: Release
+
+# Builds APIKit for every platform and attaches the installers to a draft
+# GitHub release. Runs when a version tag is pushed (`git tag v0.1.0 &&
+# git push --tags`) or manually from the Actions tab.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest # Apple Silicon (M1 and later)
+            args: --target aarch64-apple-darwin
+          - platform: macos-latest # Intel, cross-compiled from the ARM runner
+            args: --target x86_64-apple-darwin
+          - platform: ubuntu-22.04 # .deb, .rpm and AppImage
+            args: ""
+          - platform: windows-latest # .msi and .exe (NSIS)
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # Both mac targets are installed so the Intel build can cross-compile.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # The two mac jobs share a runner OS but build different targets;
+          # keying the cache on args keeps them from evicting each other.
+          key: ${{ matrix.args }}
+
+      - name: Install frontend dependencies
+        run: bun install
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "APIKit v__VERSION__"
+          releaseBody: "See the assets below to download and install this version."
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
