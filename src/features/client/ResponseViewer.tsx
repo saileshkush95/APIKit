@@ -813,7 +813,9 @@ function VirtualBody({
                 <div
                   key={actual}
                   style={{ height: LINE_HEIGHT }}
-                  className={`relative ${
+                  // pl-3 reserves the caret's column: absolutely positioned, it
+                  // otherwise sits on top of the line's first characters.
+                  className={`relative pl-3 ${
                     canCopyNodes ? "cursor-pointer hover:bg-elevated/60" : ""
                   }`}
                   title={canCopyNodes ? "Click to copy this node" : undefined}

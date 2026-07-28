@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { desktop, drawsWindowControls } from "../lib/platform";
+import { drawsWindowControls } from "../lib/platform";
 
 /**
  * Minimise / maximise / close, drawn only where the window is undecorated.
@@ -66,10 +66,9 @@ export function WindowControls() {
 
   return (
     <div
-      className="flex h-full items-stretch"
+      className="flex h-full flex-none items-stretch"
       // Buttons must not drag the window out from under the pointer.
       data-tauri-drag-region={false}
-      style={{ marginRight: desktop === "windows" ? -16 : 0 }}
     >
       {buttons.map((button) => (
         <button
