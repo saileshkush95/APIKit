@@ -360,10 +360,10 @@ export function ResponseViewer({
   return (
     <>
       {/* Tabs + status */}
-      {/* Wraps rather than clipping: split side by side, this row is half as
+      {/* Scrolls rather than clipping: split side by side, this row is half as
           wide and every tab still has to be reachable. */}
-      <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-1 px-2 py-1">
-        <div className="flex flex-wrap gap-0.5">
+      <div className="flex flex-none items-center gap-3 px-2 py-1">
+        <div className="flex min-w-0 gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <Tab
             active={activeTab === "body"}
             onClick={() => onTabChange("body")}

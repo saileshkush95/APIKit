@@ -251,8 +251,8 @@ export function RequestPane({
    * disappearing around every send.
    */
   const placeholderTabs = (
-    <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-1 border-b border-edge px-2 py-1">
-      <div className="flex flex-wrap gap-0.5">
+    <div className="flex flex-none items-center gap-3 border-b border-edge px-2 py-1">
+      <div className="flex min-w-0 gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {["Body", "Cookies", "Request", "Headers", "Test Results"].map(
           (label, index) => (
             <span
@@ -512,7 +512,7 @@ export function RequestPane({
       >
         <div
           data-tour="request-tabs"
-          className="flex flex-none items-center gap-0.5 border-b border-edge px-2 py-1"
+          className="flex flex-none items-center gap-0.5 overflow-x-auto border-b border-edge px-2 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {visibleTabs.map((key) => (
             <PaneTab

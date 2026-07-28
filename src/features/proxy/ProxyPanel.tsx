@@ -3,6 +3,11 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   caCertificatePath,
   caTrusted,
+  onProxyHold,
+  resumeRequest,
+  setIntercept,
+  type HeldRequest,
+  type InterceptDecision,
   clearFlows,
   getCaCertificatePem,
   getFlows,
@@ -14,7 +19,9 @@ import {
   trustCaCertificate,
 } from "../../shared/lib/api";
 import { Input, Select } from "../../shared/components/Field";
+import { Toggle } from "../../shared/components/Toggle";
 import { Modal } from "../../shared/components/Modal";
+import { HeldRequestDialog } from "./HeldRequestDialog";
 import { ProxySetupGuide } from "./ProxySetupGuide";
 import type { Flow, Header, ProxyStatus } from "../../shared/types";
 import { generateCode } from "../../shared/lib/codegen";
@@ -96,6 +103,10 @@ export function ProxyPanel() {
   const [methodFilter, setMethodFilter] = useState("");
   const [hostFilter, setHostFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  // Breakpoints: hold matching requests so they can be edited before they go.
+  const [intercepting, setIntercepting] = useState(false);
+  const [interceptFilter, setInterceptFilter] = useState("");
+  const [heldQueue, setHeldQueue] = useState<HeldRequest[]>([]);
   const [detailTab, setDetailTab] = useState<
     "query" | "reqHeaders" | "reqBody" | "resHeaders" | "resBody"
   >("reqHeaders");
@@ -154,6 +165,10 @@ export function ProxyPanel() {
     proxyStatus().then(setStatus).catch(() => {});
     getFlows().then(setFlows).catch(() => {});
 
+    const unlistenHold = onProxyHold((held) =>
+      setHeldQueue((prev) => [...prev, held]),
+    );
+
     const unlistenPromise = onProxyFlow((flow) => {
       setFlows((prev) => [...prev, flow]);
       setStatus((s) => ({ ...s, flowCount: s.flowCount + 1 }));
@@ -161,8 +176,27 @@ export function ProxyPanel() {
 
     return () => {
       unlistenPromise.then((un) => un());
+      unlistenHold.then((un) => un());
     };
   }, []);
+
+  function toggleIntercept(enabled: boolean) {
+    setIntercepting(enabled);
+    setIntercept(enabled, interceptFilter).catch((e) =>
+      notifyError("Could not change breakpoints", e),
+    );
+    // Disabling releases whatever the backend was holding, so drop the queue.
+    if (!enabled) setHeldQueue([]);
+  }
+
+  function resolveHeld(decision: InterceptDecision) {
+    const held = heldQueue[0];
+    if (!held) return;
+    setHeldQueue((prev) => prev.slice(1));
+    resumeRequest(held.id, decision).catch((e) =>
+      notifyError("Could not resume the request", e),
+    );
+  }
 
   async function toggle() {
     setBusy(true);
@@ -322,6 +356,30 @@ export function ProxyPanel() {
             : "Stopped"}
         </span>
         <div className="flex-1" />
+        <label
+          className="flex flex-none cursor-pointer items-center gap-1.5 text-[11px] text-muted"
+          title="Hold matching requests so they can be edited, forwarded or dropped before they reach the server"
+        >
+          <Toggle
+            checked={intercepting}
+            onChange={toggleIntercept}
+            label="Breakpoints"
+          />
+        </label>
+        {intercepting && (
+          <Input
+            size="compact"
+            mono
+            value={interceptFilter}
+            placeholder="URL contains… (blank = all)"
+            spellCheck={false}
+            onChange={(e) => {
+              setInterceptFilter(e.target.value);
+              setIntercept(true, e.target.value).catch(() => {});
+            }}
+            className="w-52 flex-none"
+          />
+        )}
         <button
           onClick={() => setShowSetup((prev) => !prev)}
           className={`rounded border px-2 py-1 text-[11px] ${
@@ -351,6 +409,14 @@ export function ProxyPanel() {
         <div className="m-3 whitespace-pre-wrap rounded-md border border-err bg-err/10 p-3 font-mono text-xs text-red-300">
           {error}
         </div>
+      )}
+
+      {heldQueue.length > 0 && (
+        <HeldRequestDialog
+          held={heldQueue[0]}
+          queued={heldQueue.length - 1}
+          onResolve={resolveHeld}
+        />
       )}
 
       {showCert && (

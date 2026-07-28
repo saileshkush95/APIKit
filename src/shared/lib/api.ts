@@ -7,6 +7,7 @@ import type {
   Cookie,
   Environment,
   Flow,
+  Header,
   HttpRequestSpec,
   HttpResponseData,
   LoadConfig,
@@ -428,6 +429,42 @@ export function startProxy(
 
 export function stopProxy(): Promise<void> {
   return invoke<void>("stop_proxy");
+}
+
+export interface HeldRequest {
+  id: number;
+  method: string;
+  url: string;
+  headers: Header[];
+  body: string;
+}
+
+export interface InterceptDecision {
+  action: "forward" | "abort";
+  method: string;
+  url: string;
+  headers: Header[];
+  body: string;
+}
+
+/** Turns breakpoints on or off; disabling releases anything already held. */
+export function setIntercept(enabled: boolean, filter: string): Promise<void> {
+  return invoke<void>("set_intercept", { enabled, filter });
+}
+
+/** Releases one held request, with any edits. */
+export function resumeRequest(
+  id: number,
+  decision: InterceptDecision,
+): Promise<void> {
+  return invoke<void>("resume_request", { id, decision });
+}
+
+/** Fires when a request is paused at a breakpoint. */
+export function onProxyHold(
+  handler: (held: HeldRequest) => void,
+): Promise<UnlistenFn> {
+  return listen<HeldRequest>("proxy://hold", (event) => handler(event.payload));
 }
 
 /** Points this computer's HTTP/HTTPS proxy at APIKit (or back to none). */

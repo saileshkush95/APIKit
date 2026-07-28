@@ -24,7 +24,7 @@ use hudsucker::{
 use rcgen::{
     BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::oneshot;
 
@@ -62,6 +62,44 @@ pub struct Flow {
 pub struct ProxyShared {
     flows: Mutex<Vec<Flow>>,
     counter: AtomicU64,
+    /// Hold matching requests until the user decides what to do with them.
+    intercept: Mutex<Intercept>,
+    /// Held requests, keyed by id, waiting on a decision from the UI.
+    waiting: Mutex<std::collections::HashMap<u64, oneshot::Sender<Decision>>>,
+}
+
+#[derive(Default)]
+struct Intercept {
+    enabled: bool,
+    /// Substring the URL must contain; empty holds everything.
+    filter: String,
+}
+
+/// What the user chose for a held request.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Decision {
+    /// "forward" sends it (with any edits), "abort" answers 502 instead.
+    pub action: String,
+    #[serde(default)]
+    pub method: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub headers: Vec<Header>,
+    #[serde(default)]
+    pub body: String,
+}
+
+/// A request paused at a breakpoint, sent to the UI to edit.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct HeldRequest {
+    pub id: u64,
+    pub method: String,
+    pub url: String,
+    pub headers: Vec<Header>,
+    pub body: String,
 }
 
 impl ProxyShared {
@@ -92,6 +130,8 @@ impl Default for ProxyState {
             shared: Arc::new(ProxyShared {
                 flows: Mutex::new(Vec::new()),
                 counter: AtomicU64::new(1),
+                intercept: Mutex::new(Intercept::default()),
+                waiting: Mutex::new(std::collections::HashMap::new()),
             }),
             ca: Mutex::new(None),
         }
@@ -133,6 +173,56 @@ fn truncate_body(bytes: &Bytes) -> String {
     }
 }
 
+/// Applies the user's edits to a held request. Anything left blank is kept,
+/// so an untouched field cannot be lost by resuming.
+fn apply_edits(
+    parts: &mut hudsucker::hyper::http::request::Parts,
+    url: &mut String,
+    bytes: &mut Bytes,
+    decision: Decision,
+) {
+    if !decision.method.trim().is_empty() {
+        if let Ok(method) = decision.method.trim().parse() {
+            parts.method = method;
+        }
+    }
+    if !decision.url.trim().is_empty() && decision.url != *url {
+        if let Ok(uri) = decision.url.trim().parse::<hudsucker::hyper::Uri>() {
+            // The Host header has to follow the URI, or the request is sent to
+            // one server addressed to another.
+            if let Some(authority) = uri.authority().map(|a| a.to_string()) {
+                if let Ok(value) = authority.parse() {
+                    parts.headers.insert(header::HOST, value);
+                }
+            }
+            parts.uri = uri;
+            *url = decision.url.trim().to_string();
+        }
+    }
+    if !decision.headers.is_empty() {
+        let mut map = header::HeaderMap::new();
+        for entry in &decision.headers {
+            if entry.name.trim().is_empty() {
+                continue;
+            }
+            if let (Ok(name), Ok(value)) = (
+                entry.name.parse::<header::HeaderName>(),
+                entry.value.parse::<header::HeaderValue>(),
+            ) {
+                map.append(name, value);
+            }
+        }
+        parts.headers = map;
+    }
+    if decision.body != truncate_body(bytes) {
+        *bytes = Bytes::from(decision.body);
+        // Content-Length must match what is actually sent.
+        if let Ok(value) = bytes.len().to_string().parse() {
+            parts.headers.insert(header::CONTENT_LENGTH, value);
+        }
+    }
+}
+
 /// The hudsucker handler. Cloned once per connection; because HTTP/1.1 requests
 /// are serialized on a connection we can stash the in-flight request in `self`
 /// and pair it with the matching response.
@@ -171,7 +261,56 @@ impl HttpHandler for CaptureHandler {
             format!("https://{host}{pq}")
         };
 
-        let bytes = collect_body(body).await;
+        let mut bytes = collect_body(body).await;
+        let mut parts = parts;
+        let mut url = url;
+
+        // Breakpoint: hold the request and let the user edit or drop it. The
+        // await blocks only this connection's task, so other traffic is
+        // unaffected.
+        let held = {
+            let guard = self.shared.intercept.lock().unwrap();
+            guard.enabled && (guard.filter.is_empty() || url.contains(&guard.filter))
+        };
+        if held {
+            let id = self.shared.next_id();
+            let (tx, rx) = oneshot::channel::<Decision>();
+            self.shared.waiting.lock().unwrap().insert(id, tx);
+            let _ = self.app.emit(
+                "proxy://hold",
+                HeldRequest {
+                    id,
+                    method: parts.method.to_string(),
+                    url: url.clone(),
+                    headers: headers_to_vec(&parts.headers),
+                    body: truncate_body(&bytes),
+                },
+            );
+
+            // A window closed mid-breakpoint must not wedge the connection
+            // forever, so the hold expires.
+            match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
+                Ok(Ok(decision)) if decision.action == "abort" => {
+                    self.shared.waiting.lock().unwrap().remove(&id);
+                    return Response::builder()
+                        .status(502)
+                        .header("content-type", "application/json")
+                        .body(Body::from(Full::new(Bytes::from(
+                            r#"{"error":"dropped at a proxy breakpoint"}"#,
+                        ))))
+                        .unwrap()
+                        .into();
+                }
+                Ok(Ok(decision)) => {
+                    self.shared.waiting.lock().unwrap().remove(&id);
+                    apply_edits(&mut parts, &mut url, &mut bytes, decision);
+                }
+                // Cancelled or timed out: forward untouched rather than drop.
+                _ => {
+                    self.shared.waiting.lock().unwrap().remove(&id);
+                }
+            }
+        }
 
         let flow = Flow {
             id: self.shared.next_id(),
@@ -400,6 +539,55 @@ pub fn proxy_status(state: State<'_, ProxyState>) -> ProxyStatus {
 #[tauri::command]
 pub fn get_flows(state: State<'_, ProxyState>) -> Vec<Flow> {
     state.shared.flows.lock().unwrap().clone()
+}
+
+/// Turns breakpoints on or off. Disabling releases anything already held, so
+/// the toggle can never strand a paused request.
+#[tauri::command]
+pub fn set_intercept(state: State<'_, ProxyState>, enabled: bool, filter: String) {
+    {
+        let mut guard = state.shared.intercept.lock().unwrap();
+        guard.enabled = enabled;
+        guard.filter = filter.trim().to_string();
+    }
+    if !enabled {
+        let waiting: Vec<_> = state
+            .shared
+            .waiting
+            .lock()
+            .unwrap()
+            .drain()
+            .map(|(_, sender)| sender)
+            .collect();
+        for sender in waiting {
+            let _ = sender.send(Decision {
+                action: "forward".into(),
+                method: String::new(),
+                url: String::new(),
+                headers: Vec::new(),
+                body: String::new(),
+            });
+        }
+    }
+}
+
+/// Releases one held request, with the user's edits.
+#[tauri::command]
+pub fn resume_request(
+    state: State<'_, ProxyState>,
+    id: u64,
+    decision: Decision,
+) -> Result<(), String> {
+    let sender = state
+        .shared
+        .waiting
+        .lock()
+        .unwrap()
+        .remove(&id)
+        .ok_or_else(|| "that request is no longer waiting".to_string())?;
+    sender
+        .send(decision)
+        .map_err(|_| "the connection went away".to_string())
 }
 
 #[tauri::command]

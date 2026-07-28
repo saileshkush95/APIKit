@@ -174,6 +174,8 @@ pub fn run() {
             proxy::proxy_status,
             proxy::get_flows,
             proxy::clear_flows,
+            proxy::set_intercept,
+            proxy::resume_request,
             proxy::get_ca_certificate_pem,
             proxy::ca_certificate_path,
         ])
