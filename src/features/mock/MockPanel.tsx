@@ -1,5 +1,6 @@
 import { Input, Select } from "../../shared/components/Field";
 import { useEffect, useState } from "react";
+import { RouteContextMenu, type MenuState } from "./RouteContextMenu";
 import { RouteTree } from "./RouteTree";
 import {
   descendantIds,
@@ -79,6 +80,8 @@ export function MockPanel() {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const [editorTab, setEditorTab] = useState<"body" | "headers">("body");
 
   const [status, setStatus] = useState<MockStatus>({
     running: false,
@@ -431,8 +434,14 @@ export function MockPanel() {
               onMove={move}
               onContextMenu={(id, e) => {
                 e.preventDefault();
-                setSelectedId(id);
-                setRenamingId(id);
+                const route = routes.find((candidate) => candidate.id === id);
+                if (!route) return;
+                // Right-clicking outside the highlighted set acts on that row.
+                if (!checked.has(id)) {
+                  setChecked(new Set());
+                  setSelectedId(id);
+                }
+                setMenu({ x: e.clientX, y: e.clientY, route });
               }}
               renamingId={renamingId}
               onRename={rename}
@@ -440,10 +449,33 @@ export function MockPanel() {
           </div>
 
           <p className="flex-none border-t border-edge px-2 py-1 text-[10px] leading-relaxed text-muted">
-            Drag to reorder or nest · right-click to rename · ⌘/shift-click to
+            Drag to reorder or nest · right-click for actions · ⌘/shift-click to
             multi-select
           </p>
         </div>
+
+        {menu && (
+          <RouteContextMenu
+            state={menu}
+            selectedCount={selectionCount}
+            onClose={() => setMenu(null)}
+            onNewRoute={(parentId) => {
+              const route = newRoute(parentId);
+              setRoutes((prev) => reorder([...prev, route]));
+              setSelectedId(route.id);
+            }}
+            onNewFolder={(parentId) => {
+              const folder = newFolder(parentId);
+              setRoutes((prev) => reorder([...prev, folder]));
+              setSelectedId(folder.id);
+              setRenamingId(folder.id);
+            }}
+            onRename={setRenamingId}
+            onDuplicate={bulkDuplicate}
+            onDelete={bulkDelete}
+            onSetEnabled={bulkSetEnabled}
+          />
+        )}
 
         {/* Route editor */}
         <div className="flex min-w-0 flex-1 flex-col">
@@ -546,10 +578,37 @@ export function MockPanel() {
                 matched top to bottom, in list order.
               </p>
 
-              <div className="mb-3">
-                <div className="mb-1 text-[11px] font-semibold text-muted">
-                  Response headers
-                </div>
+              {/* Response parts as tabs, like the client's request editor. */}
+              <div className="mb-2 flex items-center gap-1 border-b border-edge">
+                {(
+                  [
+                    ["body", "Body", selected.body.trim() !== "" ? "●" : ""],
+                    [
+                      "headers",
+                      "Headers",
+                      selected.headers.filter((h) => h.name.trim() !== "").length ||
+                        "",
+                    ],
+                  ] as const
+                ).map(([key, label, badge]) => (
+                  <button
+                    key={key}
+                    onClick={() => setEditorTab(key)}
+                    className={`-mb-px border-b-2 px-3 py-1 text-xs ${
+                      editorTab === key
+                        ? "border-brand font-medium text-ink"
+                        : "border-transparent text-muted hover:text-ink"
+                    }`}
+                  >
+                    {label}
+                    {badge !== "" && (
+                      <span className="ml-1.5 text-[9px] text-ok">{badge}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              <div className={editorTab === "headers" ? "" : "hidden"}>
                 <KeyValueEditor
                   rows={
                     selected.headers.length
@@ -565,15 +624,15 @@ export function MockPanel() {
                 />
               </div>
 
-              <div className="mb-1 text-[11px] font-semibold text-muted">
-                Response body
+              <div className={editorTab === "body" ? "" : "hidden"}>
+                <textarea
+                  value={selected.body}
+                  spellCheck={false}
+                  placeholder='{\n  "ok": true\n}'
+                  onChange={(e) => update(selected.id, { body: e.target.value })}
+                  className="h-64 w-full resize-y rounded-md border border-edge bg-panel p-2 font-mono text-[12px] leading-relaxed text-ink outline-none focus:border-brand"
+                />
               </div>
-              <textarea
-                value={selected.body}
-                spellCheck={false}
-                onChange={(e) => update(selected.id, { body: e.target.value })}
-                className="h-56 w-full resize-y rounded-md border border-edge bg-panel p-2 font-mono text-[12px] leading-relaxed text-ink outline-none focus:border-brand"
-              />
             </div>
           ) : (
             <div className="flex flex-1 items-center justify-center text-muted">
