@@ -1,12 +1,17 @@
 import { Input, Select } from "../../shared/components/Field";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
+import { save } from "@tauri-apps/plugin-dialog";
 import {
   onLoadProgress,
   runLoadTest,
   sendRequest,
   stopLoadTest,
+  writeTextFile,
 } from "../../shared/lib/api";
+import { notify, notifyError } from "../../shared/lib/notify";
+import { LoadChart, type Sample } from "./LoadChart";
+import { environmentVars } from "../../shared/lib/vars";
 import { runAssertions } from "../../shared/lib/assertions";
 import { PRESETS, presetFor, totalDuration } from "../../shared/lib/loadPresets";
 import { buildWireRequest, enforceSecureUrl } from "../../shared/lib/request";
@@ -58,7 +63,8 @@ export function LoadTestPanel() {
     navigate({ to: "/runner", search: folderId ? { folder: folderId } : {} });
   const { active } = useActiveRequest();
   const { tree } = useCollection();
-  const { vars } = useEnvironments();
+  const { vars, active: activeEnv, environments } = useEnvironments();
+  const [environmentId, setEnvironmentId] = useState("");
   const { settings } = useSettings();
 
   const [kind, setKind] = useState<LoadTestKind>("load");
@@ -73,6 +79,17 @@ export function LoadTestPanel() {
   const [progress, setProgress] = useState<LoadProgress | null>(null);
   const [report, setReport] = useState<LoadReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Progress arrives as cumulative per-phase counters; the history turns them
+  // into per-interval latency and throughput, which is what a chart needs.
+  const [latency, setLatency] = useState<Sample[]>([]);
+  const [throughput, setThroughput] = useState<Sample[]>([]);
+  const startedAtRef = useRef(0);
+  const lastSampleRef = useRef<{
+    phaseIndex: number;
+    requests: number;
+    sumMs: number;
+    atSecs: number;
+  } | null>(null);
   const [assertionRun, setAssertionRun] = useState<{
     done: number;
     passed: number;
@@ -81,11 +98,94 @@ export function LoadTestPanel() {
   } | null>(null);
 
   useEffect(() => {
-    const unlisten = onLoadProgress(setProgress);
+    const unlisten = onLoadProgress((next) => {
+      setProgress(next);
+
+      const atSecs = Math.max(
+        0,
+        Math.round((performance.now() - startedAtRef.current) / 1000),
+      );
+      // `avgMs` is a running mean, so the interval mean comes from the sums.
+      const sumMs = next.avgMs * next.requests;
+      const previous = lastSampleRef.current;
+      const samePhase = previous?.phaseIndex === next.phaseIndex;
+      const deltaRequests = next.requests - (samePhase ? previous!.requests : 0);
+      const deltaSum = sumMs - (samePhase ? previous!.sumMs : 0);
+      const deltaSecs = Math.max(
+        0.5,
+        atSecs - (previous ? previous.atSecs : 0),
+      );
+      lastSampleRef.current = {
+        phaseIndex: next.phaseIndex,
+        requests: next.requests,
+        sumMs,
+        atSecs,
+      };
+      if (deltaRequests <= 0) return;
+
+      const point = {
+        atSecs,
+        phaseIndex: next.phaseIndex,
+        phaseLabel: next.label,
+      };
+      setLatency((prev) => [
+        ...prev,
+        { ...point, value: deltaSum / deltaRequests },
+      ]);
+      setThroughput((prev) => [
+        ...prev,
+        { ...point, value: deltaRequests / deltaSecs },
+      ]);
+    });
     return () => {
       unlisten.then((un) => un());
     };
   }, []);
+
+  /** Saves the finished report as JSON or CSV. */
+  async function exportReport(format: "json" | "csv") {
+    if (!report) return;
+    const path = await save({
+      title: "Save load report",
+      defaultPath: `load-report.${format}`,
+      filters: [{ name: format.toUpperCase(), extensions: [format] }],
+    });
+    if (!path) return;
+
+    const contents =
+      format === "json"
+        ? JSON.stringify(
+            { kind, url: url || active?.url, phases, report },
+            null,
+            2,
+          )
+        : [
+            "phase,vus,duration_secs,requests,failures,rps,min_ms,p50_ms,p95_ms,p99_ms,max_ms,avg_ms",
+            ...report.phases.map((phase) =>
+              [
+                `"${phase.label}"`,
+                phase.vus,
+                phase.durationSecs,
+                phase.requests,
+                phase.failures,
+                phase.rps.toFixed(2),
+                Math.round(phase.minMs),
+                Math.round(phase.p50Ms),
+                Math.round(phase.p95Ms),
+                Math.round(phase.p99Ms),
+                Math.round(phase.maxMs),
+                Math.round(phase.avgMs),
+              ].join(","),
+            ),
+          ].join("\n");
+
+    try {
+      await writeTextFile(path, contents);
+      notify("success", `Report saved to ${path}`);
+    } catch (e) {
+      notifyError("Could not save the report", e);
+    }
+  }
 
   function choose(next: LoadTestKind) {
     setKind(next);
@@ -112,11 +212,17 @@ export function LoadTestPanel() {
     setError(null);
     setReport(null);
     setProgress(null);
+    setLatency([]);
+    setThroughput([]);
+    startedAtRef.current = performance.now();
+    lastSampleRef.current = null;
 
     // The active request supplies headers, auth and body; this panel only
     // overrides the method and URL.
+    const pinned = environments.find((env) => env.id === environmentId);
+    const runVars = pinned ? environmentVars(pinned) : vars;
     const base = active
-      ? buildWireRequest(active, vars)
+      ? buildWireRequest(active, runVars)
       : { method, url, headers: [], body: "" };
 
     const target = url.trim() === "" ? base.url : url;
@@ -300,11 +406,32 @@ export function LoadTestPanel() {
                   Use Active Request
                 </button>
               </div>
-              <p className="text-[11px] text-muted">
-                {active
-                  ? `Headers, auth and body come from "${active.name}" in the client.`
-                  : "Open a request in the client to reuse its headers, auth and body."}
-              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="text-[11px] text-muted">
+                  {active
+                    ? `Headers, auth and body come from "${active.name}" in the client.`
+                    : "Open a request in the client to reuse its headers, auth and body."}
+                </p>
+                <label className="ml-auto flex items-center gap-1.5 text-[11px] text-muted">
+                  Environment
+                  <Select
+                    size="compact"
+                    value={environmentId}
+                    onChange={(e) => setEnvironmentId(e.target.value)}
+                    className="w-40"
+                    title="Pin an environment so a test cannot silently hit whichever one happens to be active"
+                  >
+                    <option value="">
+                      Active{activeEnv ? ` — ${activeEnv.name}` : " — none"}
+                    </option>
+                    {environments.map((env) => (
+                      <option key={env.id} value={env.id}>
+                        {env.name}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+              </div>
             </section>
 
             {/* Phases or iterations */}
@@ -461,6 +588,23 @@ export function LoadTestPanel() {
                 </div>
               )}
             </section>
+
+            {/* Live charts. Two single-series plots rather than one with two
+                y-axes: milliseconds and requests-per-second share no scale. */}
+            {(latency.length > 0 || running) && kind !== "assertions" && (
+              <div className="grid gap-3 lg:grid-cols-2">
+                <LoadChart
+                  title="Latency"
+                  samples={latency}
+                  format={(value) => `${Math.round(value)}ms`}
+                />
+                <LoadChart
+                  title="Throughput"
+                  samples={throughput}
+                  format={(value) => `${value.toFixed(1)}/s`}
+                />
+              </div>
+            )}
           </>
         )}
 
@@ -511,6 +655,18 @@ export function LoadTestPanel() {
                 {report.totalRequests} requests · {report.totalFailures} failed ·{" "}
                 {(report.durationMs / 1000).toFixed(1)}s
               </span>
+              <button
+                onClick={() => exportReport("json")}
+                className="rounded border border-edge px-2 py-0.5 text-[11px] text-muted hover:border-brand hover:text-ink"
+              >
+                JSON
+              </button>
+              <button
+                onClick={() => exportReport("csv")}
+                className="rounded border border-edge px-2 py-0.5 text-[11px] text-muted hover:border-brand hover:text-ink"
+              >
+                CSV
+              </button>
             </div>
 
             <div
