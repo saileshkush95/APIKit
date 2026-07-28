@@ -15,6 +15,10 @@ import {
   SidebarShell,
   SIDEBAR_DEFAULT,
 } from "../client/SidebarShell";
+import { setSetting } from "../../shared/lib/api";
+import { usePersist } from "../../shared/lib/persist";
+import { newId, SETTINGS, workspaceDataOnce } from "../../shared/lib/storage";
+import { useWorkspaceId } from "../../shared/state/workspaces";
 import { environmentVars } from "../../shared/lib/vars";
 import { runAssertions } from "../../shared/lib/assertions";
 import { PRESETS, presetFor, totalDuration } from "../../shared/lib/loadPresets";
@@ -30,6 +34,7 @@ import {
   type LoadPhase,
   type LoadProgress,
   type LoadReport,
+  type LoadTest,
   type LoadTestKind,
   type TreeNode,
 } from "../../shared/types";
@@ -103,6 +108,137 @@ export function LoadTestPanel() {
     failed: number;
     messages: string[];
   } | null>(null);
+
+  // Saved tests, listed in the sidebar the way the client lists requests. A
+  // tuned soak or spike is worth keeping, not rebuilding from a preset.
+  const workspaceId = useWorkspaceId();
+  const [tests, setTests] = useState<LoadTest[]>([]);
+  const [selectedTestId, setSelectedTestId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [listReady, setListReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setListReady(false);
+    workspaceDataOnce(workspaceId)
+      .then((workspace) => {
+        if (cancelled) return;
+        const raw = workspace.settings[SETTINGS.loadTests];
+        const saved: LoadTest[] = raw ? JSON.parse(raw) : [];
+        setTests(saved);
+        setSelectedTestId(saved[0]?.id ?? null);
+        if (saved[0]) applyTest(saved[0]);
+      })
+      .catch(() => {})
+      .finally(() => !cancelled && setListReady(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+
+  usePersist(tests, listReady, (value) =>
+    setSetting(workspaceId, SETTINGS.loadTests, JSON.stringify(value)),
+  );
+
+  // Editing any field updates the selected test, so the sidebar entry always
+  // reflects what the pane shows — no explicit save step.
+  useEffect(() => {
+    if (!selectedTestId || !listReady) return;
+    setTests((prev) =>
+      prev.map((test) =>
+        test.id === selectedTestId
+          ? {
+              ...test,
+              kind,
+              phases,
+              method,
+              url,
+              thinkTimeMs,
+              iterations,
+              environmentId: environmentId || null,
+              folderId: folderId || null,
+            }
+          : test,
+      ),
+    );
+    // `selectedTestId` is intentionally the only identity in the deps: the rest
+    // are the values being mirrored.
+  }, [
+    selectedTestId,
+    listReady,
+    kind,
+    phases,
+    method,
+    url,
+    thinkTimeMs,
+    iterations,
+    environmentId,
+    folderId,
+  ]);
+
+  /** Loads a saved test's configuration into the editor. */
+  function applyTest(test: LoadTest) {
+    setKind(test.kind);
+    setPhases(test.phases);
+    setMethod(test.method);
+    setUrl(test.url);
+    setThinkTimeMs(test.thinkTimeMs);
+    setIterations(test.iterations);
+    setEnvironmentId(test.environmentId ?? "");
+    setFolderId(test.folderId ?? "");
+  }
+
+  /** Writes the editor's current values back onto the selected test. */
+  function patchSelected(patch: Partial<LoadTest>) {
+    if (!selectedTestId) return;
+    setTests((prev) =>
+      prev.map((test) =>
+        test.id === selectedTestId ? { ...test, ...patch } : test,
+      ),
+    );
+  }
+
+  function selectTest(test: LoadTest) {
+    setSelectedTestId(test.id);
+    applyTest(test);
+    setReport(null);
+    setAssertionRun(null);
+    setLatency([]);
+    setThroughput([]);
+    setTab("setup");
+  }
+
+  function createTest(fromKind: LoadTestKind = "load") {
+    const preset = presetFor(fromKind);
+    const test: LoadTest = {
+      id: newId(),
+      name: `${preset.label} ${tests.length + 1}`,
+      kind: fromKind,
+      method: "GET",
+      url: "",
+      phases: preset.phases,
+      thinkTimeMs: 0,
+      iterations: 20,
+      environmentId: null,
+      folderId: null,
+    };
+    setTests((prev) => [...prev, test]);
+    selectTest(test);
+    setRenamingId(test.id);
+  }
+
+  function duplicateTest(id: string) {
+    const source = tests.find((test) => test.id === id);
+    if (!source) return;
+    const copy = { ...source, id: newId(), name: `${source.name} copy` };
+    setTests((prev) => [...prev, copy]);
+    selectTest(copy);
+  }
+
+  function deleteTest(id: string) {
+    setTests((prev) => prev.filter((test) => test.id !== id));
+    if (selectedTestId === id) setSelectedTestId(null);
+  }
 
   useEffect(() => {
     const unlisten = onLoadProgress((next) => {
@@ -326,7 +462,6 @@ export function LoadTestPanel() {
   // A tab with nothing behind it is worse than no tab: the pane just looks
   // broken. Live and Results unlock once there is something in them.
   const hasLive = running || latency.length > 0;
-  const hasResults = report !== null || assertionRun !== null;
 
   return (
     <div className="flex min-h-0 w-full">
@@ -337,33 +472,86 @@ export function LoadTestPanel() {
         collapsed={sidebarCollapsed}
         onCollapsedChange={setSidebarCollapsed}
         header={
-          <span className="flex-1 px-3 py-1.5 text-xs font-semibold text-ink">
-            Test types
-          </span>
+          <div className="flex flex-1 items-center gap-1 px-2 py-1">
+            <span className="flex-1 text-xs font-semibold text-ink">Tests</span>
+            <button
+              onClick={() => createTest(kind)}
+              className="rounded px-1.5 text-base leading-none text-muted hover:bg-elevated hover:text-ink"
+              title="New test"
+            >
+              +
+            </button>
+          </div>
         }
       >
-        <div className="p-1.5">
-          {PRESETS.map((preset) => (
-            <button
-              key={preset.kind}
-              onClick={() => choose(preset.kind)}
-              title={preset.blurb}
-              className={`mb-0.5 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs ${
-                kind === preset.kind
-                  ? "bg-elevated font-medium text-ink"
-                  : "text-muted hover:bg-elevated/60 hover:text-ink"
-              }`}
-            >
-              <span className={`w-4 flex-none text-center ${preset.accent}`}>
-                {preset.icon}
-              </span>
-              <span className="min-w-0 flex-1 truncate">{preset.label}</span>
-            </button>
-          ))}
-          <p className="mt-2 border-t border-edge px-2 py-2 text-[11px] leading-relaxed text-muted">
-            {presetFor(kind).blurb}
+        {tests.length === 0 ? (
+          <p className="px-3 py-3 text-[11px] leading-relaxed text-muted">
+            No saved tests. Create one, pick its type, and it stays here for next
+            time.
           </p>
-        </div>
+        ) : (
+          tests.map((test) => {
+            const preset = presetFor(test.kind);
+            return (
+              <div
+                key={test.id}
+                onClick={() => selectTest(test)}
+                onDoubleClick={() => setRenamingId(test.id)}
+                className={`flex cursor-default items-center gap-2 px-2 py-1.5 text-xs ${
+                  test.id === selectedTestId
+                    ? "bg-elevated text-ink"
+                    : "text-muted hover:bg-elevated/60"
+                }`}
+              >
+                <span
+                  className={`w-4 flex-none text-center ${preset.accent}`}
+                  title={preset.label}
+                >
+                  {preset.icon}
+                </span>
+                {renamingId === test.id ? (
+                  <input
+                    autoFocus
+                    defaultValue={test.name}
+                    onClick={(e) => e.stopPropagation()}
+                    onBlur={(e) => {
+                      const name = e.target.value.trim();
+                      if (name) patchSelected({ name });
+                      setRenamingId(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                      if (e.key === "Escape") setRenamingId(null);
+                    }}
+                    className="min-w-0 flex-1 rounded border border-brand bg-panel px-1 py-0.5 text-xs text-ink outline-none"
+                  />
+                ) : (
+                  <span className="min-w-0 flex-1 truncate">{test.name}</span>
+                )}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    duplicateTest(test.id);
+                  }}
+                  className="flex-none px-1 text-[11px] text-muted opacity-0 group-hover:opacity-100 hover:text-ink"
+                  title="Duplicate"
+                >
+                  ⧉
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteTest(test.id);
+                  }}
+                  className="flex-none px-1 text-[11px] text-muted hover:text-err"
+                  title="Delete"
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })
+        )}
       </SidebarShell>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -467,12 +655,11 @@ export function LoadTestPanel() {
               {(
                 [
                   ["setup", "Setup", "", true],
-                  ["live", "Live", running ? "●" : "", hasLive],
+                  ["live", "Live", running ? "●" : ""],
                   [
                     "results",
                     "Results",
                     report ? String(report.phases.length) : "",
-                    hasResults,
                   ],
                 ] as const
               ).map(([key, label, badge]) => (
@@ -499,6 +686,30 @@ export function LoadTestPanel() {
             </div>
 
             <div className="min-h-0 flex-1 overflow-auto p-3">
+              {tab === "setup" && (
+                <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-edge pb-3">
+                  <span className="text-[11px] text-muted">Test type</span>
+                  {PRESETS.map((preset) => (
+                    <button
+                      key={preset.kind}
+                      onClick={() => choose(preset.kind)}
+                      title={preset.blurb}
+                      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] ${
+                        kind === preset.kind
+                          ? "border-brand bg-brand/10 text-ink"
+                          : "border-edge text-muted hover:border-brand hover:text-ink"
+                      }`}
+                    >
+                      <span className={preset.accent}>{preset.icon}</span>
+                      {preset.label}
+                    </button>
+                  ))}
+                  <span className="w-full text-[11px] text-muted">
+                    {presetFor(kind).blurb}
+                  </span>
+                </div>
+              )}
+
               {tab === "setup" &&
                 (kind === "assertions" ? (
                   <label className="flex items-center gap-2 text-xs text-muted">
