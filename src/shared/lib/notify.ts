@@ -18,6 +18,8 @@ export interface Notice {
   /** Secondary line, usually the underlying error. */
   detail?: string;
   action?: NoticeAction;
+  /** Further actions, when one button is not enough. */
+  actions?: NoticeAction[];
   /** 0 keeps the notice until it is dismissed. */
   timeoutMs: number;
 }
@@ -40,6 +42,7 @@ function emit(notice: Notice): string {
 interface Options {
   detail?: unknown;
   action?: NoticeAction;
+  actions?: NoticeAction[];
   timeoutMs?: number;
 }
 
@@ -61,10 +64,15 @@ export function notify(
     message,
     detail: describe(options.detail),
     action: options.action,
+    actions: options.actions,
     // Errors and anything actionable stay long enough to be read and acted on.
     timeoutMs:
       options.timeoutMs ??
-      (options.action ? 10_000 : level === "error" ? 8_000 : 3_500),
+      (options.action || options.actions?.length
+        ? 10_000
+        : level === "error"
+          ? 8_000
+          : 3_500),
   });
 }
 

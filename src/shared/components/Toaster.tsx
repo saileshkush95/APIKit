@@ -62,16 +62,25 @@ export function Toaster() {
                 {notice.detail}
               </div>
             )}
-            {notice.action && (
-              <button
-                onClick={() => {
-                  notice.action?.run();
-                  dismiss(notice.id);
-                }}
-                className="mt-1.5 rounded border border-edge px-2 py-0.5 text-[11px] text-brand hover:border-brand"
-              >
-                {notice.action.label}
-              </button>
+            {[...(notice.action ? [notice.action] : []), ...(notice.actions ?? [])]
+              .length > 0 && (
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {[
+                  ...(notice.action ? [notice.action] : []),
+                  ...(notice.actions ?? []),
+                ].map((action) => (
+                  <button
+                    key={action.label}
+                    onClick={() => {
+                      action.run();
+                      dismiss(notice.id);
+                    }}
+                    className="rounded border border-edge px-2 py-0.5 text-[11px] text-brand hover:border-brand"
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </div>
             )}
           </div>
           <button

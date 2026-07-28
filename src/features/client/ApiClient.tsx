@@ -636,8 +636,11 @@ export function ApiClient({ intent }: ApiClientProps) {
   // tab list, and the collection starts empty until its own load lands — so
   // acting early would either discard the tab or save into a tree about to be
   // overwritten. Taken once, so coming back here later does not reopen it.
+  // Subscribed rather than read once at mount: a handoff can also arrive while
+  // the client is already open — opening a URL found in a response, say.
+  const pendingHandoff = useHandoff((s) => s.pending);
   useEffect(() => {
-    if (!ready || !collectionReady) return;
+    if (!ready || !collectionReady || !pendingHandoff) return;
     const handoff = useHandoff.getState().take();
     if (!handoff) return;
     if (handoff.kind === "saved") {
@@ -658,7 +661,7 @@ export function ApiClient({ intent }: ApiClientProps) {
     } else {
       openDraft(handoff.name, handoff.draft);
     }
-  }, [ready, collectionReady]);
+  }, [ready, collectionReady, pendingHandoff]);
 
   /** Opens a draft as a preview tab, replacing any preview tab already open. */
   function openDraft(name: string, source: RequestDraft) {

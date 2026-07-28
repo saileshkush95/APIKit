@@ -14,11 +14,13 @@ import {
 import { renderLine, type HighlightLanguage } from "../../shared/lib/highlight";
 import { notify, notifyError, notifySuccess } from "../../shared/lib/notify";
 import { formatBytes, methodColor, statusColor } from "../../shared/lib/ui";
-import type {
-  AssertionResult,
-  HttpResponseData,
-  ResponseTabKey,
-  SentRequest,
+import { useHandoff } from "../../shared/state/handoff";
+import {
+  defaultConfig,
+  type AssertionResult,
+  type HttpResponseData,
+  type ResponseTabKey,
+  type SentRequest,
 } from "../../shared/types";
 
 interface Props {
@@ -172,6 +174,17 @@ export function ResponseViewer({
     return match[0].replace(/[.,;:)\]}]+$/, "");
   }
 
+  /** Host plus last path segment, so the tab is recognisable but not a wall. */
+  function linkLabel(link: string): string {
+    try {
+      const parsed = new URL(link);
+      const last = parsed.pathname.split("/").filter(Boolean).pop();
+      return last ? `${parsed.host}/${last}` : parsed.host;
+    } catch {
+      return link.slice(0, 40);
+    }
+  }
+
   async function copyNode(line: number) {
     if (!copyMap) return;
     const node = copyMap.nodes[line];
@@ -185,13 +198,34 @@ export function ResponseViewer({
       if (link) {
         notify("success", "Copied the link", {
           detail: link,
-          timeoutMs: 8000,
-          action: {
-            label: "Open in browser",
-            run: () => {
-              openUrl(link).catch((e) => notifyError("Could not open it", e));
+          timeoutMs: 10_000,
+          actions: [
+            {
+              // As a request here, which is usually the point of finding a URL
+              // in a response — inspect it rather than just visit it.
+              label: "Open in new tab",
+              run: () =>
+                useHandoff.getState().hand({
+                  kind: "draft",
+                  name: linkLabel(link),
+                  draft: {
+                    method: "GET",
+                    url: link,
+                    headers: [],
+                    body: "",
+                    tests: [],
+                    config: defaultConfig(),
+                  },
+                  save: false,
+                }),
             },
-          },
+            {
+              label: "Open in browser",
+              run: () => {
+                openUrl(link).catch((e) => notifyError("Could not open it", e));
+              },
+            },
+          ],
         });
         return;
       }
