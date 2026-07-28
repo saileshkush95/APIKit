@@ -484,6 +484,9 @@ export function LoadTestPanel() {
           </div>
         }
       >
+        {/* SidebarShell borders only its header; the list draws the rest of
+            the separator, as the client's collection panel does. */}
+        <div className="min-h-0 flex-1 overflow-auto border-r border-edge bg-panel">
         {tests.length === 0 ? (
           <p className="px-3 py-3 text-[11px] leading-relaxed text-muted">
             No saved tests. Create one, pick its type, and it stays here for next
@@ -552,12 +555,28 @@ export function LoadTestPanel() {
             );
           })
         )}
+        </div>
       </SidebarShell>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Target bar, in the same place as the client's URL bar. */}
         {kind === "chain" ? (
           <div className="flex flex-none items-center gap-2 border-b border-edge p-2">
+            {/* The type selector belongs in every variant of this bar: without
+                it, choosing Chain was a one-way door. */}
+            <Select
+              size="compact"
+              value={kind}
+              onChange={(e) => choose(e.target.value as LoadTestKind)}
+              className="w-32 flex-none cursor-pointer"
+              title={presetFor(kind).blurb}
+            >
+              {PRESETS.map((preset) => (
+                <option key={preset.kind} value={preset.kind}>
+                  {preset.label}
+                </option>
+              ))}
+            </Select>
             <Select
               size="compact"
               value={folderId}
