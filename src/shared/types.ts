@@ -775,7 +775,7 @@ export interface MockRoute {
   cors: boolean;
 }
 
-export type MockMode = "static" | "template" | "sequence" | "proxy";
+export type MockMode = "static" | "template" | "sequence" | "proxy" | "sse";
 
 export const MOCK_MODES: { value: MockMode; label: string; blurb: string }[] = [
   {
@@ -800,6 +800,12 @@ export const MOCK_MODES: { value: MockMode; label: string; blurb: string }[] = [
     label: "Proxy",
     blurb:
       "Forwards the request to a real server and returns its response, so part of an API can be mocked while the rest passes through.",
+  },
+  {
+    value: "sse",
+    label: "Event stream",
+    blurb:
+      "Streams the --- separated chunks as server-sent events, spaced by the delay, so a client consuming a live feed can be exercised.",
   },
 ];
 

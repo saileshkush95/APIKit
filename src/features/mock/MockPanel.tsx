@@ -748,10 +748,15 @@ export function MockPanel() {
                   </p>
                 ) : (
                   <>
-                    {selected.mode === "sequence" && (
+                    {(selected.mode === "sequence" ||
+                      selected.mode === "sse") && (
                       <p className="mb-1 text-[11px] text-muted">
-                        Separate each response with a line containing{" "}
+                        Separate each{" "}
+                        {selected.mode === "sse" ? "event" : "response"} with a
+                        line containing{" "}
                         <code className="font-mono text-brand">---</code>.
+                        {selected.mode === "sse" &&
+                          " Delay sets the gap between events (minimum 500ms)."}
                       </p>
                     )}
                     <textarea

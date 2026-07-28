@@ -9,7 +9,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
-use http_body_util::Full;
+use http_body_util::combinators::BoxBody;
+use http_body_util::{BodyExt, Full, StreamBody};
 use hyper::body::Bytes;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
@@ -20,6 +21,14 @@ use tokio::net::TcpListener;
 use tokio::sync::watch;
 
 use crate::store::{read_mock_routes, Db, MockRoute};
+
+/// Every mock response is boxed, so a static body and an event stream can be
+/// returned from the same places.
+type ResponseBody = BoxBody<Bytes, Infallible>;
+
+fn boxed(bytes: impl Into<Bytes>) -> ResponseBody {
+    BodyExt::boxed(Full::new(bytes.into()))
+}
 
 #[derive(Default)]
 pub struct MockState {
@@ -269,6 +278,60 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// A server-sent event stream from the route's body: each `---` separated
+/// chunk becomes one event, spaced by the route's delay so a client can be
+/// watched consuming them. Ends the stream after the last one.
+fn sse_response(route: &MockRoute, body: String) -> Response<ResponseBody> {
+    let events: Vec<String> = body
+        .split("\n---\n")
+        .map(|part| part.trim_matches('\n').to_string())
+        .filter(|part| !part.is_empty())
+        .collect();
+    // Between events, not before the first: a stream that stalls on connect
+    // looks broken.
+    let gap = Duration::from_millis(route.delay_ms.max(500));
+
+    let stream = futures::stream::unfold(
+        (events.into_iter(), true),
+        move |(mut rest, first)| async move {
+            let event = rest.next()?;
+            if !first {
+                tokio::time::sleep(gap).await;
+            }
+            // Every line of a multi-line payload needs its own `data:`.
+            let payload = event
+                .lines()
+                .map(|line| format!("data: {line}\n"))
+                .collect::<String>();
+            Some((
+                Ok::<_, Infallible>(hyper::body::Frame::data(Bytes::from(format!(
+                    "{payload}\n"
+                )))),
+                (rest, false),
+            ))
+        },
+    );
+
+    let mut builder = Response::builder()
+        .status(StatusCode::from_u16(route.status).unwrap_or(StatusCode::OK))
+        .header("content-type", "text/event-stream")
+        .header("cache-control", "no-cache")
+        .header("connection", "keep-alive");
+    for header in &route.headers {
+        if !header.name.trim().is_empty()
+            && !header.name.eq_ignore_ascii_case("content-type")
+        {
+            builder = builder.header(&header.name, &header.value);
+        }
+    }
+    if route.cors {
+        builder = cors_headers(builder);
+    }
+    builder
+        .body(BodyExt::boxed(StreamBody::new(stream)))
+        .unwrap_or_else(|_| Response::new(boxed(Bytes::new())))
+}
+
 /// Permissive CORS, so a browser app can call the mock from any origin.
 fn cors_headers(builder: hyper::http::response::Builder) -> hyper::http::response::Builder {
     builder
@@ -289,15 +352,15 @@ async fn proxy_response(
     query: Option<&str>,
     headers: &hyper::HeaderMap,
     body: &str,
-) -> Response<Full<Bytes>> {
+) -> Response<ResponseBody> {
     let target = route.proxy_target.trim().trim_end_matches('/');
     if target.is_empty() {
         return Response::builder()
             .status(StatusCode::BAD_GATEWAY)
             .header("content-type", "application/json")
-            .body(Full::new(Bytes::from(
+            .body(boxed(
                 r#"{"error":"proxy mode has no target URL"}"#,
-            )))
+            ))
             .unwrap();
     }
 
@@ -347,15 +410,15 @@ async fn proxy_response(
                 builder = cors_headers(builder);
             }
             builder
-                .body(Full::new(Bytes::from(bytes)))
-                .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+                .body(boxed(bytes))
+                .unwrap_or_else(|_| Response::new(boxed(Bytes::new())))
         }
         Err(e) => Response::builder()
             .status(StatusCode::BAD_GATEWAY)
             .header("content-type", "application/json")
-            .body(Full::new(Bytes::from(format!(
+            .body(boxed(format!(
                 r#"{{"error":"proxy to {url} failed: {e}"}}"#
-            ))))
+            )))
             .unwrap(),
     }
 }
@@ -366,7 +429,7 @@ async fn handle(
     hits: Arc<AtomicU64>,
     sequence: Arc<Mutex<std::collections::HashMap<String, usize>>>,
     app: AppHandle,
-) -> Result<Response<Full<Bytes>>, Infallible> {
+) -> Result<Response<ResponseBody>, Infallible> {
     let method = req.method().as_str().to_string();
     let path = req.uri().path().to_string();
     let query = req.uri().query().map(|q| q.to_string());
@@ -409,7 +472,7 @@ async fn handle(
                 .status(StatusCode::NO_CONTENT)
                 .header("access-control-max-age", "600"),
         )
-        .body(Full::new(Bytes::new()))
+        .body(boxed(Bytes::new()))
         .unwrap(),
 
         Some(route) => {
@@ -429,13 +492,27 @@ async fn handle(
                     builder = cors_headers(builder);
                 }
                 builder
-                    .body(Full::new(Bytes::from(
+                    .body(boxed(
                         r#"{"error":"injected failure"}"#,
-                    )))
+                    ))
                     .unwrap()
             } else if route.mode == "proxy" {
                 proxy_response(route, &method, &path, query.as_deref(), &headers, &request_body)
                     .await
+            } else if route.mode == "sse" {
+                // Templated first, so an event stream can carry {{uuid}} and
+                // the rest.
+                sse_response(
+                    route,
+                    render_template(
+                        &route.body,
+                        &method,
+                        &path,
+                        query.as_deref(),
+                        &headers,
+                        &request_body,
+                    ),
+                )
             } else {
                 let body = match route.mode.as_str() {
                     "template" => render_template(
@@ -475,18 +552,18 @@ async fn handle(
                     builder = cors_headers(builder);
                 }
                 builder
-                    .body(Full::new(Bytes::from(body)))
+                    .body(boxed(body))
                     .unwrap_or_else(|_| {
-                        Response::new(Full::new(Bytes::from_static(b"invalid mock response")))
+                        Response::new(boxed(Bytes::from_static(b"invalid mock response")))
                     })
             }
         }
         None => Response::builder()
             .status(StatusCode::NOT_FOUND)
             .header("content-type", "application/json")
-            .body(Full::new(Bytes::from(
+            .body(boxed(
                 r#"{"error":"no mock route matched this request"}"#,
-            )))
+            ))
             .unwrap(),
     };
 
