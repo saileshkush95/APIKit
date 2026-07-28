@@ -226,6 +226,52 @@ export function RequestPane({
     ? tab.reqTab
     : (visibleTabs[0] ?? "headers");
 
+  /** Sits at the end of the response's status line, in both states. */
+  const layoutButton = (
+    <button
+      onClick={() => {
+        const next = columns ? "vertical" : "horizontal";
+        setLayout(next);
+        localStorage.setItem("clientLayout", next);
+      }}
+      className="rounded px-1 text-[11px] text-muted hover:bg-elevated hover:text-ink"
+      title={
+        columns
+          ? "Stack the response under the request"
+          : "Put the response beside the request"
+      }
+    >
+      {columns ? "⬓" : "◧"}
+    </button>
+  );
+
+  /**
+   * The response tabs, inert. Shown before the first request and while one is
+   * in flight, so the pane holds its shape rather than the row appearing and
+   * disappearing around every send.
+   */
+  const placeholderTabs = (
+    <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-1 border-b border-edge px-2 py-1">
+      <div className="flex flex-wrap gap-0.5">
+        {["Body", "Cookies", "Request", "Headers", "Test Results"].map(
+          (label, index) => (
+            <span
+              key={label}
+              className={`flex items-center rounded px-2.5 py-1 text-xs ${
+                index === 0 ? "bg-elevated font-medium text-ink" : "text-muted"
+              }`}
+            >
+              {label}
+            </span>
+          ),
+        )}
+      </div>
+      <div className="ml-auto flex flex-none items-center pr-1">
+        {layoutButton}
+      </div>
+    </div>
+  );
+
   function patchConfig(patch: Partial<RequestConfig>) {
     onChange({ config: { ...tab.config, ...patch } });
   }
@@ -621,25 +667,13 @@ export function RequestPane({
           onClear={onClearStream}
         />
       ) : (
-      <section className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {/* Layout switch, in the response's own corner: it is the pane whose
-            shape people want to change. */}
-        <button
-          onClick={() => {
-            const next = columns ? "vertical" : "horizontal";
-            setLayout(next);
-            localStorage.setItem("clientLayout", next);
-          }}
-          className="absolute top-1 right-1 z-10 rounded px-1.5 py-1 text-[11px] text-muted hover:bg-elevated hover:text-ink"
-          title={
-            columns
-              ? "Stack the response under the request"
-              : "Put the response beside the request"
-          }
-        >
-          {columns ? "⬓" : "◧"}
-        </button>
-        {tab.loading && <LoadingResponse onCancel={onCancel} />}
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {tab.loading && (
+          <>
+            {placeholderTabs}
+            <LoadingResponse onCancel={onCancel} />
+          </>
+        )}
         {!tab.loading && tab.error && (
           <div className="m-3 whitespace-pre-wrap rounded-md border border-err bg-err/10 p-3 font-mono text-xs text-err">
             {tab.error}
@@ -647,27 +681,8 @@ export function RequestPane({
         )}
         {!tab.loading && !tab.error && !tab.response && (
           <>
-            {/* The same tabs the response will have, so the pane keeps its
-                shape instead of appearing only once something arrives. */}
-            <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-1 px-2 py-1">
-              <div className="flex flex-wrap gap-0.5">
-                {["Body", "Cookies", "Request", "Headers", "Test Results"].map(
-                  (label, index) => (
-                    <span
-                      key={label}
-                      className={`flex items-center rounded px-2.5 py-1 text-xs ${
-                        index === 0
-                          ? "bg-elevated font-medium text-ink"
-                          : "text-muted"
-                      }`}
-                    >
-                      {label}
-                    </span>
-                  ),
-                )}
-              </div>
-            </div>
-            <div className="flex flex-1 items-center justify-center border-t border-edge p-6 text-center text-muted">
+            {placeholderTabs}
+            <div className="flex flex-1 items-center justify-center p-6 text-center text-muted">
               Send a request to see the response.
             </div>
           </>
@@ -679,6 +694,7 @@ export function RequestPane({
             sent={tab.sent}
             activeTab={tab.respTab}
             onTabChange={(respTab) => onChange({ respTab })}
+            trailing={layoutButton}
           />
         )}
       </section>

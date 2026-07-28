@@ -31,6 +31,8 @@ interface Props {
   sent: SentRequest | null;
   activeTab: ResponseTabKey;
   onTabChange: (tab: ResponseTabKey) => void;
+  /** Rendered at the end of the status line — the split-orientation switch. */
+  trailing?: React.ReactNode;
 }
 
 function Tab({
@@ -79,6 +81,7 @@ export function ResponseViewer({
   sent,
   activeTab,
   onTabChange,
+  trailing,
 }: Props) {
   const contentType = response.headers.find(
     (h) => h.name.toLowerCase() === "content-type",
@@ -436,6 +439,7 @@ export function ResponseViewer({
           <span className="text-muted" title="Negotiated protocol">
             {response.httpVersion}
           </span>
+          {trailing}
         </div>
       </div>
 
