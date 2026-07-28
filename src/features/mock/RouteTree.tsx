@@ -184,8 +184,13 @@ export function RouteTree({
                 onClick={(e) => e.stopPropagation()}
                 onBlur={(e) => onRename(route.id, e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") onRename(route.id, e.currentTarget.value);
-                  if (e.key === "Escape") onRename(route.id, "");
+                  if (e.key === "Enter") e.currentTarget.blur();
+                  if (e.key === "Escape") {
+                    // Emptied first: the blur that follows would otherwise
+                    // commit the value Escape was meant to discard.
+                    e.currentTarget.value = "";
+                    e.currentTarget.blur();
+                  }
                 }}
                 className="min-w-0 flex-1 rounded border border-brand bg-panel px-1 py-0.5 font-mono text-xs text-ink outline-none"
               />

@@ -10,6 +10,7 @@ import {
   writeTextFile,
 } from "../../shared/lib/api";
 import { notify, notifyError } from "../../shared/lib/notify";
+import { ItemTabs } from "../../shared/components/ItemTabs";
 import { LoadChart, type Sample } from "./LoadChart";
 import {
   SidebarShell,
@@ -116,6 +117,8 @@ export function LoadTestPanel() {
   const [selectedTestId, setSelectedTestId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [listReady, setListReady] = useState(false);
+  // Tests opened as tabs, like the client's open requests.
+  const [openIds, setOpenIds] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,6 +130,8 @@ export function LoadTestPanel() {
         const saved: LoadTest[] = raw ? JSON.parse(raw) : [];
         setTests(saved);
         setSelectedTestId(saved[0]?.id ?? null);
+        // Seed the tab strip too, or the selected test would have no tab.
+        setOpenIds(saved[0] ? [saved[0].id] : []);
         if (saved[0]) applyTest(saved[0]);
       })
       .catch(() => {})
@@ -188,18 +193,23 @@ export function LoadTestPanel() {
     setFolderId(test.folderId ?? "");
   }
 
-  /** Writes the editor's current values back onto the selected test. */
-  function patchSelected(patch: Partial<LoadTest>) {
-    if (!selectedTestId) return;
-    setTests((prev) =>
-      prev.map((test) =>
-        test.id === selectedTestId ? { ...test, ...patch } : test,
-      ),
-    );
+  /**
+   * Renames one test by id. It has to be by id, not by selection: a row can be
+   * renamed without being the selected one.
+   */
+  function renameTest(id: string, name: string) {
+    const trimmed = name.trim();
+    if (trimmed !== "") {
+      setTests((prev) =>
+        prev.map((test) => (test.id === id ? { ...test, name: trimmed } : test)),
+      );
+    }
+    setRenamingId(null);
   }
 
   function selectTest(test: LoadTest) {
     setSelectedTestId(test.id);
+    setOpenIds((prev) => (prev.includes(test.id) ? prev : [...prev, test.id]));
     applyTest(test);
     setReport(null);
     setAssertionRun(null);
@@ -237,7 +247,22 @@ export function LoadTestPanel() {
 
   function deleteTest(id: string) {
     setTests((prev) => prev.filter((test) => test.id !== id));
-    if (selectedTestId === id) setSelectedTestId(null);
+    closeTest(id);
+  }
+
+  function closeTest(id: string) {
+    setOpenIds((prev) => {
+      const next = prev.filter((candidate) => candidate !== id);
+      if (selectedTestId === id) {
+        // Focus the neighbour, the way closing a browser tab does.
+        const at = prev.indexOf(id);
+        const fallbackId = next[at] ?? next[at - 1] ?? null;
+        setSelectedTestId(fallbackId);
+        const fallback = tests.find((test) => test.id === fallbackId);
+        if (fallback) applyTest(fallback);
+      }
+      return next;
+    });
   }
 
   useEffect(() => {
@@ -462,6 +487,7 @@ export function LoadTestPanel() {
   // A tab with nothing behind it is worse than no tab: the pane just looks
   // broken. Live and Results unlock once there is something in them.
   const hasLive = running || latency.length > 0;
+  const selectedTest = tests.find((test) => test.id === selectedTestId) ?? null;
 
   return (
     <div className="flex min-h-0 w-full">
@@ -517,14 +543,16 @@ export function LoadTestPanel() {
                     autoFocus
                     defaultValue={test.name}
                     onClick={(e) => e.stopPropagation()}
-                    onBlur={(e) => {
-                      const name = e.target.value.trim();
-                      if (name) patchSelected({ name });
-                      setRenamingId(null);
-                    }}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    onBlur={(e) => renameTest(test.id, e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") e.currentTarget.blur();
-                      if (e.key === "Escape") setRenamingId(null);
+                      if (e.key === "Escape") {
+                        // Emptied first: the blur that follows would otherwise
+                        // commit the value Escape was meant to discard.
+                        e.currentTarget.value = "";
+                        e.currentTarget.blur();
+                      }
                     }}
                     className="min-w-0 flex-1 rounded border border-brand bg-panel px-1 py-0.5 text-xs text-ink outline-none"
                   />
@@ -559,8 +587,73 @@ export function LoadTestPanel() {
       </SidebarShell>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {/* Target bar, in the same place as the client's URL bar. */}
-        {kind === "chain" ? (
+        <ItemTabs
+          tabs={openIds.flatMap((id) => {
+            const test = tests.find((candidate) => candidate.id === id);
+            if (!test) return [];
+            const preset = presetFor(test.kind);
+            return [
+              {
+                id,
+                prefix: preset.icon,
+                prefixClass: preset.accent,
+                label: test.name,
+              },
+            ];
+          })}
+          activeId={selectedTestId ?? ""}
+          onSelect={(id) => {
+            const test = tests.find((candidate) => candidate.id === id);
+            if (test) selectTest(test);
+          }}
+          onClose={closeTest}
+          onNew={() => createTest(kind)}
+          newTitle="New test"
+        />
+
+        {/* Nothing open: offer the test types as a way in, rather than an
+            empty toolbar with nothing behind it. */}
+        {!selectedTest ? (
+          <div className="min-h-0 flex-1 overflow-auto">
+            <div className="mx-auto max-w-3xl p-8">
+              <h1 className="text-lg font-semibold text-ink">
+                Measure how your API behaves under load
+              </h1>
+              <p className="mt-1 text-xs leading-relaxed text-muted">
+                Pick a shape of traffic to start from. Each one is a saved test
+                you can tune, re-run and keep — they stay in the list on the
+                left.
+              </p>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                {PRESETS.map((preset) => (
+                  <button
+                    key={preset.kind}
+                    onClick={() => createTest(preset.kind)}
+                    className="flex items-start gap-3 rounded-lg border border-edge bg-panel p-3 text-left hover:border-brand hover:bg-elevated/50"
+                  >
+                    <span className={`text-lg leading-none ${preset.accent}`}>
+                      {preset.icon}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-xs font-semibold text-ink">
+                        {preset.label}
+                      </span>
+                      <span className="mt-0.5 block text-[11px] leading-relaxed text-muted">
+                        {preset.blurb}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {tests.length > 0 && (
+                <p className="mt-5 text-[11px] text-muted">
+                  Or reopen one of your {tests.length} saved test
+                  {tests.length === 1 ? "" : "s"} from the list on the left.
+                </p>
+              )}
+            </div>
+          </div>
+        ) : kind === "chain" ? (
           <div className="flex flex-none items-center gap-2 border-b border-edge p-2">
             {/* The type selector belongs in every variant of this bar: without
                 it, choosing Chain was a one-way door. */}

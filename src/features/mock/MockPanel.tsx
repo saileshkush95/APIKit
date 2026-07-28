@@ -1,4 +1,5 @@
 import { Input, Select } from "../../shared/components/Field";
+import { ItemTabs } from "../../shared/components/ItemTabs";
 import { Toggle } from "../../shared/components/Toggle";
 import { useEffect, useState } from "react";
 import { RouteContextMenu, type MenuState } from "./RouteContextMenu";
@@ -95,6 +96,8 @@ export function MockPanel() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Routes opened as tabs, like the client's open requests.
+  const [openIds, setOpenIds] = useState<string[]>([]);
   const [editorTab, setEditorTab] = useState<
     "body" | "headers" | "matching" | "behaviour"
   >("body");
@@ -131,9 +134,10 @@ export function MockPanel() {
             cors: route.cors ?? false,
           })),
         );
-        setSelectedId(
-          workspace.mockRoutes.find((route) => !route.isFolder)?.id ?? null,
-        );
+        const first = workspace.mockRoutes.find((route) => !route.isFolder);
+        setSelectedId(first?.id ?? null);
+        // Seed the tab strip too, or the selected route would have no tab.
+        setOpenIds(first ? [first.id] : []);
         const savedPort = Number(workspace.settings[SETTINGS.mockPort]);
         if (Number.isFinite(savedPort) && savedPort > 0) setPort(savedPort);
       })
@@ -213,7 +217,7 @@ export function MockPanel() {
   function addRoute() {
     const route = newRoute(targetParent());
     setRoutes((prev) => reorder([...prev, route]));
-    setSelectedId(route.id);
+    openRoute(route.id);
     setChecked(new Set());
   }
 
@@ -222,6 +226,24 @@ export function MockPanel() {
     setRoutes((prev) => reorder([...prev, folder]));
     setSelectedId(folder.id);
     setRenamingId(folder.id);
+  }
+
+  /** Opens a route in a tab, or focuses the tab it is already in. */
+  function openRoute(id: string) {
+    setSelectedId(id);
+    setOpenIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  }
+
+  function closeRoute(id: string) {
+    setOpenIds((prev) => {
+      const next = prev.filter((candidate) => candidate !== id);
+      if (selectedId === id) {
+        // Focus the neighbour, the way closing a browser tab does.
+        const at = prev.indexOf(id);
+        setSelectedId(next[at] ?? next[at - 1] ?? null);
+      }
+      return next;
+    });
   }
 
   /** Click, ⌘-click and shift-click, matching the collection sidebar. */
@@ -249,7 +271,7 @@ export function MockPanel() {
       return;
     }
     setChecked(new Set());
-    setSelectedId(id);
+    openRoute(id);
   }
 
   /** Everything a bulk action applies to: the multi-selection, or the row. */
@@ -502,6 +524,25 @@ export function MockPanel() {
 
         {/* Route editor */}
         <div className="flex min-w-0 flex-1 flex-col">
+          <ItemTabs
+            tabs={openIds.flatMap((id) => {
+              const route = routes.find((candidate) => candidate.id === id);
+              if (!route) return [];
+              return [
+                {
+                  id,
+                  prefix: route.isFolder ? "📁" : route.method,
+                  prefixClass: route.isFolder ? "" : methodColor(route.method),
+                  label: route.isFolder ? route.name || "Folder" : route.path,
+                },
+              ];
+            })}
+            activeId={selectedId ?? ""}
+            onSelect={setSelectedId}
+            onClose={closeRoute}
+            onNew={addRoute}
+            newTitle="New route"
+          />
           {selected?.isFolder ? (
             <div className="min-h-0 flex-1 overflow-auto p-4">
               <div className="mb-3 flex items-center gap-2">
