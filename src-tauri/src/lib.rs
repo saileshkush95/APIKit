@@ -147,6 +147,7 @@ pub fn run() {
             github::github_push,
             github::github_check,
             github::write_text_file,
+            github::read_text_file,
             github::save_binary_file,
             secrets::secret_set,
             secrets::secret_get,

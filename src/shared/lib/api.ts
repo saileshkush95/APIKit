@@ -231,6 +231,10 @@ export function writeTextFile(path: string, contents: string): Promise<void> {
   return invoke<void>("write_text_file", { path, contents });
 }
 
+export function readTextFile(path: string): Promise<string> {
+  return invoke<string>("read_text_file", { path });
+}
+
 // --- Credentials -------------------------------------------------------------
 // Tokens live in the OS keychain, never in the workspace database.
 

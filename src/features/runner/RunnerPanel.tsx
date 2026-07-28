@@ -1,10 +1,19 @@
 import { Input, Select } from "../../shared/components/Field";
+import { Toggle } from "../../shared/components/Toggle";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { cancelRequest, readTextFile } from "../../shared/lib/api";
+import { parseDataFile, type DataSet } from "../../shared/lib/dataFile";
 import { executeRequest } from "../../shared/lib/execute";
+import { notifyError } from "../../shared/lib/notify";
 import { findNode, isFolder } from "../../shared/lib/tree";
 import { methodColor, statusColor } from "../../shared/lib/ui";
+import { environmentVars } from "../../shared/lib/vars";
 import { useCollection } from "../../shared/state/collection";
-import { useEnvironments } from "../../shared/state/environments";
+import {
+  useEnvironments,
+  useEnvironmentsStore,
+} from "../../shared/state/environments";
 import { useSettings } from "../../shared/state/settings";
 import type { AssertionResult, SavedRequest, TreeNode } from "../../shared/types";
 
@@ -21,6 +30,7 @@ interface RunResult extends Entry {
   timeMs: number;
   error: string | null;
   results: AssertionResult[];
+  body: string;
 }
 
 /** Depth-first list of requests, so runs follow the visible sidebar order. */
@@ -53,7 +63,7 @@ interface RunnerProps {
 
 export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
   const { tree } = useCollection();
-  const { vars, active, setVariables } = useEnvironments();
+  const { vars, active, environments, setVariables } = useEnvironments();
   const { settings } = useSettings();
 
   const [targetId, setTargetId] = useState<string>(initialTarget ?? "");
@@ -67,15 +77,76 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
   const [results, setResults] = useState<RunResult[]>([]);
   const [currentName, setCurrentName] = useState<string | null>(null);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
+  // Requests the user has unticked; everything else in `entries` runs.
+  const [skipped, setSkipped] = useState<Set<string>>(new Set());
+  // Empty string means "whatever is active", matching the previous behaviour.
+  const [environmentId, setEnvironmentId] = useState("");
+  const [data, setData] = useState<{ path: string; set: DataSet } | null>(null);
+  const [stopOnFailure, setStopOnFailure] = useState(false);
+  const [failedOnly, setFailedOnly] = useState(false);
   const cancelRef = useRef(false);
+  // The in-flight request's cancel handle, so Stop aborts it immediately
+  // instead of waiting out the timeout.
+  const inFlightRef = useRef<string | null>(null);
 
   const folders = useMemo(() => folderOptions(tree), [tree]);
 
-  const entries = useMemo(() => {
+  const allEntries = useMemo(() => {
     if (targetId === "") return flatten(tree);
     const node = findNode(tree, targetId);
     return node && isFolder(node) ? flatten(node.children, [node.name]) : [];
   }, [tree, targetId]);
+
+  const entries = useMemo(
+    () => allEntries.filter((entry) => !skipped.has(entry.request.id)),
+    [allEntries, skipped],
+  );
+
+  // A data file drives the iteration count: one pass per row.
+  const effectiveIterations = data ? data.set.rows.length : iterations;
+
+  /** Variables for a run: the pinned environment, or the active one. */
+  function runVars(): Record<string, string> {
+    if (environmentId === "") return vars;
+    const pinned = environments.find((env) => env.id === environmentId);
+    if (!pinned) return vars;
+    // Session variables (set by scripts) still apply on top of the pinned set.
+    return {
+      ...environmentVars(pinned),
+      ...useEnvironmentsStore.getState().sessionVars,
+    };
+  }
+
+  async function pickDataFile() {
+    const selected = await open({
+      multiple: false,
+      title: "Choose a CSV or JSON data file",
+      filters: [{ name: "Data", extensions: ["csv", "json", "tsv", "txt"] }],
+    });
+    if (typeof selected !== "string") return;
+    try {
+      const set = parseDataFile(await readTextFile(selected), selected);
+      setData({ path: selected, set });
+    } catch (e) {
+      notifyError("Could not read the data file", e);
+    }
+  }
+
+  async function stop() {
+    cancelRef.current = true;
+    // Abort the send that is already on the wire.
+    if (inFlightRef.current) {
+      await cancelRequest(inFlightRef.current).catch(() => {});
+    }
+  }
+
+  const visibleResults = failedOnly
+    ? results.filter(
+        (result) =>
+          result.error !== null ||
+          result.results.some((assertion) => !assertion.passed),
+      )
+    : results;
 
   const totals = results.reduce(
     (acc, r) => {
@@ -94,49 +165,73 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
     setResults([]);
     setExpandedRow(null);
 
-    for (let iteration = 1; iteration <= iterations; iteration++) {
-    for (const entry of entries) {
-      if (cancelRef.current) break;
-      setCurrentName(entry.request.name);
-      const result = await executeRequest(entry.request, {
-        vars,
-        settings,
-        onVariables: setVariables,
-        tree,
-      });
-      setResults((prev) => [
-        ...prev,
-        {
-          ...entry,
-          iteration,
-          status: result.status,
-          statusText: result.statusText,
-          timeMs: result.timeMs,
-          error: result.error,
-          results: result.results,
-        },
-      ]);
-      if (delayMs > 0 && !cancelRef.current) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const base = runVars();
+    let aborted = false;
+
+    for (let iteration = 1; iteration <= effectiveIterations; iteration++) {
+      // With a data file, this iteration's row wins over the environment, so
+      // {{email}} resolves to the row's value.
+      const iterationVars = data
+        ? { ...base, ...data.set.rows[iteration - 1] }
+        : base;
+
+      for (const entry of entries) {
+        if (cancelRef.current) break;
+        setCurrentName(entry.request.name);
+        const cancelId = `runner:${entry.request.id}:${iteration}`;
+        inFlightRef.current = cancelId;
+        const result = await executeRequest(entry.request, {
+          vars: iterationVars,
+          settings,
+          onVariables: setVariables,
+          tree,
+          cancelId,
+        });
+        inFlightRef.current = null;
+        setResults((prev) => [
+          ...prev,
+          {
+            ...entry,
+            iteration,
+            status: result.status,
+            statusText: result.statusText,
+            timeMs: result.timeMs,
+            error: result.error,
+            results: result.results,
+            body: result.body,
+          },
+        ]);
+
+        const failed =
+          result.error !== null ||
+          result.results.some((assertion) => !assertion.passed);
+        if (stopOnFailure && failed) {
+          aborted = true;
+          break;
+        }
+        if (delayMs > 0 && !cancelRef.current) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
       }
-    }
-    if (cancelRef.current) break;
+      if (cancelRef.current || aborted) break;
     }
 
     setCurrentName(null);
     setRunning(false);
+    inFlightRef.current = null;
   }
 
   return (
     <div className="flex min-h-0 w-full flex-col">
       {/* Controls */}
-      <div className="flex flex-none flex-wrap items-center gap-3 border-b border-edge px-4 py-2.5">
-        <label className="flex items-center gap-1.5 text-xs text-muted">
+      <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-edge px-3 py-1.5">
+        <label className="flex items-center gap-1.5 text-[11px] text-muted">
           Run
           <Select
+            size="compact"
             value={targetId}
             onChange={(e) => setTargetId(e.target.value)}
-            className="wrk-field w-56"
+            className="w-48"
           >
             <option value="">Entire collection</option>
             {folders.map((folder) => (
@@ -147,40 +242,68 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
           </Select>
         </label>
 
-        <label className="flex items-center gap-1.5 text-xs text-muted">
+        <label className="flex items-center gap-1.5 text-[11px] text-muted">
+          Environment
+          <Select
+            size="compact"
+            value={environmentId}
+            onChange={(e) => setEnvironmentId(e.target.value)}
+            className="w-40"
+            title="Pin an environment so a run cannot pick up whichever one happens to be active"
+          >
+            <option value="">
+              Active{active ? ` — ${active.name}` : " — none"}
+            </option>
+            {environments.map((env) => (
+              <option key={env.id} value={env.id}>
+                {env.name}
+              </option>
+            ))}
+          </Select>
+        </label>
+
+        <label className="flex items-center gap-1.5 text-[11px] text-muted">
           Iterations
           <Input
+            size="compact"
+            mono
             type="number"
             min={1}
-            value={iterations}
+            value={effectiveIterations}
+            disabled={data !== null}
+            title={data ? "Set by the data file: one iteration per row" : undefined}
             onChange={(e) => setIterations(Math.max(1, Number(e.target.value)))}
-            className="wrk-field mono w-16"
+            className="w-14"
           />
         </label>
 
-        <label className="flex items-center gap-1.5 text-xs text-muted">
+        <label className="flex items-center gap-1.5 text-[11px] text-muted">
           Delay
           <Input
+            size="compact"
+            mono
             type="number"
             min={0}
             step={50}
             value={delayMs}
             onChange={(e) => setDelayMs(Math.max(0, Number(e.target.value)))}
-            className="wrk-field mono w-20"
+            className="w-16"
           />
           ms
         </label>
 
-        <span className="text-xs text-muted">
-          {entries.length} request{entries.length === 1 ? "" : "s"} ·{" "}
-          {active ? active.name : "no environment"}
-        </span>
+        <Toggle
+          checked={stopOnFailure}
+          onChange={setStopOnFailure}
+          label="Stop on failure"
+          title="Abort the whole run as soon as a request errors or an assertion fails"
+        />
 
         <div className="ml-auto flex items-center gap-2">
           {running && (
             <button
-              onClick={() => (cancelRef.current = true)}
-              className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted hover:border-err hover:text-err"
+              onClick={stop}
+              className="rounded border border-edge px-2.5 py-1 text-[11px] text-muted hover:border-err hover:text-err"
             >
               Stop
             </button>
@@ -188,18 +311,119 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
           <button
             onClick={run}
             disabled={running || entries.length === 0}
-            className="rounded-md bg-brand px-4 py-1.5 text-xs font-semibold text-white hover:bg-brand-bright disabled:cursor-default disabled:opacity-50"
+            className="rounded bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-bright disabled:cursor-default disabled:opacity-50"
           >
             {running ? "Running…" : "Run"}
           </button>
         </div>
       </div>
 
+      {/* Data file */}
+      <div className="flex flex-none flex-wrap items-center gap-2 border-b border-edge px-3 py-1 text-[11px]">
+        <span className="text-muted">Data file</span>
+        {data ? (
+          <>
+            <span
+              className="max-w-[22rem] truncate font-mono text-ink"
+              title={data.path}
+            >
+              {data.path.split("/").pop()}
+            </span>
+            <span className="text-muted">
+              {data.set.rows.length} row
+              {data.set.rows.length === 1 ? "" : "s"} ·{" "}
+              {data.set.columns.map((column) => `{{${column}}}`).join(" ")}
+            </span>
+            <button
+              onClick={() => setData(null)}
+              className="rounded px-1 text-muted hover:text-err"
+              title="Remove"
+            >
+              ✕
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={pickDataFile}
+              className="rounded border border-edge px-2 py-0.5 text-muted hover:border-brand hover:text-ink"
+            >
+              Choose CSV or JSON…
+            </button>
+            <span className="text-muted">
+              Optional — each row becomes one iteration, its columns available as
+              variables.
+            </span>
+          </>
+        )}
+      </div>
+
+      {/* Request selection */}
+      <details className="flex-none border-b border-edge">
+        <summary className="cursor-pointer px-3 py-1 text-[11px] text-muted">
+          {entries.length} of {allEntries.length} request
+          {allEntries.length === 1 ? "" : "s"} selected
+          {effectiveIterations > 1 && ` · ${effectiveIterations} iterations`}
+        </summary>
+        <div className="max-h-48 overflow-auto border-t border-edge">
+          <div className="flex items-center gap-2 px-3 py-1 text-[11px]">
+            <button
+              onClick={() => setSkipped(new Set())}
+              className="text-muted hover:text-ink"
+            >
+              Select all
+            </button>
+            <button
+              onClick={() =>
+                setSkipped(new Set(allEntries.map((entry) => entry.request.id)))
+              }
+              className="text-muted hover:text-ink"
+            >
+              Select none
+            </button>
+          </div>
+          {allEntries.map((entry) => (
+            <div
+              key={entry.request.id}
+              className="flex items-center gap-2 px-3 py-0.5 text-[11px] hover:bg-elevated/40"
+            >
+              <Toggle
+                checked={!skipped.has(entry.request.id)}
+                onChange={(include) =>
+                  setSkipped((prev) => {
+                    const next = new Set(prev);
+                    if (include) next.delete(entry.request.id);
+                    else next.add(entry.request.id);
+                    return next;
+                  })
+                }
+                title="Include in the run"
+              />
+              <span
+                className={`w-11 flex-none font-mono text-[10px] font-bold ${methodColor(
+                  entry.request.method,
+                )}`}
+              >
+                {entry.request.method.toUpperCase()}
+              </span>
+              <span className="min-w-0 flex-1 truncate">
+                {entry.path.length > 0 && (
+                  <span className="text-muted">
+                    {entry.path.join(" / ")} /{" "}
+                  </span>
+                )}
+                {entry.request.name}
+              </span>
+            </div>
+          ))}
+        </div>
+      </details>
+
       {/* Summary */}
       {(results.length > 0 || running) && (
         <div className="flex flex-none items-center gap-4 border-b border-edge px-4 py-2 text-xs">
           <span className="text-muted">
-            {results.length}/{entries.length * iterations} run
+            {results.length}/{entries.length * effectiveIterations} run
           </span>
           <span className="text-ok">{totals.passed} passed</span>
           <span className={totals.failed > 0 ? "text-err" : "text-muted"}>
@@ -208,7 +432,15 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
           {totals.errors > 0 && (
             <span className="text-err">{totals.errors} errored</span>
           )}
-          <span className="text-muted">{totals.timeMs} ms total</span>
+          <span className="text-muted" title="Sum of request durations">
+            {totals.timeMs} ms
+          </span>
+          <Toggle
+            checked={failedOnly}
+            onChange={setFailedOnly}
+            label="Failures only"
+            title="Show only rows that errored or failed an assertion"
+          />
           {currentName && (
             <span className="ml-auto truncate text-muted">
               Sending {currentName}…
@@ -226,7 +458,7 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
               : "Run the collection to execute every saved request and its assertions."}
           </p>
         ) : (
-          results.map((result) => {
+          visibleResults.map((result) => {
             const failed = result.results.filter((a) => !a.passed).length;
             const open =
               expandedRow === `${result.iteration}:${result.request.id}`;
@@ -313,6 +545,16 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
                     ))}
                     {!result.error && result.results.length === 0 && (
                       <div className="text-muted">No assertions defined.</div>
+                    )}
+                    {result.body !== "" && (
+                      <details className="mt-1.5">
+                        <summary className="cursor-pointer text-muted">
+                          Response body ({result.body.length} bytes)
+                        </summary>
+                        <pre className="mt-1 max-h-64 overflow-auto rounded border border-edge bg-canvas p-2 font-mono text-[11px] whitespace-pre-wrap">
+                          {result.body.slice(0, 20_000)}
+                        </pre>
+                      </details>
                     )}
                   </div>
                 )}

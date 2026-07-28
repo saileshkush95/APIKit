@@ -22,6 +22,11 @@ export interface ExecuteContext {
   onVariables?: (updates: Record<string, string>) => void;
   /** Lets "inherit from parent" auth resolve; omitted, it becomes "none". */
   tree?: TreeNode[];
+  /**
+   * Handle for `cancelRequest`, so a caller can abort the in-flight send
+   * rather than waiting out its timeout.
+   */
+  cancelId?: string;
 }
 
 export interface ExecuteResult {
@@ -30,11 +35,14 @@ export interface ExecuteResult {
   timeMs: number;
   error: string | null;
   results: AssertionResult[];
+  /** The response itself, for callers that show what came back. */
+  body: string;
+  headers: { name: string; value: string }[];
 }
 
 export async function executeRequest(
   request: SavedRequest,
-  { vars, settings, onVariables, tree }: ExecuteContext,
+  { vars, settings, onVariables, tree, cancelId }: ExecuteContext,
 ): Promise<ExecuteResult> {
   const config = normalizeConfig(request.config);
   config.auth = resolveAuth(tree ?? [], request.id, config.auth);
@@ -60,6 +68,7 @@ export async function executeRequest(
       noReferer: config.noReferer,
       noCookieJar: config.noCookieJar,
       multipart: built.multipart ?? null,
+      cancelId,
     });
 
     const post = runPostScript(config.postScript, response, {
@@ -74,6 +83,8 @@ export async function executeRequest(
       timeMs: response.timeMs,
       error: null,
       results: [...runAssertions(request.tests ?? [], response), ...post.tests],
+      body: response.body,
+      headers: response.headers,
     };
   } catch (e) {
     return {
@@ -82,6 +93,8 @@ export async function executeRequest(
       timeMs: Math.round(performance.now() - started),
       error: String(e),
       results: [],
+      body: "",
+      headers: [],
     };
   }
 }
