@@ -92,6 +92,9 @@ export function ResponseViewer({
   // Off by default, and reset per response: this runs code from the server
   // under test, so it must be a deliberate choice each time.
   const [runScripts, setRunScripts] = useState(false);
+  // Fetches the page again from its own URL, which is the only way one that
+  // depends on cookies or its own API can render.
+  const [live, setLive] = useState(false);
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -183,6 +186,8 @@ export function ResponseViewer({
    * asset — `/_next/static/…`, `styles.css` — would resolve against nothing
    * and 404. A `<base>` pointing at the request URL fixes that.
    */
+  const livePreview = live && runScripts && Boolean(sent?.url);
+
   const previewDocument = useMemo(() => {
     if (!sent?.url) return response.body;
     if (/<base\b/i.test(response.body)) return response.body;
@@ -569,17 +574,27 @@ export function ResponseViewer({
             </div>
           ) : preview ? (
             <div className="flex h-full flex-col">
-              <div className="flex flex-none items-center gap-2 border-b border-edge px-2 py-1 text-[11px]">
+              <div className="flex flex-none items-center gap-3 border-b border-edge px-2 py-1 text-[11px]">
                 <Toggle
                   checked={runScripts}
                   onChange={setRunScripts}
                   label="Run scripts"
-                  title="Executes the page's JavaScript inside a sandboxed frame with its own opaque origin. Off by default: this is code from the server you are testing."
+                  title="Executes the page's JavaScript. Off by default: this is code from the server you are testing."
                 />
-                <span className="truncate text-muted">
-                  {runScripts
-                    ? "Scripts enabled — the frame still has no access to this app or its cookies."
-                    : "Static preview: JavaScript is not executed."}
+                {sent?.url && runScripts && (
+                  <Toggle
+                    checked={live}
+                    onChange={setLive}
+                    label="Live page"
+                    title="Reloads the page from its own URL instead of showing the captured HTML, so cookies, API calls and relative assets work as they do in a browser. It sends the request again."
+                  />
+                )}
+                <span className="min-w-0 truncate text-muted">
+                  {livePreview
+                    ? "Loaded from its own origin — behaves as it would in a browser."
+                    : runScripts
+                      ? "Scripts run, but the captured HTML has an opaque origin: its own API calls and storage may fail. Turn on Live page for those."
+                      : "Static preview: JavaScript is not executed."}
                 </span>
                 {sent?.url && (
                   <button
@@ -595,16 +610,30 @@ export function ResponseViewer({
                   </button>
                 )}
               </div>
-              <iframe
-                // Without allow-same-origin the frame gets an opaque origin, so
-                // even with scripts on it cannot reach this app's storage.
-                sandbox={
-                  runScripts ? "allow-scripts allow-forms allow-popups" : ""
-                }
-                srcDoc={previewDocument}
-                title="Response preview"
-                className="min-h-0 w-full flex-1 border-0 bg-white"
-              />
+              {livePreview ? (
+                <iframe
+                  // Loaded from its own URL rather than as srcDoc, so the page
+                  // runs at its real origin: its scripts, cookies, API calls
+                  // and relative assets all work as they do in a browser.
+                  // allow-same-origin is scoped to *that* origin, not ours.
+                  key={sent?.url}
+                  src={sent?.url}
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+                  title="Live page"
+                  className="min-h-0 w-full flex-1 border-0 bg-white"
+                />
+              ) : (
+                <iframe
+                  // Without allow-same-origin the frame gets an opaque origin,
+                  // so even with scripts on it cannot reach this app.
+                  sandbox={
+                    runScripts ? "allow-scripts allow-forms allow-popups" : ""
+                  }
+                  srcDoc={previewDocument}
+                  title="Response preview"
+                  className="min-h-0 w-full flex-1 border-0 bg-white"
+                />
+              )}
             </div>
           ) : (
             <VirtualBody
