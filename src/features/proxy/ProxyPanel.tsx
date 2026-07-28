@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
   caCertificatePath,
@@ -13,6 +13,7 @@ import {
   stopProxy,
   trustCaCertificate,
 } from "../../shared/lib/api";
+import { Input, Select } from "../../shared/components/Field";
 import { ProxySetupGuide } from "./ProxySetupGuide";
 import type { Flow, Header, ProxyStatus } from "../../shared/types";
 import { generateCode } from "../../shared/lib/codegen";
@@ -59,6 +60,16 @@ export function ProxyPanel() {
   const [port, setPort] = useState(8080);
   const [query, setQuery] = useState("");
   const [appFilter, setAppFilter] = useState("");
+  const [detailTab, setDetailTab] = useState<
+    "reqHeaders" | "reqBody" | "resHeaders" | "resBody"
+  >("reqHeaders");
+  // Percentage of the width given to the flow list, remembered across sessions.
+  const [split, setSplit] = useState(() => {
+    const stored = Number(localStorage.getItem("proxySplit"));
+    return stored >= 20 && stored <= 80 ? stored : 58;
+  });
+  const dragging = useRef(false);
+  const splitRef = useRef<HTMLDivElement>(null);
   const [flows, setFlows] = useState<Flow[]>([]);
   const [selected, setSelected] = useState<Flow | null>(null);
   const [busy, setBusy] = useState(false);
@@ -190,6 +201,33 @@ export function ProxyPanel() {
       String(flow.status ?? "").includes(needle)
     );
   });
+
+  // Drag the divider. Listeners live on the window so the pointer can leave
+  // the handle mid-drag without the split sticking.
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      if (!dragging.current || !splitRef.current) return;
+      const box = splitRef.current.getBoundingClientRect();
+      const percent = ((e.clientX - box.left) / box.width) * 100;
+      setSplit(Math.min(80, Math.max(20, percent)));
+    }
+    function onUp() {
+      if (!dragging.current) return;
+      dragging.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      setSplit((current) => {
+        localStorage.setItem("proxySplit", String(Math.round(current)));
+        return current;
+      });
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
 
   async function onClear() {
     await clearFlows();
@@ -323,21 +361,28 @@ export function ProxyPanel() {
         />
       ) : (
       /* Flow list + detail */
-      <div className="grid min-h-0 flex-1 grid-cols-[1.4fr_1fr]">
-        <div className="flex min-h-0 flex-col border-r border-edge">
+      <div
+        ref={splitRef}
+        className="grid min-h-0 flex-1"
+        style={{ gridTemplateColumns: `${split}% 0.25rem 1fr` }}
+      >
+        <div className="flex min-h-0 flex-col">
           {/* Filters */}
           <div className="flex flex-none items-center gap-2 border-b border-edge px-2 py-1.5">
-            <input
+            <Input
+              size="compact"
+              mono
               value={query}
               placeholder="Filter by URL, host, method or status…"
               spellCheck={false}
               onChange={(e) => setQuery(e.target.value)}
-              className="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 font-mono text-[11px] text-ink outline-none focus:border-brand"
+              className="min-w-0 flex-1"
             />
-            <select
+            <Select
+              size="compact"
               value={appFilter}
               onChange={(e) => setAppFilter(e.target.value)}
-              className="cursor-pointer rounded border border-edge bg-panel px-1.5 py-1 text-[11px] text-ink outline-none focus:border-brand"
+              className="w-40 flex-none cursor-pointer"
             >
               <option value="">All apps</option>
               {apps.map((app) => (
@@ -345,7 +390,7 @@ export function ProxyPanel() {
                   {app}
                 </option>
               ))}
-            </select>
+            </Select>
             {(needle !== "" || appFilter !== "") && (
               <button
                 onClick={() => {
@@ -419,71 +464,128 @@ export function ProxyPanel() {
           </div>
         </div>
 
-        <div className="overflow-auto">
+        <div
+          onMouseDown={() => {
+            dragging.current = true;
+            document.body.style.cursor = "col-resize";
+            document.body.style.userSelect = "none";
+          }}
+          onDoubleClick={() => {
+            setSplit(58);
+            localStorage.setItem("proxySplit", "58");
+          }}
+          className="cursor-col-resize border-x border-edge bg-transparent transition-colors hover:bg-brand/40"
+          title="Drag to resize — double-click to reset"
+        />
+
+        <div className="flex min-h-0 flex-col">
           {!selected ? (
             <div className="p-6 text-center text-muted">
               Select a request to inspect it.
             </div>
           ) : (
-            <div className="p-4">
-              <h3 className="mb-3 break-all text-[13px] font-semibold">
-                <span className="font-mono">{selected.method}</span>{" "}
-                {selected.url}
-              </h3>
-
-              <div className="mb-4 flex gap-2">
-                <button
-                  onClick={() => handOff(selected, false)}
-                  className="rounded border border-edge px-2 py-1 text-[11px] text-ink hover:bg-elevated"
-                  title="Open this request in the client, ready to edit and resend"
-                >
-                  Open in client
-                </button>
-                <button
-                  onClick={() => handOff(selected, true)}
-                  className="rounded border border-edge px-2 py-1 text-[11px] text-ink hover:bg-elevated"
-                  title="Add this request to the collection"
-                >
-                  Save to collection
-                </button>
-                <button
-                  onClick={() => copyAsCurl(selected)}
-                  className="rounded border border-edge px-2 py-1 text-[11px] text-ink hover:bg-elevated"
-                >
-                  Copy as cURL
-                </button>
+            <>
+              <div className="flex-none border-b border-edge p-3">
+                <h3 className="mb-2 break-all text-[13px] font-semibold">
+                  <span className="font-mono">{selected.method}</span>{" "}
+                  {selected.url}
+                </h3>
+                <div className="mb-2 flex items-center gap-2 text-[11px] text-muted">
+                  <span
+                    className={`font-mono font-bold ${statusColor(
+                      selected.status,
+                    )}`}
+                  >
+                    {selected.status ?? "—"} {selected.statusText}
+                  </span>
+                  <span>·</span>
+                  <span>{selected.durationMs} ms</span>
+                  {selected.app && (
+                    <>
+                      <span>·</span>
+                      <span className="truncate">{selected.app}</span>
+                    </>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => handOff(selected, false)}
+                    className="rounded border border-edge px-2 py-1 text-[11px] text-ink hover:bg-elevated"
+                    title="Open this request in the client, ready to edit and resend"
+                  >
+                    Open in client
+                  </button>
+                  <button
+                    onClick={() => handOff(selected, true)}
+                    className="rounded border border-edge px-2 py-1 text-[11px] text-ink hover:bg-elevated"
+                    title="Add this request to the collection"
+                  >
+                    Save to collection
+                  </button>
+                  <button
+                    onClick={() => copyAsCurl(selected)}
+                    className="rounded border border-edge px-2 py-1 text-[11px] text-ink hover:bg-elevated"
+                  >
+                    Copy as cURL
+                  </button>
+                </div>
               </div>
 
-              <Section title="Request headers">
-                <HeaderTable headers={selected.requestHeaders} />
-              </Section>
-              {selected.requestBody && (
-                <Section title="Request body">
-                  <BodyBlock text={selected.requestBody} />
-                </Section>
-              )}
-              <Section
-                title={
-                  <>
-                    Response{" "}
-                    <span
-                      className={`font-mono font-bold ${statusColor(
-                        selected.status,
-                      )}`}
-                    >
-                      {selected.status ?? "—"} {selected.statusText}
-                    </span>
-                  </>
-                }
-              >
-                <HeaderTable headers={selected.responseHeaders} />
-              </Section>
-              {selected.responseBody && (
-                <Section title="Response body">
-                  <BodyBlock text={selected.responseBody} />
-                </Section>
-              )}
-            </div>
+              {/* Request / response split into tabs, so a long header list
+                  never buries the body. */}
+              <div className="flex flex-none items-center gap-1 border-b border-edge px-2 py-1">
+                {(
+                  [
+                    ["reqHeaders", "Headers", selected.requestHeaders.length],
+                    ["reqBody", "Body", selected.requestBody ? 1 : 0],
+                    ["resHeaders", "Resp. headers", selected.responseHeaders.length],
+                    ["resBody", "Resp. body", selected.responseBody ? 1 : 0],
+                  ] as const
+                ).map(([key, label, count]) => (
+                  <button
+                    key={key}
+                    onClick={() => setDetailTab(key)}
+                    className={`rounded px-2 py-1 text-[11px] ${
+                      detailTab === key
+                        ? "bg-elevated font-medium text-ink"
+                        : "text-muted hover:text-ink"
+                    }`}
+                  >
+                    {label}
+                    {count > 1 && (
+                      <span className="ml-1 text-[10px] text-muted">
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-auto p-3">
+                {detailTab === "reqHeaders" && (
+                  <HeaderTable headers={selected.requestHeaders} />
+                )}
+                {detailTab === "reqBody" &&
+                  (selected.requestBody ? (
+                    <BodyBlock text={selected.requestBody} />
+                  ) : (
+                    <div className="p-4 text-center text-xs text-muted">
+                      No request body.
+                    </div>
+                  ))}
+                {detailTab === "resHeaders" && (
+                  <HeaderTable headers={selected.responseHeaders} />
+                )}
+                {detailTab === "resBody" &&
+                  (selected.responseBody ? (
+                    <BodyBlock text={selected.responseBody} />
+                  ) : (
+                    <div className="p-4 text-center text-xs text-muted">
+                      No response body.
+                    </div>
+                  ))}
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -492,22 +594,6 @@ export function ProxyPanel() {
   );
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="mb-4">
-      <h4 className="mb-1.5 text-[11px] uppercase tracking-wide text-muted">
-        {title}
-      </h4>
-      {children}
-    </div>
-  );
-}
 
 function BodyBlock({ text }: { text: string }) {
   return (
