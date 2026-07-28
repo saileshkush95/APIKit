@@ -143,6 +143,60 @@ fn apply(enable: bool, port: u16) -> Result<(), String> {
     })
 }
 
+/// True when the OS already trusts the proxy's CA certificate, so HTTPS will
+/// survive interception.
+#[tauri::command]
+pub fn ca_trusted(cert_path: String) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("security")
+            .args(["verify-cert", "-c", &cert_path])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = &cert_path;
+        Command::new("certutil")
+            .args(["-user", "-store", "Root"])
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).contains("APIKit CA"))
+            .unwrap_or(false)
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = &cert_path;
+        // No portable check across Linux trust stores; report untrusted and
+        // let the trust attempt explain itself.
+        false
+    }
+}
+
+/// Asks the OS to trust the CA certificate. Shows a system authorization
+/// prompt; declining it is returned as an error.
+#[tauri::command]
+pub fn trust_ca_certificate(cert_path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").map_err(|_| "no home directory".to_owned())?;
+        let keychain = format!("{home}/Library/Keychains/login.keychain-db");
+        run(
+            "security",
+            &["add-trusted-cert", "-r", "trustRoot", "-k", &keychain, &cert_path],
+        )
+    }
+    #[cfg(target_os = "windows")]
+    {
+        run("certutil", &["-user", "-addstore", "Root", &cert_path])
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = &cert_path;
+        Err("automatic trust is not supported on Linux — install the certificate into your distribution's trust store manually".into())
+    }
+}
+
 /// Routes (or stops routing) this computer's HTTP/HTTPS traffic through the
 /// local proxy.
 #[tauri::command]

@@ -431,6 +431,16 @@ export function setSystemProxy(enable: boolean, port: number): Promise<void> {
   return invoke<void>("set_system_proxy", { enable, port });
 }
 
+/** Whether the OS already trusts the proxy's CA, so HTTPS survives interception. */
+export function caTrusted(certPath: string): Promise<boolean> {
+  return invoke<boolean>("ca_trusted", { certPath });
+}
+
+/** Asks the OS to trust the CA certificate; shows a system prompt. */
+export function trustCaCertificate(certPath: string): Promise<void> {
+  return invoke<void>("trust_ca_certificate", { certPath });
+}
+
 export function proxyStatus(): Promise<ProxyStatus> {
   return invoke<ProxyStatus>("proxy_status");
 }

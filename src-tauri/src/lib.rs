@@ -167,6 +167,8 @@ pub fn run() {
             proxy::start_proxy,
             proxy::stop_proxy,
             system_proxy::set_system_proxy,
+            system_proxy::ca_trusted,
+            system_proxy::trust_ca_certificate,
             proxy::proxy_status,
             proxy::get_flows,
             proxy::clear_flows,

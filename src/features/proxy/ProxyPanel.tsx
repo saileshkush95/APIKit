@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
   caCertificatePath,
+  caTrusted,
   clearFlows,
   getCaCertificatePem,
   getFlows,
@@ -10,6 +11,7 @@ import {
   setSystemProxy,
   startProxy,
   stopProxy,
+  trustCaCertificate,
 } from "../../shared/lib/api";
 import { ProxySetupGuide } from "./ProxySetupGuide";
 import type { Flow, Header, ProxyStatus } from "../../shared/types";
@@ -55,14 +57,6 @@ export function ProxyPanel() {
     addresses: [],
   });
   const [port, setPort] = useState(8080);
-  // Off by default: on the LAN, anyone on the network can route through us.
-  const [lan, setLan] = useState(
-    () => localStorage.getItem("proxyLan") === "1",
-  );
-  // Point the OS at the proxy while it runs, and back to none on stop.
-  const [system, setSystem] = useState(
-    () => localStorage.getItem("proxySystem") === "1",
-  );
   const [flows, setFlows] = useState<Flow[]>([]);
   const [selected, setSelected] = useState<Flow | null>(null);
   const [busy, setBusy] = useState(false);
@@ -127,25 +121,32 @@ export function ProxyPanel() {
     try {
       if (status.running) {
         await stopProxy();
-        if (system) {
-          // Losing the OS setting matters more than how the stop went: a
-          // machine left pointing at a dead proxy has no working network.
-          await setSystemProxy(false, port).catch((e) =>
-            notifyError("Could not restore the system proxy", e),
-          );
-        }
+        // Losing the OS setting matters more than how the stop went: a
+        // machine left pointing at a dead proxy has no working network.
+        await setSystemProxy(false, port).catch((e) =>
+          notifyError("Could not restore the system proxy", e),
+        );
       } else {
-        await startProxy(port, lan);
-        if (system) {
-          try {
-            await setSystemProxy(true, port);
-            notify("success", "This computer now routes through APIKit");
-          } catch (e) {
-            notifyError(
-              "Proxy is running, but the system setup failed — configure it manually",
-              e,
+        // Always on the LAN too, so phones on the network can point at us.
+        await startProxy(port, true);
+        // This computer is configured automatically. HTTPS only survives
+        // interception if the OS trusts our CA, so that is ensured first.
+        try {
+          const certPath = await caCertificatePath();
+          if (!(await caTrusted(certPath))) {
+            notify(
+              "info",
+              "Approve the system prompt so HTTPS keeps working while the proxy runs",
             );
+            await trustCaCertificate(certPath);
           }
+          await setSystemProxy(true, port);
+          notify("success", "This computer now routes through APIKit");
+        } catch (e) {
+          notifyError(
+            "Proxy is running, but this computer could not be configured automatically",
+            e,
+          );
         }
       }
       setStatus(await proxyStatus());
@@ -199,42 +200,6 @@ export function ProxyPanel() {
             onChange={(e) => setPort(Number(e.target.value))}
             className="w-[70px] rounded-md border border-edge bg-elevated px-2 py-1.5 font-mono text-ink outline-none focus:border-brand disabled:opacity-60"
           />
-        </label>
-        <label
-          className={`flex items-center gap-1.5 text-xs text-muted ${
-            status.running ? "opacity-60" : "cursor-pointer"
-          }`}
-          title="Also listen on your LAN address, so phones and other devices on the network can use this proxy. Anyone on the network can then route traffic through this machine."
-        >
-          <input
-            type="checkbox"
-            checked={lan}
-            disabled={status.running}
-            onChange={(e) => {
-              setLan(e.target.checked);
-              localStorage.setItem("proxyLan", e.target.checked ? "1" : "0");
-            }}
-            className="accent-[var(--color-brand)]"
-          />
-          Local network
-        </label>
-        <label
-          className={`flex items-center gap-1.5 text-xs text-muted ${
-            status.running ? "opacity-60" : "cursor-pointer"
-          }`}
-          title="While the proxy runs, this computer's HTTP/HTTPS traffic is routed through it automatically — no manual system settings. Restored to direct when you stop the proxy. Install the CA certificate first so HTTPS keeps working."
-        >
-          <input
-            type="checkbox"
-            checked={system}
-            disabled={status.running}
-            onChange={(e) => {
-              setSystem(e.target.checked);
-              localStorage.setItem("proxySystem", e.target.checked ? "1" : "0");
-            }}
-            className="accent-[var(--color-brand)]"
-          />
-          Use for this computer
         </label>
         <span
           className={`h-2.5 w-2.5 rounded-full ${
