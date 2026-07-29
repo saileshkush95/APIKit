@@ -12,6 +12,7 @@ import {
   onStreamEvent,
   onStreamStatus,
   saveTabs,
+  grpcCall,
   sendRequest,
   setSetting,
   writeTextFile,
@@ -416,6 +417,12 @@ export function ApiClient({ intent }: ApiClientProps) {
 
   async function send(tab: RequestTab) {
     updateTab(tab.id, { loading: true, error: null, scriptLogs: [] });
+    // gRPC speaks protobuf over HTTP/2 and is answered by its own command; the
+    // rest of the pipeline — scripts, assertions, history — does not apply.
+    if (tab.config.protocol === "grpc") {
+      await sendGrpc(tab);
+      return;
+    }
     logConsole({
       level: "request",
       source: "Client",
@@ -551,6 +558,67 @@ export function ApiClient({ intent }: ApiClientProps) {
         sent,
         scriptLogs: logs,
         loading: false,
+      });
+    }
+  }
+
+  /** A unary gRPC call, rendered into the same response pane. */
+  async function sendGrpc(tab: RequestTab) {
+    const target = interpolate(tab.url, vars);
+    const method = interpolate(tab.config.grpcMethod, vars);
+    const sent = {
+      method: "POST",
+      url: `${target}/${method}`,
+      headers: tab.headers,
+      body: tab.body,
+    };
+    logConsole({
+      level: "request",
+      source: "gRPC",
+      message: `${method} — ${target}`,
+      detail: { method: "gRPC", url: target },
+    });
+    try {
+      const reply = await grpcCall({
+        target,
+        method,
+        body: interpolate(tab.body, vars),
+        metadata: tab.headers.filter((h) => h.name.trim() !== ""),
+        timeoutMs: tab.config.timeoutMs ?? settings.defaultTimeoutMs,
+        plaintext: tab.config.grpcPlaintext,
+      });
+      logConsole({
+        level: "response",
+        source: "gRPC",
+        message: `OK — ${method}`,
+        detail: { url: target, timeMs: reply.timeMs, body: reply.body },
+      });
+      updateTab(tab.id, {
+        response: {
+          status: 200,
+          statusText: reply.status,
+          headers: reply.metadata,
+          body: reply.body,
+          timeMs: reply.timeMs,
+          sizeBytes: new TextEncoder().encode(reply.body).length,
+          finalUrl: target,
+          httpVersion: "HTTP/2.0",
+        },
+        results: [],
+        sent,
+        error: null,
+        loading: false,
+        respTab: "body",
+      });
+    } catch (e) {
+      const message = String(e);
+      logConsole({ level: "error", source: "gRPC", message });
+      updateTab(tab.id, {
+        error: message,
+        response: null,
+        results: [],
+        loading: false,
+        sent,
       });
     }
   }

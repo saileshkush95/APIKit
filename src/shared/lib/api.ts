@@ -418,6 +418,34 @@ export function onLoadProgress(
   return listen<LoadProgress>("load://progress", (event) => cb(event.payload));
 }
 
+// --- gRPC ---------------------------------------------------------------------
+
+export interface GrpcSpec {
+  target: string;
+  method: string;
+  body: string;
+  metadata: Header[];
+  timeoutMs?: number | null;
+  plaintext: boolean;
+}
+
+export interface GrpcResponse {
+  body: string;
+  status: string;
+  timeMs: number;
+  metadata: Header[];
+}
+
+/** Invokes a unary method, using the server's own descriptors for JSON. */
+export function grpcCall(spec: GrpcSpec): Promise<GrpcResponse> {
+  return invoke<GrpcResponse>("grpc_call", { spec });
+}
+
+/** The services a server exposes, via reflection. */
+export function grpcServices(spec: GrpcSpec): Promise<string[]> {
+  return invoke<string[]>("grpc_services", { spec });
+}
+
 // --- Proxy -------------------------------------------------------------------
 
 export function startProxy(

@@ -54,6 +54,7 @@ interface Props {
 const PROTOCOLS: Protocol[] = [
   "rest",
   "graphql",
+  "grpc",
   "websocket",
   "sse",
   "socketio",
@@ -74,6 +75,9 @@ function tabsFor(protocol: Protocol): RequestTabKey[] {
   if (protocol === "webrtc") return [];
   if (isStreaming(protocol)) {
     return ["headers", "connection", "docs", "comments"];
+  }
+  if (protocol === "grpc") {
+    return ["headers", "body", "scripts", "tests", "docs", "comments"];
   }
   if (protocol === "graphql") {
     return [
@@ -413,7 +417,7 @@ export function RequestPane({
           ))}
         </Select>
 
-        {!streaming && protocol !== "webrtc" && (
+        {!streaming && protocol !== "webrtc" && protocol !== "grpc" && (
           <Select
             value={tab.method}
             onChange={(e) => onChange({ method: e.target.value })}
@@ -447,7 +451,19 @@ export function RequestPane({
           />
         )}
 
-        {!streaming && protocol !== "webrtc" && (
+        {protocol === "grpc" && (
+          <VariableInput
+            value={tab.config.grpcMethod}
+            onChange={(grpcMethod) => patchConfig({ grpcMethod })}
+            placeholder="package.Service/Method"
+            mono
+            size="lg"
+            className="w-72 flex-none"
+            title="The method to call. The server's own descriptors are fetched by reflection, so no .proto file is needed."
+          />
+        )}
+
+        {!streaming && protocol !== "webrtc" && protocol !== "grpc" && (
           <Select
             value={tab.config.httpVersion}
             onChange={(e) =>

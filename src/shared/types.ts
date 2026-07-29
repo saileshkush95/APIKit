@@ -144,6 +144,7 @@ export type Protocol =
   | "socketio"
   | "mqtt"
   | "graphqlws"
+  | "grpc"
   | "webrtc";
 
 export type HttpVersion = "auto" | "http1" | "http2" | "http3";
@@ -169,6 +170,7 @@ export const PROTOCOL_LABELS: Record<Protocol, string> = {
   socketio: "Socket.IO",
   mqtt: "MQTT",
   graphqlws: "GraphQL Subs",
+  grpc: "gRPC",
   webrtc: "WebRTC",
 };
 
@@ -197,6 +199,10 @@ export interface RequestConfig {
   mqttQos: number;
   /** Comma-separated ICE servers for the WebRTC connectivity check. */
   iceServers: string;
+  /** gRPC: fully qualified `package.Service/Method`. */
+  grpcMethod: string;
+  /** gRPC: plaintext h2c rather than TLS — the default for local servers. */
+  grpcPlaintext: boolean;
   /** Markdown documentation shown in the request's Docs tab. */
   docs: string;
   /** JavaScript run before the request is sent. */
@@ -384,6 +390,8 @@ export function defaultConfig(): RequestConfig {
     mqttPassword: "",
     mqttQos: 0,
     iceServers: "stun:stun.l.google.com:19302",
+    grpcMethod: "",
+    grpcPlaintext: true,
     docs: "",
     preScript: "",
     postScript: "",

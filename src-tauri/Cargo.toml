@@ -86,3 +86,7 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
 futures = "0.3"
+tonic = "0.14"
+prost = "0.14"
+prost-reflect = { version = "0.16", features = ["serde"] }
+prost-types = "0.14"

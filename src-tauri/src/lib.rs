@@ -3,6 +3,7 @@ mod client_app;
 mod cookies;
 mod email;
 mod github;
+mod grpc;
 mod http_client;
 mod load;
 mod mock;
@@ -166,6 +167,8 @@ pub fn run() {
             stream::stream_disconnect,
             load::run_load_test,
             load::stop_load_test,
+            grpc::grpc_call,
+            grpc::grpc_services,
             proxy::start_proxy,
             proxy::stop_proxy,
             system_proxy::set_system_proxy,
