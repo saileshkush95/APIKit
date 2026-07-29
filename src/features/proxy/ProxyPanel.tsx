@@ -106,6 +106,7 @@ export function ProxyPanel() {
   // Breakpoints: hold matching requests so they can be edited before they go.
   const [intercepting, setIntercepting] = useState(false);
   const [interceptFilter, setInterceptFilter] = useState("");
+  const [interceptResponses, setInterceptResponses] = useState(false);
   const [heldQueue, setHeldQueue] = useState<HeldRequest[]>([]);
   const [detailTab, setDetailTab] = useState<
     "query" | "reqHeaders" | "reqBody" | "resHeaders" | "resBody"
@@ -182,7 +183,7 @@ export function ProxyPanel() {
 
   function toggleIntercept(enabled: boolean) {
     setIntercepting(enabled);
-    setIntercept(enabled, interceptFilter).catch((e) =>
+    setIntercept(enabled, interceptFilter, interceptResponses).catch((e) =>
       notifyError("Could not change breakpoints", e),
     );
     // Disabling releases whatever the backend was holding, so drop the queue.
@@ -367,6 +368,17 @@ export function ProxyPanel() {
           />
         </label>
         {intercepting && (
+          <Toggle
+            checked={interceptResponses}
+            onChange={(value) => {
+              setInterceptResponses(value);
+              setIntercept(true, interceptFilter, value).catch(() => {});
+            }}
+            label="Responses too"
+            title="Also hold responses on the way back, so the body a client receives can be rewritten"
+          />
+        )}
+        {intercepting && (
           <Input
             size="compact"
             mono
@@ -375,7 +387,9 @@ export function ProxyPanel() {
             spellCheck={false}
             onChange={(e) => {
               setInterceptFilter(e.target.value);
-              setIntercept(true, e.target.value).catch(() => {});
+              setIntercept(true, e.target.value, interceptResponses).catch(
+                () => {},
+              );
             }}
             className="w-52 flex-none"
           />

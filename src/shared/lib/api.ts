@@ -437,10 +437,15 @@ export interface HeldRequest {
   url: string;
   headers: Header[];
   body: string;
+  /** "request" on the way out, "response" on the way back. */
+  kind: "request" | "response";
+  status: number | null;
 }
 
 export interface InterceptDecision {
   action: "forward" | "abort";
+  /** Replacement status, for a held response. */
+  status?: number | null;
   method: string;
   url: string;
   headers: Header[];
@@ -448,8 +453,12 @@ export interface InterceptDecision {
 }
 
 /** Turns breakpoints on or off; disabling releases anything already held. */
-export function setIntercept(enabled: boolean, filter: string): Promise<void> {
-  return invoke<void>("set_intercept", { enabled, filter });
+export function setIntercept(
+  enabled: boolean,
+  filter: string,
+  responses: boolean,
+): Promise<void> {
+  return invoke<void>("set_intercept", { enabled, filter, responses });
 }
 
 /** Releases one held request, with any edits. */

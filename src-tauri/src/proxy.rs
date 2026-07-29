@@ -73,6 +73,8 @@ struct Intercept {
     enabled: bool,
     /// Substring the URL must contain; empty holds everything.
     filter: String,
+    /// Hold responses on the way back as well as requests on the way out.
+    responses: bool,
 }
 
 /// What the user chose for a held request.
@@ -81,6 +83,9 @@ struct Intercept {
 pub struct Decision {
     /// "forward" sends it (with any edits), "abort" answers 502 instead.
     pub action: String,
+    /// Replacement status, for a held response.
+    #[serde(default)]
+    pub status: Option<u16>,
     #[serde(default)]
     pub method: String,
     #[serde(default)]
@@ -100,6 +105,11 @@ pub struct HeldRequest {
     pub url: String,
     pub headers: Vec<Header>,
     pub body: String,
+    /// "request" on the way out, "response" on the way back. A response has a
+    /// status instead of a method, and dropping it is not an option — the
+    /// request has already been made.
+    pub kind: String,
+    pub status: Option<u16>,
 }
 
 impl ProxyShared {
@@ -223,6 +233,43 @@ fn apply_edits(
     }
 }
 
+/// Applies edits to a held response: status, headers, body. Blank fields are
+/// kept, so resuming an untouched response changes nothing.
+fn apply_response_edits(
+    parts: &mut hudsucker::hyper::http::response::Parts,
+    bytes: &mut Bytes,
+    decision: Decision,
+) {
+    if let Some(status) = decision.status {
+        if let Ok(value) = hudsucker::hyper::StatusCode::from_u16(status) {
+            parts.status = value;
+        }
+    }
+    if !decision.headers.is_empty() {
+        let mut map = header::HeaderMap::new();
+        for entry in &decision.headers {
+            if entry.name.trim().is_empty() {
+                continue;
+            }
+            if let (Ok(name), Ok(value)) = (
+                entry.name.parse::<header::HeaderName>(),
+                entry.value.parse::<header::HeaderValue>(),
+            ) {
+                map.append(name, value);
+            }
+        }
+        parts.headers = map;
+    }
+    if decision.body != truncate_body(bytes) {
+        *bytes = Bytes::from(decision.body);
+        if let Ok(value) = bytes.len().to_string().parse() {
+            parts.headers.insert(header::CONTENT_LENGTH, value);
+        }
+        // A rewritten body is no longer whatever the server compressed.
+        parts.headers.remove(header::CONTENT_ENCODING);
+    }
+}
+
 /// The hudsucker handler. Cloned once per connection; because HTTP/1.1 requests
 /// are serialized on a connection we can stash the in-flight request in `self`
 /// and pair it with the matching response.
@@ -284,6 +331,8 @@ impl HttpHandler for CaptureHandler {
                     url: url.clone(),
                     headers: headers_to_vec(&parts.headers),
                     body: truncate_body(&bytes),
+                    kind: "request".into(),
+                    status: None,
                 },
             );
 
@@ -340,8 +389,51 @@ impl HttpHandler for CaptureHandler {
         _ctx: &HttpContext,
         res: Response<Body>,
     ) -> Response<Body> {
-        let (parts, body) = res.into_parts();
-        let bytes = collect_body(body).await;
+        let (mut parts, body) = res.into_parts();
+        let mut bytes = collect_body(body).await;
+
+        // The same breakpoint, on the way back. A response cannot be dropped:
+        // the request has already been made, and the client is owed an answer.
+        let held = {
+            let guard = self.shared.intercept.lock().unwrap();
+            guard.enabled
+                && guard.responses
+                && self
+                    .pending
+                    .as_ref()
+                    .map(|flow| guard.filter.is_empty() || flow.url.contains(&guard.filter))
+                    .unwrap_or(false)
+        };
+        if held {
+            let id = self.shared.next_id();
+            let (tx, rx) = oneshot::channel::<Decision>();
+            self.shared.waiting.lock().unwrap().insert(id, tx);
+            let _ = self.app.emit(
+                "proxy://hold",
+                HeldRequest {
+                    id,
+                    method: String::new(),
+                    url: self
+                        .pending
+                        .as_ref()
+                        .map(|flow| flow.url.clone())
+                        .unwrap_or_default(),
+                    headers: headers_to_vec(&parts.headers),
+                    body: truncate_body(&bytes),
+                    kind: "response".into(),
+                    status: Some(parts.status.as_u16()),
+                },
+            );
+            match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
+                Ok(Ok(decision)) => {
+                    self.shared.waiting.lock().unwrap().remove(&id);
+                    apply_response_edits(&mut parts, &mut bytes, decision);
+                }
+                _ => {
+                    self.shared.waiting.lock().unwrap().remove(&id);
+                }
+            }
+        }
 
         if let Some(mut flow) = self.pending.take() {
             flow.status = Some(parts.status.as_u16());
@@ -544,11 +636,17 @@ pub fn get_flows(state: State<'_, ProxyState>) -> Vec<Flow> {
 /// Turns breakpoints on or off. Disabling releases anything already held, so
 /// the toggle can never strand a paused request.
 #[tauri::command]
-pub fn set_intercept(state: State<'_, ProxyState>, enabled: bool, filter: String) {
+pub fn set_intercept(
+    state: State<'_, ProxyState>,
+    enabled: bool,
+    filter: String,
+    responses: bool,
+) {
     {
         let mut guard = state.shared.intercept.lock().unwrap();
         guard.enabled = enabled;
         guard.filter = filter.trim().to_string();
+        guard.responses = responses;
     }
     if !enabled {
         let waiting: Vec<_> = state
@@ -562,6 +660,7 @@ pub fn set_intercept(state: State<'_, ProxyState>, enabled: bool, filter: String
         for sender in waiting {
             let _ = sender.send(Decision {
                 action: "forward".into(),
+                status: None,
                 method: String::new(),
                 url: String::new(),
                 headers: Vec::new(),
