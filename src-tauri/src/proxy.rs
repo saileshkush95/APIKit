@@ -52,6 +52,9 @@ pub struct Flow {
     pub status_text: String,
     pub response_headers: Vec<Header>,
     pub response_body: String,
+    /// Original bytes when the body is not valid UTF-8 — an image, a protobuf
+    /// payload. Without this the capture is lossy and cannot be rendered.
+    pub response_body_base64: Option<String>,
     /// Epoch milliseconds when the request was seen.
     pub started_ms: u64,
     /// Round-trip duration in milliseconds (filled in on response).
@@ -373,6 +376,7 @@ impl HttpHandler for CaptureHandler {
             status_text: String::new(),
             response_headers: Vec::new(),
             response_body: String::new(),
+            response_body_base64: None,
             started_ms: epoch_ms(),
             duration_ms: 0,
         };
@@ -444,6 +448,11 @@ impl HttpHandler for CaptureHandler {
                 .to_string();
             flow.response_headers = headers_to_vec(&parts.headers);
             flow.response_body = truncate_body(&bytes);
+            flow.response_body_base64 = if std::str::from_utf8(&bytes).is_ok() {
+                None
+            } else {
+                Some(crate::github::base64_encode(&bytes))
+            };
             flow.duration_ms = epoch_ms().saturating_sub(self.started_at.unwrap_or(flow.started_ms));
 
             if let Ok(mut flows) = self.shared.flows.lock() {

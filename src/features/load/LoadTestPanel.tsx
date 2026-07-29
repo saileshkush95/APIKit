@@ -85,12 +85,16 @@ export function LoadTestPanel() {
   const [method, setMethod] = useState("GET");
   const [url, setUrl] = useState("");
   const [thinkTimeMs, setThinkTimeMs] = useState(0);
+  const [maxRps, setMaxRps] = useState(0);
   const [iterations, setIterations] = useState(20);
   const [folderId, setFolderId] = useState("");
 
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<LoadProgress | null>(null);
   const [report, setReport] = useState<LoadReport | null>(null);
+  // The run before this one, so a change can be judged against it — a load
+  // test that cannot be compared does not answer the question it was run for.
+  const [previous, setPrevious] = useState<LoadReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Progress arrives as cumulative per-phase counters; the history turns them
   // into per-interval latency and throughput, which is what a chart needs.
@@ -163,6 +167,7 @@ export function LoadTestPanel() {
               method,
               url,
               thinkTimeMs,
+              maxRps,
               iterations,
               environmentId: environmentId || null,
               folderId: folderId || null,
@@ -192,6 +197,7 @@ export function LoadTestPanel() {
     setMethod(test.method);
     setUrl(test.url);
     setThinkTimeMs(test.thinkTimeMs);
+    setMaxRps(test.maxRps ?? 0);
     setIterations(test.iterations);
     setEnvironmentId(test.environmentId ?? "");
     setFolderId(test.folderId ?? "");
@@ -232,6 +238,7 @@ export function LoadTestPanel() {
       url: "",
       phases: preset.phases,
       thinkTimeMs: 0,
+      maxRps: 0,
       iterations: 20,
       environmentId: null,
       folderId: null,
@@ -428,7 +435,10 @@ export function LoadTestPanel() {
         },
         phases,
         thinkTimeMs,
+        maxRps,
       });
+      // The outgoing report becomes the baseline for the next run.
+      setPrevious(report);
       setReport(result);
       setTab("results");
     } catch (e) {
@@ -946,6 +956,21 @@ export function LoadTestPanel() {
                         />
                         ms between requests per user
                       </label>
+                      <label className="flex items-center gap-1.5 text-[11px] text-muted">
+                        Max rate
+                        <Input
+                          size="compact"
+                          mono
+                          type="number"
+                          min={0}
+                          value={maxRps}
+                          onChange={(e) =>
+                            setMaxRps(Math.max(0, Number(e.target.value)))
+                          }
+                          className="w-20"
+                        />
+                        requests/second across all users — 0 for no cap
+                      </label>
                     </div>
                   </>
                 ))}
@@ -1095,6 +1120,34 @@ export function LoadTestPanel() {
                             <div className="mt-1 text-[11px] text-muted">
                               p95 {ms(phase.p95Ms)} · {phase.rps.toFixed(1)} rps
                             </div>
+                            {(() => {
+                              const before = previous?.phases.find(
+                                (candidate) => candidate.label === phase.label,
+                              );
+                              if (!before || before.avgMs === 0) return null;
+                              const change =
+                                ((phase.avgMs - before.avgMs) / before.avgMs) *
+                                100;
+                              // Within a few percent is noise, not a change.
+                              if (Math.abs(change) < 3) {
+                                return (
+                                  <div className="mt-1 text-[10px] text-muted">
+                                    unchanged vs last run
+                                  </div>
+                                );
+                              }
+                              return (
+                                <div
+                                  className={`mt-1 text-[10px] ${
+                                    change > 0 ? "text-err" : "text-ok"
+                                  }`}
+                                  title={`Previously ${ms(before.avgMs)} average`}
+                                >
+                                  {change > 0 ? "▲" : "▼"}{" "}
+                                  {Math.abs(change).toFixed(0)}% vs last run
+                                </div>
+                              );
+                            })()}
                             {phase.failures > 0 && (
                               <div className="mt-1 text-[11px] text-err">
                                 {phase.failures} failed

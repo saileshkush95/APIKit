@@ -156,6 +156,7 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
     setTargetId(initialTarget ?? "");
   }, [initialTarget]);
   const [delayMs, setDelayMs] = useState(0);
+  const [concurrency, setConcurrency] = useState(1);
   const [iterations, setIterations] = useState(1);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<RunResult[]>([]);
@@ -288,8 +289,11 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
         ? { ...base, ...data.set.rows[iteration - 1] }
         : base;
 
-      for (const entry of entries) {
-        if (cancelRef.current) break;
+      // One request is run at a time by default: a chain that passes variables
+      // between requests depends on the order. Raising it trades that
+      // guarantee for speed, which only makes sense for independent requests.
+      let index = 0;
+      const runOne = async (entry: Entry) => {
         setCurrentName(entry.request.name);
         const cancelId = `runner:${entry.request.id}:${iteration}`;
         inFlightRef.current = cancelId;
@@ -329,17 +333,33 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
           },
         ]);
 
-        const failed =
+        return (
           result.error !== null ||
-          result.results.some((assertion) => !assertion.passed);
-        if (stopOnFailure && failed) {
-          aborted = true;
-          break;
+          result.results.some((assertion) => !assertion.passed)
+        );
+      };
+
+      // Workers pull from a shared cursor, so a slow request does not hold up
+      // the others the way a fixed split would.
+      const worker = async () => {
+        while (!cancelRef.current && !aborted) {
+          const next = entries[index++];
+          if (!next) return;
+          const failed = await runOne(next);
+          if (stopOnFailure && failed) {
+            aborted = true;
+            return;
+          }
+          if (delayMs > 0 && !cancelRef.current) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
         }
-        if (delayMs > 0 && !cancelRef.current) {
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-        }
-      }
+      };
+
+      await Promise.all(
+        Array.from({ length: Math.min(concurrency, entries.length) }, worker),
+      );
+
       if (cancelRef.current || aborted) break;
     }
 
@@ -494,6 +514,23 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
             className="w-16"
           />
           ms
+        </label>
+
+        <label className="flex items-center gap-1.5 text-[11px] text-muted">
+          Parallel
+          <Select
+            size="compact"
+            value={concurrency}
+            onChange={(e) => setConcurrency(Number(e.target.value))}
+            className="w-16"
+            title="Requests in flight at once. Keep this at 1 for a chain that passes variables between requests — order is not guaranteed above it."
+          >
+            {[1, 2, 4, 8, 16].map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </Select>
         </label>
 
         <Toggle

@@ -71,6 +71,23 @@ function splitUrl(url: string): {
   }
 }
 
+/** A captured image as a data URI, or null when the body is not one. */
+function flowImage(flow: Flow): string | null {
+  const type = flow.responseHeaders
+    .find((header) => header.name.toLowerCase() === "content-type")
+    ?.value.split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (!type?.startsWith("image/")) return null;
+  // Binary formats come back base64; SVG is text and survives as it is.
+  if (flow.responseBodyBase64) {
+    return `data:${type};base64,${flow.responseBodyBase64}`;
+  }
+  return type.includes("svg")
+    ? `data:${type};utf8,${encodeURIComponent(flow.responseBody)}`
+    : null;
+}
+
 function HeaderTable({ headers }: { headers: Header[] }) {
   if (headers.length === 0)
     return <div className="p-2 text-muted">None</div>;
@@ -768,7 +785,15 @@ export function ProxyPanel() {
                   <HeaderTable headers={selected.responseHeaders} />
                 )}
                 {detailTab === "resBody" &&
-                  (selected.responseBody ? (
+                  (flowImage(selected) ? (
+                    <div className="flex items-center justify-center p-4">
+                      <img
+                        src={flowImage(selected)!}
+                        alt="Captured image"
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    </div>
+                  ) : selected.responseBody ? (
                     <BodyBlock text={selected.responseBody} />
                   ) : (
                     <div className="p-4 text-center text-xs text-muted">

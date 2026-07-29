@@ -5,7 +5,7 @@
 //! collected per phase so the report can show how the service behaved as
 //! pressure changed (the point of a spike or stress profile).
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -35,6 +35,13 @@ pub struct LoadConfig {
     /// Pause between a worker's requests, to model think time.
     #[serde(default)]
     pub think_time_ms: u64,
+    /// Ceiling on requests per second across all workers. 0 means no cap.
+    ///
+    /// Virtual users measure "what happens with N concurrent clients"; an
+    /// arrival rate measures "what happens at N requests a second", which is
+    /// how capacity is usually specified.
+    #[serde(default)]
+    pub max_rps: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -240,6 +247,9 @@ pub async fn run_load_test(
         let samples = Arc::new(Mutex::new(Samples::default()));
         let deadline = Instant::now() + Duration::from_secs(phase.duration_secs);
         let phase_started = Instant::now();
+        // Requests admitted this phase, shared by its workers: the arrival-rate
+        // cap is a schedule over the whole phase, not per worker.
+        let sent_total = Arc::new(AtomicU64::new(0));
 
         let mut workers = Vec::with_capacity(phase.vus);
         for _ in 0..phase.vus.max(1) {
@@ -251,9 +261,22 @@ pub async fn run_load_test(
             let samples = samples.clone();
             let cancel = cancel.clone();
             let think = config.think_time_ms;
+            let rate = config.max_rps;
+            let started_at = phase_started;
+            let counter = sent_total.clone();
 
             workers.push(tokio::spawn(async move {
                 while Instant::now() < deadline && !cancel.load(Ordering::Relaxed) {
+                    // Arrival-rate cap: a worker waits until the schedule has
+                    // room for its request rather than firing immediately.
+                    if rate > 0 {
+                        let taken = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                        let due = Duration::from_secs_f64(taken as f64 / rate as f64);
+                        let elapsed = started_at.elapsed();
+                        if due > elapsed {
+                            tokio::time::sleep(due - elapsed).await;
+                        }
+                    }
                     let sent = Instant::now();
                     let outcome = one_request(&client, &method, &url, &headers, &body).await;
                     let elapsed = sent.elapsed().as_secs_f64() * 1000.0;

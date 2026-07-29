@@ -86,6 +86,8 @@ export interface Flow {
   statusText: string;
   responseHeaders: Header[];
   responseBody: string;
+  /** Original bytes when the body is not valid UTF-8 — images, protobuf. */
+  responseBodyBase64?: string | null;
   startedMs: number;
   durationMs: number;
 }
@@ -599,6 +601,8 @@ export interface LoadConfig {
   request: HttpRequestSpec;
   phases: LoadPhase[];
   thinkTimeMs: number;
+  /** Ceiling on requests per second across all workers; 0 means no cap. */
+  maxRps: number;
 }
 
 export interface PhaseReport {
@@ -639,6 +643,8 @@ export interface LoadTest {
   url: string;
   phases: LoadPhase[];
   thinkTimeMs: number;
+  /** Ceiling on requests per second; 0 means no cap. */
+  maxRps: number;
   /** Iterations for the assertion suite. */
   iterations: number;
   /** Pinned environment; null follows whichever is active. */
