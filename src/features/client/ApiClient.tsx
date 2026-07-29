@@ -47,6 +47,7 @@ import { useActiveRequest } from "../../shared/state/activeRequest";
 import { notify, notifyError } from "../../shared/lib/notify";
 import { useCollection } from "../../shared/state/collection";
 import { useHandoff } from "../../shared/state/handoff";
+import { logConsole } from "../../shared/state/console";
 import { useHistory } from "../../shared/state/history";
 import { useEnvironments } from "../../shared/state/environments";
 import { useSettings } from "../../shared/state/settings";
@@ -415,6 +416,12 @@ export function ApiClient({ intent }: ApiClientProps) {
 
   async function send(tab: RequestTab) {
     updateTab(tab.id, { loading: true, error: null, scriptLogs: [] });
+    logConsole({
+      level: "request",
+      source: "Client",
+      message: tab.url,
+      detail: { method: tab.method, url: tab.url },
+    });
 
     const logs: ScriptLogEntry[] = [];
     // "Inherit from parent" resolves against the folder tree at send time,
@@ -488,6 +495,30 @@ export function ApiClient({ intent }: ApiClientProps) {
 
       record(tab.name ?? requestLabel(tab.url), draftOf(tab), { response });
 
+      // Script output goes to the console too, so a chained run reads in one
+      // place rather than one tab at a time.
+      for (const entry of logs) {
+        logConsole({
+          level: entry.level === "error" ? "error" : "log",
+          source: `Script ${entry.phase}`,
+          message: entry.message,
+        });
+      }
+      logConsole({
+        level: "response",
+        source: "Client",
+        message: `${response.status} ${response.statusText} — ${tab.url}`,
+        detail: {
+          method: tab.method,
+          url: tab.url,
+          status: response.status,
+          timeMs: response.timeMs,
+          sizeBytes: response.sizeBytes,
+          headers: response.headers,
+          body: response.body,
+        },
+      });
+
       const results = [...runAssertions(tab.tests, response), ...post.tests];
       updateTab(tab.id, {
         response,
@@ -500,6 +531,12 @@ export function ApiClient({ intent }: ApiClientProps) {
       });
     } catch (e) {
       const message = String(e);
+      logConsole({
+        level: "error",
+        source: "Client",
+        message: `${message} — ${tab.url}`,
+        detail: { method: tab.method, url: tab.url },
+      });
       // A cancel is the user's own doing, not something to keep in history.
       if (message !== "Request canceled") {
         record(tab.name ?? requestLabel(tab.url), draftOf(tab), {

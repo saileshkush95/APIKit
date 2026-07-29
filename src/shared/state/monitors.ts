@@ -14,6 +14,7 @@ import {
 } from "../lib/email";
 import { executeRequest, isHealthy } from "../lib/execute";
 import { notifyError } from "../lib/notify";
+import { logConsole } from "./console";
 import { createSaver } from "../lib/save";
 import { newId, workspaceDataOnce } from "../lib/storage";
 import { findNode, isFolder } from "../lib/tree";
@@ -262,6 +263,13 @@ export const useMonitorsStore = create<MonitorsStore>()((set, get) => {
         if (candidate.ok) break;
         priorFails += 1;
       }
+
+      logConsole({
+        level: run.ok ? "response" : "error",
+        source: "Monitor",
+        message: `${monitor.name} — ${run.detail}`,
+        detail: { timeMs: Math.round(run.avgMs) },
+      });
 
       set({ runs: [run, ...get().runs].slice(0, 500) });
       recordMonitorRun(run).catch((e) =>

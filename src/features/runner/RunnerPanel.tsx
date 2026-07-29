@@ -16,6 +16,7 @@ import { useWorkspaceId } from "../../shared/state/workspaces";
 import { parseDataFile, type DataSet } from "../../shared/lib/dataFile";
 import { executeRequest } from "../../shared/lib/execute";
 import { notify, notifyError } from "../../shared/lib/notify";
+import { logConsole } from "../../shared/state/console";
 import { findNode, isFolder } from "../../shared/lib/tree";
 import { methodColor, statusColor } from "../../shared/lib/ui";
 import { environmentVars } from "../../shared/lib/vars";
@@ -300,6 +301,20 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
           cancelId,
         });
         inFlightRef.current = null;
+        logConsole({
+          level: result.error ? "error" : "response",
+          source: "Runner",
+          message: result.error
+            ? `${result.error} — ${entry.request.name}`
+            : `${result.status} ${entry.request.name}`,
+          detail: {
+            method: entry.request.method,
+            url: entry.request.url,
+            status: result.status,
+            timeMs: result.timeMs,
+            body: result.body,
+          },
+        });
         setResults((prev) => [
           ...prev,
           {

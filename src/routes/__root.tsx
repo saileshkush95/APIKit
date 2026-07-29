@@ -7,6 +7,7 @@ import {
 import { EnvironmentBar } from "../features/environments/EnvironmentBar";
 import { Tour } from "../features/onboarding/Tour";
 import { WelcomeScreen } from "../features/onboarding/WelcomeScreen";
+import { ConsoleButton, ConsolePanel } from "../features/console/ConsolePanel";
 import { ThemeToggle } from "../features/settings/ThemeToggle";
 import { WorkspaceSwitcher } from "../features/workspaces/WorkspaceSwitcher";
 import { CommandPalette } from "../shared/components/CommandPalette";
@@ -61,6 +62,7 @@ function RootLayout() {
           >
             ?
           </button>
+          <ConsoleButton />
           <ThemeToggle />
           {drawsWindowControls && <div className="w-1" />}
         </div>
@@ -75,9 +77,12 @@ function RootLayout() {
           active={active}
           onSelect={(key) => navigate({ to: `/${key}` })}
         />
-        <main className="flex min-h-0 min-w-0 flex-1">
-          <Outlet />
-        </main>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <main className="flex min-h-0 min-w-0 flex-1">
+            <Outlet />
+          </main>
+          <ConsolePanel />
+        </div>
       </div>
 
       {showWelcome && (
