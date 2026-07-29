@@ -43,6 +43,9 @@ reqwest = { version = "0.12", default-features = false, features = [
     "multipart",
     "json",
     "cookies",
+    # HTTP/3 over QUIC. reqwest gates this behind `--cfg reqwest_unstable`,
+    # which .cargo/config.toml sets, because it considers the API unstable.
+    "http3",
 ] }
 
 # Parsing the `Expires` attribute of a Set-Cookie header

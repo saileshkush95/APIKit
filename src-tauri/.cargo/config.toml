@@ -1,0 +1,4 @@
+# reqwest hides its HTTP/3 support behind this cfg because the API is not yet
+# stable. Every build of this crate needs it, including CI.
+[build]
+rustflags = ["--cfg", "reqwest_unstable"]

@@ -180,6 +180,7 @@ export function SettingsPanel() {
                     <option value="auto">Auto (ALPN)</option>
                     <option value="http1">HTTP/1.1</option>
                     <option value="http2">HTTP/2</option>
+                    <option value="http3">HTTP/3</option>
                   </Select>
                 </Row>
                 <Row

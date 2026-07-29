@@ -146,7 +146,7 @@ export type Protocol =
   | "graphqlws"
   | "webrtc";
 
-export type HttpVersion = "auto" | "http1" | "http2";
+export type HttpVersion = "auto" | "http1" | "http2" | "http3";
 
 /** Protocols driven by a long-lived session rather than one round trip. */
 export const STREAMING_PROTOCOLS: Protocol[] = [

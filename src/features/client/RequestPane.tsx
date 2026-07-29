@@ -66,6 +66,7 @@ const HTTP_VERSIONS: { value: HttpVersion; label: string }[] = [
   { value: "auto", label: "Auto" },
   { value: "http1", label: "HTTP/1.1" },
   { value: "http2", label: "HTTP/2" },
+  { value: "http3", label: "HTTP/3" },
 ];
 
 /** Request tabs relevant to each protocol. */

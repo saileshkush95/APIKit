@@ -66,7 +66,7 @@ pub struct HttpRequestSpec {
     /// Optional request timeout in milliseconds.
     #[serde(default)]
     pub timeout_ms: Option<u64>,
-    /// "auto" (ALPN negotiation), "http1" or "http2".
+    /// "auto" (ALPN negotiation), "http1", "http2" or "http3".
     #[serde(default)]
     pub http_version: Option<String>,
     /// When false, invalid or self-signed certificates are accepted.
@@ -155,6 +155,9 @@ pub async fn send_request(
     builder = match spec.http_version.as_deref() {
         Some("http1") => builder.http1_only(),
         Some("http2") => builder.http2_prior_knowledge(),
+        // QUIC has no plaintext form and no upgrade path, so this only works
+        // against a server that already speaks HTTP/3 over TLS.
+        Some("http3") => builder.http3_prior_knowledge(),
         _ => builder,
     };
 
