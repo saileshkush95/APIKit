@@ -5,8 +5,11 @@ import {
   renderHighlighted,
   type HighlightLanguage,
 } from "../lib/highlight";
+import { useFieldHistory } from "../lib/fieldHistory";
+import { typeInto } from "../lib/textEdit";
 import { completeVariable, openVariable } from "../lib/variableTokens";
 import { useEnvironments } from "../state/environments";
+import { useVariableHover } from "./VariableTooltip";
 
 /** One entry offered by a custom `suggest` source. */
 export interface Suggestion {
@@ -35,6 +38,11 @@ interface Props {
   ) => { items: Suggestion[]; start: number } | null;
   /** Enables syntax colouring and bracket/quote auto-closing. */
   language?: HighlightLanguage;
+  /**
+   * Stable identity for this field's undo history, e.g. `${tab.id}:body`. Left
+   * out, the browser's own undo stack is used unchanged.
+   */
+  historyKey?: string;
 }
 
 const LINE_HEIGHT = 20;
@@ -70,6 +78,7 @@ export function CodeEditor({
   completeVariables = true,
   suggest,
   language = "none",
+  historyKey,
 }: Props) {
   const ownRef = useRef<HTMLTextAreaElement>(null);
   const textareaRef = inputRef ?? ownRef;
@@ -87,6 +96,11 @@ export function CodeEditor({
     top: number;
   } | null>(null);
   const [highlighted, setHighlighted] = useState(0);
+
+  // Hovering reads the overlay's token rects, so it works wherever the overlay
+  // is drawn — that is, any editor with a language set.
+  const { hoverProps, tooltip } = useVariableHover(overlayRef);
+  const history = useFieldHistory(historyKey, value, textareaRef, onChange);
 
   const highlightOn = language !== "none" && value.length > 0 && value.length <= HIGHLIGHT_LIMIT;
   const overlay = useMemo(
@@ -186,30 +200,44 @@ export function CodeEditor({
     const caret = element?.selectionStart ?? value.length;
     if (!completion) return;
 
-    let next: string;
-    let nextCaret: number;
-    if (completion.kind === "custom") {
-      next = value.slice(0, completion.start) + name + value.slice(caret);
-      nextCaret = completion.start + name.length;
-    } else {
-      const result = completeVariable(value, completion.start, caret, name);
-      next = result.value;
-      nextCaret = result.caret;
-    }
-    onChange(next);
     setCompletion(null);
-    requestAnimationFrame(() => {
-      element?.focus();
-      element?.setSelectionRange(nextCaret, nextCaret);
-    });
+    if (completion.kind === "custom") {
+      splice(name, completion.start, caret);
+      return;
+    }
+    const result = completeVariable(value, completion.start, caret, name);
+    splice(result.text, result.from, result.to);
   }
 
-  /** Replaces the value and restores the caret after React re-renders. */
-  function edit(next: string, selectionStart: number, selectionEnd = selectionStart) {
+  /**
+   * Replaces `[from, to)` with `text`, keeping it undoable.
+   *
+   * The edit goes through the textarea rather than through state, so it lands
+   * on the browser's own undo stack — see `lib/textEdit`. `caretStart` is only
+   * needed when the caret should not end up after the inserted text, which is
+   * where the browser leaves it.
+   */
+  function splice(
+    text: string,
+    from: number,
+    to: number,
+    caretStart?: number,
+    caretEnd = caretStart,
+  ) {
     const element = textareaRef.current;
-    onChange(next);
+    if (typeInto(element, text, from, to)) {
+      if (caretStart !== undefined) {
+        requestAnimationFrame(() => {
+          element?.setSelectionRange(caretStart, caretEnd ?? caretStart);
+        });
+      }
+      return;
+    }
+    // The edit still has to happen; only its undo step is lost.
+    const caret = caretStart ?? from + text.length;
+    onChange(value.slice(0, from) + text + value.slice(to));
     requestAnimationFrame(() => {
-      element?.setSelectionRange(selectionStart, selectionEnd);
+      element?.setSelectionRange(caret, caretEnd ?? caret);
     });
   }
 
@@ -233,11 +261,8 @@ export function CodeEditor({
     if (closer) {
       e.preventDefault();
       const inner = value.slice(start, end);
-      edit(
-        value.slice(0, start) + e.key + inner + closer + value.slice(end),
-        start + 1,
-        start + 1 + inner.length,
-      );
+      // The caret goes inside the pair, keeping any wrapped text selected.
+      splice(e.key + inner + closer, start, end, start + 1, start + 1 + inner.length);
       return true;
     }
 
@@ -245,7 +270,7 @@ export function CodeEditor({
       // Deleting an opener also removes the empty pair it opened.
       if (PAIRS[prevChar] === nextChar && nextChar !== "") {
         e.preventDefault();
-        edit(value.slice(0, start - 1) + value.slice(start + 1), start - 1);
+        splice("", start - 1, start + 1, start - 1);
         return true;
       }
       return false;
@@ -258,17 +283,12 @@ export function CodeEditor({
       if (opensBlock && PAIRS[prevChar] === nextChar) {
         // Caret between an empty pair: put the closer on its own line.
         e.preventDefault();
-        const inserted = `\n${indent}  \n${indent}`;
-        edit(
-          value.slice(0, start) + inserted + value.slice(end),
-          start + indent.length + 3,
-        );
+        splice(`\n${indent}  \n${indent}`, start, end, start + indent.length + 3);
         return true;
       }
       if (opensBlock || indent !== "") {
         e.preventDefault();
-        const inserted = `\n${indent}${opensBlock ? "  " : ""}`;
-        edit(value.slice(0, start) + inserted + value.slice(end), start + inserted.length);
+        splice(`\n${indent}${opensBlock ? "  " : ""}`, start, end);
         return true;
       }
     }
@@ -277,6 +297,10 @@ export function CodeEditor({
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // Before everything else: undo has to reach the field's own history rather
+    // than being interpreted as an edit.
+    if (history.handleKey(e)) return;
+
     if (completion) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
@@ -303,13 +327,8 @@ export function CodeEditor({
     if (e.key !== "Tab") return;
     // Tab indents instead of leaving the editor, as in any code editor.
     e.preventDefault();
-    const target = e.currentTarget;
-    const { selectionStart, selectionEnd } = target;
-    const next = `${value.slice(0, selectionStart)}  ${value.slice(selectionEnd)}`;
-    onChange(next);
-    requestAnimationFrame(() => {
-      target.selectionStart = target.selectionEnd = selectionStart + 2;
-    });
+    const { selectionStart, selectionEnd } = e.currentTarget;
+    splice("  ", selectionStart, selectionEnd);
   }
 
   return (
@@ -327,7 +346,7 @@ export function CodeEditor({
           <div key={i}>{i + 1}</div>
         ))}
       </div>
-      <div className="relative min-h-0 min-w-0 flex-1">
+      <div className="relative min-h-0 min-w-0 flex-1" {...hoverProps}>
         {overlay !== null && (
           <pre
             ref={overlayRef}
@@ -367,6 +386,8 @@ export function CodeEditor({
           }`}
         />
       </div>
+
+      {tooltip}
 
       {completion &&
         createPortal(

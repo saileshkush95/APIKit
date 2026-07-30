@@ -25,6 +25,8 @@ interface Rule {
 export interface Token {
   text: string;
   cls?: string;
+  /** Set on a `{{variable}}`, so hovering one can look its value up. */
+  variable?: string;
 }
 
 // Semantic colours from the app palette, so highlighting follows the theme.
@@ -92,6 +94,42 @@ const RULES: Record<Exclude<HighlightLanguage, "none">, Rule[]> = {
 
 /** `{{variable}}` tokens, shown in the editor whatever the language. */
 const VARIABLE: Rule = { re: /\{\{[^{}\n]*\}\}/y, cls: "text-brand-bright" };
+/** The same shape, for finding variables *inside* an already-matched token. */
+const VARIABLE_INSIDE = /\{\{[^{}\n]*\}\}/g;
+
+/** The name inside a `{{…}}`, when it is one that could resolve. */
+function variableName(text: string): string | undefined {
+  // `{{}}` and `{{a b}}` have the shape but resolve to nothing, so they are
+  // coloured without being offered as something to look up.
+  return /^\{\{\s*([\w.\-$]+)\s*\}\}$/.exec(text)?.[1];
+}
+
+/**
+ * Pushes a matched token, splitting any `{{variables}}` out of it first.
+ *
+ * A rule like JSON's string or JavaScript's comment swallows a whole run, and
+ * inside a string is where variables mostly live: `"Bearer {{token}}"`. First
+ * match wins per position, so without this split the variable is invisible to
+ * the one rule meant to find it — uncoloured, and with nothing to hover.
+ */
+function pushMatch(tokens: Token[], text: string, cls: string, split: boolean) {
+  if (!split || !text.includes("{{")) {
+    tokens.push({ text, cls, variable: variableName(text) });
+    return;
+  }
+  let at = 0;
+  for (const found of text.matchAll(VARIABLE_INSIDE)) {
+    const start = found.index ?? 0;
+    if (start > at) tokens.push({ text: text.slice(at, start), cls });
+    tokens.push({
+      text: found[0],
+      cls: VARIABLE.cls,
+      variable: variableName(found[0]),
+    });
+    at = start + found[0].length;
+  }
+  if (at < text.length) tokens.push({ text: text.slice(at), cls });
+}
 
 export function tokenizeLine(
   line: string,
@@ -116,7 +154,12 @@ export function tokenizeLine(
           tokens.push({ text: plain });
           plain = "";
         }
-        tokens.push({ text: match[0], cls: rule.cls });
+        pushMatch(
+          tokens,
+          match[0],
+          rule.cls,
+          templateVariables && rule !== VARIABLE,
+        );
         i += match[0].length;
         continue scan;
       }
@@ -137,6 +180,7 @@ function tokenNode(token: Token, key: React.Key, from = 0, to?: number): ReactNo
       // Marks property names so a click can tell a key from a value — the
       // response viewer copies the path for one and the value for the other.
       data-token={token.cls === KEY ? "key" : undefined}
+      data-variable={token.variable}
     >
       {text}
     </span>

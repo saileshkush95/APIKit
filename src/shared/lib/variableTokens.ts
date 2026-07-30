@@ -55,13 +55,19 @@ export function openVariable(
   return { query: between.trim(), start: open };
 }
 
-/** Replaces the open `{{…` at `start` with a complete `{{name}}`. */
+/**
+ * Replaces the open `{{…` at `start` with a complete `{{name}}`.
+ *
+ * Reports the edit as a range as well as a finished string: applying it through
+ * the field keeps the browser's undo history, and only this function knows
+ * which characters the completion consumed.
+ */
 export function completeVariable(
   value: string,
   start: number,
   caret: number,
   name: string,
-): { value: string; caret: number } {
+): { value: string; caret: number; text: string; from: number; to: number } {
   // Swallow a closing brace the user already typed, so `{{to}}` does not
   // become `{{token}}}}`.
   let after = caret;
@@ -71,5 +77,8 @@ export function completeVariable(
   return {
     value: value.slice(0, start) + inserted + value.slice(after),
     caret: start + inserted.length,
+    text: inserted,
+    from: start,
+    to: after,
   };
 }

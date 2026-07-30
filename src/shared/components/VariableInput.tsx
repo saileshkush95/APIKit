@@ -7,6 +7,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { DYNAMIC_VARS, matchDynamic } from "../lib/dynamicVars";
+import { useFieldHistory } from "../lib/fieldHistory";
+import { typeInto } from "../lib/textEdit";
 import {
   completeVariable,
   openVariable,
@@ -14,6 +16,7 @@ import {
 } from "../lib/variableTokens";
 import { useEnvironments } from "../state/environments";
 import type { FieldSize } from "./Field";
+import { useVariableHover } from "./VariableTooltip";
 
 function describeDynamic(name: string): string {
   return DYNAMIC_VARS.find((item) => item.name === name)?.description ?? "";
@@ -29,6 +32,11 @@ interface Props {
   disabled?: boolean;
   title?: string;
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  /**
+   * Stable identity for this field's undo history, e.g. `${tab.id}:url`. Left
+   * out, the browser's own undo stack is used unchanged.
+   */
+  historyKey?: string;
 }
 
 /**
@@ -51,6 +59,7 @@ export function VariableInput({
   disabled,
   title,
   onKeyDown,
+  historyKey,
 }: Props) {
   const { vars } = useEnvironments();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -72,6 +81,8 @@ export function VariableInput({
 
   const tokens = useMemo(() => tokenize(value, vars), [value, vars]);
   const names = useMemo(() => Object.keys(vars).sort(), [vars]);
+  const { hoverProps, tooltip } = useVariableHover(overlayRef);
+  const history = useFieldHistory(historyKey, value, inputRef, onChange);
 
   // The overlay does not scroll on its own; it follows the field.
   function syncScroll() {
@@ -118,8 +129,11 @@ export function VariableInput({
     const caret = input?.selectionStart ?? value.length;
     if (!anchor) return;
     const result = completeVariable(value, anchor.start, caret, name);
-    onChange(result.value);
     setAnchor(null);
+    // Through the field, so accepting a completion stays undoable; the browser
+    // leaves the caret after the inserted text, which is where it belongs.
+    if (typeInto(input, result.text, result.from, result.to)) return;
+    onChange(result.value);
     requestAnimationFrame(() => {
       input?.focus();
       input?.setSelectionRange(result.caret, result.caret);
@@ -134,7 +148,7 @@ export function VariableInput({
     .join(" ");
 
   return (
-    <div className={`wrk-variable-field ${className ?? ""}`}>
+    <div className={`wrk-variable-field ${className ?? ""}`} {...hoverProps}>
       <div ref={overlayRef} className={`wrk-variable-overlay ${shared}`} aria-hidden>
         {value === "" ? (
           <span className="text-muted">{placeholder}</span>
@@ -143,6 +157,7 @@ export function VariableInput({
             token.name ? (
               <span
                 key={index}
+                data-variable={token.name}
                 className={
                   token.dynamic
                     ? "text-redirect"
@@ -178,6 +193,7 @@ export function VariableInput({
         }
         onBlur={() => setTimeout(() => setAnchor(null), 120)}
         onKeyDown={(e) => {
+          if (history.handleKey(e)) return;
           if (anchor && suggestions.length > 0) {
             if (e.key === "ArrowDown" || e.key === "ArrowUp") {
               e.preventDefault();
@@ -201,6 +217,8 @@ export function VariableInput({
           onKeyDown?.(e);
         }}
       />
+
+      {tooltip}
 
       {anchor &&
         rect &&
