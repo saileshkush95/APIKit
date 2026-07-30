@@ -7,6 +7,7 @@ import { newId } from "./storage";
 import { isFolder } from "./tree";
 import {
   normalizeConfig,
+  type Auth,
   type Environment,
   type MockRoute,
   type Monitor,
@@ -33,13 +34,79 @@ function withoutSecrets(environments: Environment[]): Environment[] {
   }));
 }
 
+/**
+ * A value that is nothing but a `{{variable}}` reference points at a credential
+ * rather than being one, so it survives the redaction — and keeping it is what
+ * makes the reference worth using in the first place. Anything else typed into
+ * a credential field is the credential itself.
+ */
+function isVariableReference(value: string): boolean {
+  return /^\s*\{\{\s*[\w.\-$]+\s*\}\}\s*$/.test(value);
+}
+
+function redact(value: string): string {
+  return value === "" || isVariableReference(value) ? value : "";
+}
+
+/**
+ * Strips the credentials out of an auth block, keeping everything that merely
+ * describes the scheme: usernames, header and key names, client ids, endpoints,
+ * scopes. Those are configuration; the rest is not.
+ */
+function redactAuth(auth: Auth | undefined): Auth | undefined {
+  if (!auth) return auth;
+  return {
+    ...auth,
+    token: redact(auth.token),
+    password: redact(auth.password),
+    // The API key's name is configuration; its value is the key.
+    value: redact(auth.value),
+    oauth2: auth.oauth2
+      ? {
+          ...auth.oauth2,
+          clientSecret: redact(auth.oauth2.clientSecret),
+          password: redact(auth.oauth2.password),
+        }
+      : auth.oauth2,
+  };
+}
+
+/**
+ * The same redaction over a whole tree.
+ *
+ * Environment secrets were already dropped, but a password typed straight into
+ * a request's auth tab was not, and this document is both what the user writes
+ * to a file and what GitHub sync commits to a repository. Access and refresh
+ * tokens are not handled here because they were never in the tree — they live
+ * in the OS keychain (see `shared/lib/oauth.ts`).
+ */
+function withoutCredentials(nodes: TreeNode[]): TreeNode[] {
+  return nodes.map((node) => {
+    if (isFolder(node)) {
+      return {
+        ...node,
+        auth: redactAuth(node.auth),
+        children: withoutCredentials(node.children),
+      };
+    }
+    return {
+      ...node,
+      config: {
+        ...node.config,
+        auth: redactAuth(node.config.auth) ?? node.config.auth,
+        mqttPassword: redact(node.config.mqttPassword ?? ""),
+      },
+    };
+  });
+}
+
 export function buildExport(input: ExportInput): WorkspaceExport {
   return {
     format: "webrequestkit",
     version: 1,
     exportedAt: new Date().toISOString(),
     workspace: input.workspace,
-    tree: input.tree,
+    tree: withoutCredentials(input.tree),
     environments: withoutSecrets(input.environments),
     monitors: input.monitors,
     mockRoutes: input.mockRoutes,

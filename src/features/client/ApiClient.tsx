@@ -51,6 +51,12 @@ import { notify, notifyError } from "../../shared/lib/notify";
 import { useCollection } from "../../shared/state/collection";
 import { useHandoff } from "../../shared/state/handoff";
 import { logConsole } from "../../shared/state/console";
+import {
+  EXPORT_FORMATS,
+  toOpenApi,
+  toPostmanCollection,
+  type ExportFormat,
+} from "../../shared/lib/interop";
 import { useHistory } from "../../shared/state/history";
 import { useEnvironments } from "../../shared/state/environments";
 import { useSettings } from "../../shared/state/settings";
@@ -181,6 +187,7 @@ export function ApiClient({ intent }: ApiClientProps) {
     vars,
     setVariables,
     environments,
+    activeId: activeEnvironmentId,
     create: createEnvironment,
     update: updateEnvironment,
   } = useEnvironments();
@@ -810,17 +817,47 @@ export function ApiClient({ intent }: ApiClientProps) {
     notify("success", `Saved “${name}” to the collection`);
   }
 
-  /** Writes the collection and environments to a file the user picks. */
-  async function exportWorkspace() {
+  /**
+   * Writes the collection to a file the user picks, in one of three formats.
+   *
+   * The native format is lossless; the other two can only carry what Postman
+   * and OpenAPI have a place for, so whatever was dropped is reported rather
+   * than left to be discovered later. Every format redacts credentials.
+   */
+  async function exportWorkspace(format: ExportFormat) {
     const name = activeWorkspace?.name ?? "Workspace";
+    const pinned = environments.find((env) => env.id === activeEnvironmentId);
+
+    const document =
+      format === "postman"
+        ? toPostmanCollection(name, tree, pinned ?? environments[0])
+        : format === "openapi"
+          ? toOpenApi(name, tree)
+          : {
+              text: serializeExport(
+                buildExport({ workspace: name, tree, environments }),
+              ),
+              filename: suggestFilename(name),
+              warnings: [] as string[],
+            };
+
     const path = await save({
-      title: "Export workspace",
-      defaultPath: suggestFilename(name),
-      filters: [{ name: "WebRequestKit", extensions: ["json"] }],
+      title: EXPORT_FORMATS.find((entry) => entry.value === format)?.title,
+      defaultPath: document.filename,
+      filters: [{ name: "JSON", extensions: ["json"] }],
     });
     if (!path) return;
-    const document = buildExport({ workspace: name, tree, environments });
-    await writeTextFile(path, serializeExport(document));
+
+    await writeTextFile(path, document.text);
+
+    if (document.warnings.length > 0) {
+      notify("info", `Exported with ${document.warnings.length} note${document.warnings.length === 1 ? "" : "s"}`);
+      for (const warning of document.warnings) {
+        logConsole({ level: "log", source: "Export", message: warning });
+      }
+    } else {
+      notify("success", `Exported “${name}”`);
+    }
   }
 
   // Tabs unbind rather than vanish when their saved request is deleted, so

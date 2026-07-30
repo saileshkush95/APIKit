@@ -30,6 +30,10 @@ import {
   type DropPosition,
 } from "../../shared/lib/tree";
 import { AuthEditor } from "./AuthEditor";
+import {
+  EXPORT_FORMATS,
+  type ExportFormat,
+} from "../../shared/lib/interop";
 import { notify } from "../../shared/lib/notify";
 import { newId } from "../../shared/lib/storage";
 import { methodColor } from "../../shared/lib/ui";
@@ -60,8 +64,8 @@ interface Props {
   onRun: (folderId: string | null) => void;
   /** Opens the OpenAPI import dialog. */
   onImport: () => void;
-  /** Writes the workspace to a JSON file. */
-  onExport: () => void;
+  /** Writes the workspace to a JSON file in the chosen format. */
+  onExport: (format: ExportFormat) => void;
 }
 
 interface MenuState {
@@ -96,6 +100,23 @@ export function CollectionSidebar({
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!exportOpen) return;
+    function onPointerDown(e: MouseEvent) {
+      if (!exportRef.current?.contains(e.target as Node)) setExportOpen(false);
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setExportOpen(false);
+    }
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [exportOpen]);
   const [authFolderId, setAuthFolderId] = useState<string | null>(null);
   // Resolved from the id each render, so the dialog always edits fresh state.
   const authFolderNode = authFolderId ? findNode(nodes, authFolderId) : null;
@@ -513,13 +534,49 @@ export function CollectionSidebar({
           >
             ↓
           </button>
-          <button
-            onClick={onExport}
-            className="rounded px-1.5 py-0.5 text-muted hover:bg-elevated hover:text-ink"
-            title="Export this workspace to a file"
-          >
-            ↑
-          </button>
+          <div ref={exportRef} className="relative">
+            <button
+              onClick={() => setExportOpen((open) => !open)}
+              className={`rounded px-1.5 py-0.5 text-muted hover:bg-elevated hover:text-ink ${
+                exportOpen ? "bg-elevated text-ink" : ""
+              }`}
+              title="Export this workspace"
+              aria-haspopup="menu"
+              aria-expanded={exportOpen}
+            >
+              ↑
+            </button>
+            {exportOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 top-full z-50 mt-1 w-72 overflow-hidden rounded-md border border-edge bg-panel py-1 shadow-lg"
+              >
+                {EXPORT_FORMATS.map((entry) => (
+                  <button
+                    key={entry.value}
+                    type="button"
+                    onClick={() => {
+                      setExportOpen(false);
+                      onExport(entry.value);
+                    }}
+                    className="block w-full px-2.5 py-1.5 text-left hover:bg-elevated"
+                  >
+                    <span className="block text-[11px] text-ink">
+                      {entry.label}
+                    </span>
+                    <span className="mt-0.5 block text-[10px] leading-snug text-muted">
+                      {entry.hint}
+                    </span>
+                  </button>
+                ))}
+                <div className="mt-1 border-t border-edge px-2.5 pt-1.5 pb-0.5 text-[10px] leading-snug text-muted">
+                  Credentials typed into auth fields are removed from every
+                  export. <span className="font-mono">{"{{variable}}"}</span>{" "}
+                  references are kept.
+                </div>
+              </div>
+            )}
+          </div>
           <button
             onClick={() => addFolder(selectedFolderId)}
             className="rounded px-1.5 py-0.5 text-muted hover:bg-elevated hover:text-ink"
