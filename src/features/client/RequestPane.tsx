@@ -1,6 +1,7 @@
 import { Select } from "../../shared/components/Field";
 import { useEffect, useRef, useState } from "react";
 import { AuthEditor } from "./AuthEditor";
+import { HistoryScope } from "../../shared/components/HistoryScope";
 import { BodyEditor } from "./BodyEditor";
 import { CodeDialog } from "./CodeDialog";
 import { CommentsPanel } from "./CommentsPanel";
@@ -21,7 +22,7 @@ import {
   matchHeaders,
 } from "../../shared/lib/headerSuggestions";
 import { buildWireRequest } from "../../shared/lib/request";
-import { activeRows } from "../../shared/lib/rows";
+import { activeRows, storableRows } from "../../shared/lib/rows";
 import { unresolvedVars } from "../../shared/lib/vars";
 import { methodColor } from "../../shared/lib/ui";
 import { useComments } from "../../shared/state/comments";
@@ -335,7 +336,11 @@ export function RequestPane({
 
   // ⌘S / ⌘↵ / ⌘T are handled once at the window level in `ApiClient`.
 
+  // Every field below belongs to this tab, so undo histories are keyed by it:
+  // reopening the tab finds the history it had, and two tabs editing the same
+  // saved request never share one.
   return (
+    <HistoryScope id={tab.id}>
     <div ref={containerRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
       {/* Breadcrumb + save */}
       <div className="flex flex-none items-center gap-1.5 px-4 pt-2 text-xs text-muted">
@@ -462,6 +467,7 @@ export function RequestPane({
                   : "https://api.example.com/endpoint"
             }
             onChange={(url) => onChange({ url })}
+            historyKey="url"
             onKeyDown={(e) =>
               e.key === "Enter" && (streaming ? onToggleConnection() : onSend())
             }
@@ -476,6 +482,7 @@ export function RequestPane({
             <VariableInput
               value={tab.config.grpcMethod}
               onChange={(grpcMethod) => patchConfig({ grpcMethod })}
+              historyKey="grpcMethod"
               placeholder="package.Service/Method"
               mono
               size="lg"
@@ -627,15 +634,17 @@ export function RequestPane({
                 onChange({
                   url: applyQuery(tab.url, rows),
                   config: {
+                    // Every row, not just the ones a query string can express:
+                    // a row whose name has not been typed yet lives only here,
+                    // and filtering it out deleted it as its value was typed.
                     ...tab.config,
-                    params: rows.filter(
-                      (row) => row.name.trim() !== "" || row.value.trim() !== "",
-                    ),
+                    params: storableRows(rows),
                   },
                 })
               }
               keyPlaceholder="Parameter"
               valuePlaceholder="Value"
+              historyId="params"
               highlightVariables
             />
           )}
@@ -657,6 +666,7 @@ export function RequestPane({
               valuePlaceholder="Value"
               suggestName={(query) => matchHeaders(query)}
               suggestValue={matchHeaderValues}
+              historyId="headers"
               highlightVariables
             />
           )}
@@ -767,5 +777,6 @@ export function RequestPane({
         </div>
       )}
     </div>
+    </HistoryScope>
   );
 }

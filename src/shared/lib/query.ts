@@ -50,28 +50,36 @@ export function applyQuery(url: string, params: KeyValue[]): string {
 /**
  * The rows to show in the Params tab, from the two places their state lives.
  *
- * A query string can only say which params are set and to what, so the URL owns
- * that much — it is what the user edits in the URL bar, and it wins. Everything
- * else has no slot in a URL and is kept in `config.params` alongside it: the
- * description, and rows switched off, which by definition are not in the URL.
+ * A query string can only say which named params are set and to what, so the
+ * URL owns *values* — it is what the user edits in the URL bar, and it wins
+ * there. The row list itself comes from `config.params`, which is the only
+ * place that can hold what a URL cannot: descriptions, rows switched off, and
+ * rows whose name has not been typed yet.
  *
- * Descriptions are carried over by name. Rows that are off collect at the end,
- * because a query string cannot record where they used to sit — once a row
- * leaves the URL its position is genuinely gone, and inventing one would move
- * the user's rows around behind their back.
+ * The stored order is kept. Rebuilding the list from the URL instead meant any
+ * row the URL could not express vanished — type a value before its name and the
+ * row disappeared under the cursor — and it shuffled switched-off rows to the
+ * end, moving the user's rows around behind their back.
  */
 export function mergeParams(url: string, stored: KeyValue[]): KeyValue[] {
-  const described = new Map<string, string>();
+  // Consumed as rows claim them, so what is left is what the URL bar added.
+  const unclaimed = parseQuery(url);
+  const rows: KeyValue[] = [];
+
   for (const row of stored) {
-    if (row.enabled !== false && row.description) {
-      described.set(row.name, row.description);
+    // Nothing a query string can hold, so the URL has no say: keep it as it is,
+    // where it is.
+    if (row.enabled === false || row.name.trim() === "") {
+      rows.push(row);
+      continue;
     }
+    const index = unclaimed.findIndex((param) => param.name === row.name);
+    // Gone from the URL means deleted there, which is a real edit.
+    if (index === -1) continue;
+    const [claimed] = unclaimed.splice(index, 1);
+    rows.push({ ...row, value: claimed.value });
   }
 
-  const active = parseQuery(url).map((row) => {
-    const description = described.get(row.name);
-    return description ? { ...row, description } : row;
-  });
-
-  return [...active, ...stored.filter((row) => row.enabled === false)];
+  // Typed straight into the URL bar, with no stored row to attach to.
+  return [...rows, ...unclaimed];
 }

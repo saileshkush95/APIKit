@@ -37,6 +37,7 @@ import {
 import { notify } from "../../shared/lib/notify";
 import { newId } from "../../shared/lib/storage";
 import { methodColor } from "../../shared/lib/ui";
+import { useValueHistory } from "../../shared/lib/valueHistory";
 import { useConfirm } from "../../shared/state/confirm";
 import {
   defaultAuth,
@@ -98,6 +99,14 @@ export function CollectionSidebar({
   const confirm = useConfirm();
   const [query, setQuery] = useState("");
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+
+  // Structural undo for the tree itself: a deleted request or folder has no
+  // field left to press Cmd+Z in. Global, because the focus is almost never in
+  // the sidebar by the time you want the deletion back — and it stands down for
+  // a focused field with history of its own, or a list changed more recently.
+  const history = useValueHistory("collection:tree", nodes, onChange, {
+    global: true,
+  });
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -165,6 +174,7 @@ export function CollectionSidebar({
 
   function addFolder(parentId: string | null) {
     const folder = newFolder();
+    history.commit(nodes);
     onChange(insertNode(nodes, parentId, folder));
     if (parentId) onToggleExpanded(parentId, true);
     onToggleExpanded(folder.id, true);
@@ -174,6 +184,7 @@ export function CollectionSidebar({
   function rename(id: string, name: string) {
     const trimmed = name.trim();
     if (trimmed !== "") {
+      history.commit(nodes);
       onChange(updateNode(nodes, id, (node) => ({ ...node, name: trimmed })));
     }
     setRenamingId(null);
@@ -184,6 +195,7 @@ export function CollectionSidebar({
     if (!node) return;
     const copy = cloneNode(node);
     copy.name = `${node.name} copy`;
+    history.commit(nodes);
     // Sits next to the original rather than at the end of the list.
     onChange(moveNode(insertNode(nodes, null, copy), copy.id, id, "after"));
   }
@@ -218,6 +230,7 @@ export function CollectionSidebar({
     // Keep the removed subtree so Undo can put it back exactly where it was,
     // with the same ids — which also un-deletes it on peers.
     const previous = nodes;
+    history.commit(nodes);
     onChange(removeNode(nodes, id));
     onRequestsDeleted(contained);
 
@@ -313,6 +326,7 @@ export function CollectionSidebar({
     if (!ok) return;
 
     const previous = nodes;
+    history.commit(nodes);
     onChange(removeNodes(nodes, ids));
     onRequestsDeleted(requests);
     clearSelection();
@@ -428,12 +442,14 @@ export function CollectionSidebar({
     if (selectedIds.size > 1 && selectedIds.has(active)) {
       const parent =
         target.position === "inside" ? target.id : parentIdOf(nodes, target.id ?? "");
+      history.commit(nodes);
       onChange(moveNodes(nodes, [...selectedIds], target.id === null ? null : parent));
       if (parent) onToggleExpanded(parent, true);
       clearSelection();
       return;
     }
 
+    history.commit(nodes);
     onChange(moveNode(nodes, active, target.id, target.position));
     if (target.position === "inside" && target.id) {
       onToggleExpanded(target.id, true);
@@ -620,7 +636,14 @@ export function CollectionSidebar({
         }}
       >
         <div
-          className="min-h-0 flex-1 overflow-auto"
+          className="flex min-h-0 flex-1 flex-col overflow-auto"
+          onClick={(e) => {
+            // Anywhere that is not a row: the padding beside a row, the space
+            // below the last one, the empty-collection notice.
+            if ((e.target as Element).closest("[data-tree-row]")) return;
+            setSelectedFolderId(null);
+            clearSelection();
+          }}
           onContextMenu={(e) => {
             e.preventDefault();
             setMenu({ x: e.clientX, y: e.clientY, node: null });
@@ -849,6 +872,7 @@ function Row({
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
+      data-tree-row=""
       style={{ paddingLeft: 6 + depth * 12 }}
       className={`group flex cursor-default items-center gap-1.5 py-1 pr-2 text-xs ${dropCls} ${
         hidden ? "opacity-40" : ""
@@ -873,7 +897,9 @@ function Row({
         <span className="flex-none text-[11px]">📁</span>
       ) : (
         <span
-          className={`w-11 flex-none font-mono text-[10px] font-bold ${methodColor(
+          // Sized to the method it shows, not to DELETE: a fixed column lined
+          // the names up but left "GET" trailing a visible gap.
+          className={`flex-none font-mono text-[10px] font-bold ${methodColor(
             node.method,
           )}`}
         >
