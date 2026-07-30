@@ -96,6 +96,15 @@ export function CodeEditor({
     top: number;
   } | null>(null);
   const [highlighted, setHighlighted] = useState(0);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  // The list scrolls at 15rem, so moving the highlight past the visible rows
+  // looked like the arrow keys did nothing at all.
+  useLayoutEffect(() => {
+    listRef.current
+      ?.querySelector(`[data-index="${highlighted}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [highlighted]);
 
   // Hovering reads the overlay's token rects, so it works wherever the overlay
   // is drawn — that is, any editor with a language set.
@@ -392,6 +401,7 @@ export function CodeEditor({
       {completion &&
         createPortal(
           <ul
+            ref={listRef}
             role="listbox"
             className="wrk-select-list"
             style={{
@@ -404,7 +414,7 @@ export function CodeEditor({
             }}
           >
             {completion.items.map((item, index) => (
-              <li key={item.name}>
+              <li key={item.name} data-index={index}>
                 <button
                   type="button"
                   role="option"
@@ -413,7 +423,7 @@ export function CodeEditor({
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => choose(item.name)}
                   className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs ${
-                    index === highlighted ? "bg-elevated" : ""
+                    index === highlighted ? "wrk-option-active" : ""
                   }`}
                 >
                   <span className="font-mono text-brand">{item.name}</span>

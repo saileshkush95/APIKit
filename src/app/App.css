@@ -229,6 +229,16 @@ body {
       0 4px 6px -4px rgb(0 0 0 / 0.3);
   }
 
+  /* The highlighted row in a dropdown — keyboard selection and hover.
+
+   This used to be `bg-elevated`, which is the list's own background colour, so
+   the selection was invisible: the arrow keys moved it correctly and nothing on
+   screen changed, which reads as the keys not working at all. */
+  .wrk-option-active {
+    background-color: color-mix(in oklab, var(--color-brand) 22%, transparent);
+    color: var(--color-ink);
+  }
+
   /* A field whose {{variables}} are coloured. The text itself cannot be styled
    inside an <input>, so the same string is drawn in an overlay behind a
    transparent-text field; the two must share font, padding and box exactly. */

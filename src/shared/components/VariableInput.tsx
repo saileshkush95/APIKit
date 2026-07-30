@@ -245,7 +245,7 @@ export function VariableInput({
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => choose(name)}
                   className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs ${
-                    index === highlighted ? "bg-elevated" : ""
+                    index === highlighted ? "wrk-option-active" : ""
                   }`}
                 >
                   <span className="font-mono text-brand">{name}</span>

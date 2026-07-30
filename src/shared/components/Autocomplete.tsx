@@ -21,6 +21,13 @@ export function Autocomplete({ value, onChange, suggest, ...rest }: Props) {
   const [rect, setRect] = useState<DOMRect | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+
+  // Keeps the keyboard selection in view once the list scrolls.
+  useEffect(() => {
+    listRef.current
+      ?.querySelector(`[data-index="${highlighted}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [highlighted]);
   // Set while choosing, so the blur that follows does not reopen the list.
   const choosing = useRef(false);
 
@@ -120,7 +127,7 @@ export function Autocomplete({ value, onChange, suggest, ...rest }: Props) {
             }}
           >
             {items.map((item, index) => (
-              <li key={item}>
+              <li key={item} data-index={index}>
                 <button
                   type="button"
                   role="option"
@@ -130,7 +137,7 @@ export function Autocomplete({ value, onChange, suggest, ...rest }: Props) {
                   onClick={() => choose(item)}
                   className={`block w-full truncate px-2.5 py-1.5 text-left font-mono text-xs ${
                     index === highlighted
-                      ? "bg-elevated text-ink"
+                      ? "wrk-option-active"
                       : "text-muted"
                   }`}
                 >

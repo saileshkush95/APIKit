@@ -91,6 +91,14 @@ export function Select({
   const buttonRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
+  // Keeps the keyboard selection in view: the list scrolls at 15rem, and a
+  // highlight moving below the fold looks like the arrow keys doing nothing.
+  useEffect(() => {
+    listRef.current
+      ?.querySelector(`[data-index="${highlighted}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [highlighted]);
+
   // Positioned from the button each time it opens, and kept in place while the
   // page scrolls beneath it.
   useLayoutEffect(() => {
@@ -235,7 +243,7 @@ export function Select({
             }}
           >
             {options.map((option, index) => (
-              <li key={option.value}>
+              <li key={option.value} data-index={index}>
                 <button
                   type="button"
                   role="option"
@@ -247,7 +255,7 @@ export function Select({
                     option.disabled
                       ? "cursor-not-allowed text-muted/50"
                       : index === highlighted
-                        ? "bg-elevated text-ink"
+                        ? "wrk-option-active"
                         : "text-ink"
                   }`}
                 >
