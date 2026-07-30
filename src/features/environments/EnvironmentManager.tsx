@@ -7,10 +7,21 @@ interface Props {
   onClose: () => void;
 }
 
+/** Selects the workspace-wide set rather than one of the environments. */
+const COLLECTION = "__collection__";
+
 /** Modal for creating environments and editing their variables. */
 export function EnvironmentManager({ onClose }: Props) {
-  const { environments, activeId, create, update, duplicate, remove } =
-    useEnvironments();
+  const {
+    environments,
+    activeId,
+    create,
+    update,
+    duplicate,
+    remove,
+    collectionVariables,
+    setCollectionVariables,
+  } = useEnvironments();
   const [selectedId, setSelectedId] = useState<string | null>(
     activeId ?? environments[0]?.id ?? null,
   );
@@ -66,6 +77,24 @@ export function EnvironmentManager({ onClose }: Props) {
             </button>
           </div>
           <div className="min-h-0 flex-1 overflow-auto py-1">
+            {/* Not an environment: it belongs to the workspace and is always
+                there, so it sits above the list rather than in it. */}
+            <div
+              onClick={() => setSelectedId(COLLECTION)}
+              className={`mx-1 mb-1 cursor-pointer rounded px-2 py-1 text-xs ${
+                selectedId === COLLECTION
+                  ? "bg-elevated text-ink"
+                  : "text-muted hover:text-ink"
+              }`}
+            >
+              Collection variables
+              {collectionVariables.some((v) => v.name.trim() !== "") && (
+                <span className="ml-1.5 text-[10px] text-muted">
+                  {collectionVariables.filter((v) => v.name.trim() !== "").length}
+                </span>
+              )}
+            </div>
+
             {environments.length === 0 && (
               <p className="px-3 py-2 text-xs text-muted">
                 No environments yet.
@@ -140,7 +169,11 @@ export function EnvironmentManager({ onClose }: Props) {
         {/* Variable editor */}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex flex-none items-center gap-2 border-b border-edge px-3 py-2">
-            {selected ? (
+            {selectedId === COLLECTION ? (
+              <span className="min-w-0 flex-1 px-1.5 py-1 font-semibold text-ink">
+                Collection variables
+              </span>
+            ) : selected ? (
               <>
                 <input
                   value={selected.name}
@@ -180,7 +213,35 @@ export function EnvironmentManager({ onClose }: Props) {
           </div>
 
           <div className="min-h-0 flex-1 overflow-auto p-3">
-            {selected ? (
+            {selectedId === COLLECTION ? (
+              <>
+                <p className="mb-2 text-[11px] leading-relaxed text-muted">
+                  Belong to the workspace rather than to one environment — for
+                  the values that do not change when you switch: a client id, an
+                  API version, a shared header. Resolved{" "}
+                  <em>under</em> the active environment, so an environment can
+                  still override any of them.
+                </p>
+                <KeyValueEditor
+                  allowDisable
+                  allowDescription
+                  allowSecrets
+                  rows={
+                    collectionVariables.length
+                      ? collectionVariables
+                      : [{ name: "", value: "" }]
+                  }
+                  onChange={setCollectionVariables}
+                  keyPlaceholder="Variable"
+                  valuePlaceholder="Value"
+                />
+                <p className="mt-2 text-[11px] leading-relaxed text-muted">
+                  A script writing <code className="font-mono">wrk.env.set</code>{" "}
+                  never writes here — those go to the active environment, or to
+                  the session when there is none. These are the fixed values.
+                </p>
+              </>
+            ) : selected ? (
               <>
                 <p className="mb-2 text-[11px] text-muted">
                   Reference these anywhere in a request as{" "}

@@ -6,8 +6,23 @@ import { saveEnvironments, setSetting } from "../lib/api";
 import { notifyError } from "../lib/notify";
 import { createSaver } from "../lib/save";
 import { newId, SETTINGS, workspaceDataOnce } from "../lib/storage";
-import { environmentVars, type VarMap } from "../lib/vars";
-import type { Environment } from "../types";
+import { environmentVars, toVarMap, type VarMap } from "../lib/vars";
+import type { Environment, Variable } from "../types";
+
+/**
+ * Stored as JSON in a setting, the way the runner keeps its history. A malformed
+ * value reads as empty rather than throwing: losing the variables is bad, but
+ * failing to open the workspace at all is worse.
+ */
+function parseCollectionVariables(stored: string | undefined): Variable[] {
+  if (!stored) return [];
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? (parsed as Variable[]) : [];
+  } catch {
+    return [];
+  }
+}
 
 function makeEnvironment(name: string): Environment {
   return { id: newId(), name, variables: [{ name: "", value: "" }] };
@@ -16,6 +31,13 @@ function makeEnvironment(name: string): Environment {
 interface EnvironmentsStore {
   workspaceId: string;
   environments: Environment[];
+  /**
+   * Variables belonging to the workspace rather than to one environment, for
+   * the values that do not change when you switch environment — a client id, a
+   * fixed API version. Resolved *under* the active environment, so an
+   * environment can still override one.
+   */
+  collectionVariables: Variable[];
   activeId: string | null;
   /** Script writes with no active environment live here for the session. */
   sessionVars: Record<string, string>;
@@ -28,6 +50,7 @@ interface EnvironmentsStore {
   duplicate: (id: string) => Environment | null;
   remove: (id: string) => void;
   setVariables: (updates: Record<string, string>) => void;
+  setCollectionVariables: (variables: Variable[]) => void;
 }
 
 export const useEnvironmentsStore = create<EnvironmentsStore>()((set, get) => {
@@ -43,6 +66,7 @@ export const useEnvironmentsStore = create<EnvironmentsStore>()((set, get) => {
   return {
     workspaceId: "",
     environments: [],
+    collectionVariables: [],
     activeId: null,
     sessionVars: {},
     ready: false,
@@ -53,6 +77,9 @@ export const useEnvironmentsStore = create<EnvironmentsStore>()((set, get) => {
         const workspace = await workspaceDataOnce(workspaceId);
         set({
           environments: workspace.environments,
+          collectionVariables: parseCollectionVariables(
+            workspace.settings[SETTINGS.collectionVariables],
+          ),
           activeId: workspace.settings[SETTINGS.activeEnvironment] || null,
         });
       } catch (e) {
@@ -136,6 +163,15 @@ export const useEnvironmentsStore = create<EnvironmentsStore>()((set, get) => {
         }),
       );
     },
+
+    setCollectionVariables: (collectionVariables) => {
+      set({ collectionVariables });
+      setSetting(
+        get().workspaceId,
+        SETTINGS.collectionVariables,
+        JSON.stringify(collectionVariables),
+      ).catch((e) => notifyError("Could not save collection variables", e));
+    },
   };
 });
 
@@ -145,6 +181,7 @@ export function useEnvironments() {
   // would return a new object on every comparison, which never settles and
   // ends in "Maximum update depth exceeded".
   const environments = useEnvironmentsStore((s) => s.environments);
+  const collectionVariables = useEnvironmentsStore((s) => s.collectionVariables);
   const activeId = useEnvironmentsStore((s) => s.activeId);
   const sessionVars = useEnvironmentsStore((s) => s.sessionVars);
   const setActiveId = useEnvironmentsStore((s) => s.setActiveId);
@@ -153,18 +190,29 @@ export function useEnvironments() {
   const duplicate = useEnvironmentsStore((s) => s.duplicate);
   const remove = useEnvironmentsStore((s) => s.remove);
   const setVariables = useEnvironmentsStore((s) => s.setVariables);
+  const setCollectionVariables = useEnvironmentsStore(
+    (s) => s.setCollectionVariables,
+  );
 
   const active = useMemo(
     () => environments.find((env) => env.id === activeId) ?? null,
     [environments, activeId],
   );
+  // Collection first, so it is the fallback; the active environment overrides
+  // it, and a script write for this session overrides both.
   const vars = useMemo<VarMap>(
-    () => ({ ...environmentVars(active), ...sessionVars }),
-    [active, sessionVars],
+    () => ({
+      ...toVarMap(collectionVariables),
+      ...environmentVars(active),
+      ...sessionVars,
+    }),
+    [collectionVariables, active, sessionVars],
   );
 
   return {
     environments,
+    collectionVariables,
+    setCollectionVariables,
     active,
     activeId: active?.id ?? null,
     vars,

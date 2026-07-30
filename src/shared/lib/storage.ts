@@ -16,6 +16,7 @@ export const SETTINGS = {
   mockPort: "mockPort",
   loadTests: "loadTests",
   runnerHistory: "runnerHistory",
+  collectionVariables: "collectionVariables",
   sidebarWidth: "sidebarWidth",
   sidebarCollapsed: "sidebarCollapsed",
 } as const;

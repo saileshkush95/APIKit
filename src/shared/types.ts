@@ -424,6 +424,8 @@ export interface WorkspaceExport {
   workspace: string;
   tree: TreeNode[];
   environments: Environment[];
+  /** Workspace-wide variables, resolved under whichever environment is active. */
+  collectionVariables?: Variable[];
   monitors?: Monitor[];
   mockRoutes?: MockRoute[];
 }

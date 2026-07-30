@@ -189,6 +189,7 @@ export function ApiClient({ intent }: ApiClientProps) {
     vars,
     setVariables,
     environments,
+    collectionVariables,
     activeId: activeEnvironmentId,
     create: createEnvironment,
     update: updateEnvironment,
@@ -860,7 +861,7 @@ export function ApiClient({ intent }: ApiClientProps) {
           ? toOpenApi(name, tree)
           : {
               text: serializeExport(
-                buildExport({ workspace: name, tree, environments }),
+                buildExport({ workspace: name, tree, environments, collectionVariables }),
               ),
               filename: suggestFilename(name),
               warnings: [] as string[],

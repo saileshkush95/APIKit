@@ -52,8 +52,13 @@ export function GithubPanel() {
   const workspaceId = useWorkspaceId();
   const { active } = useWorkspaces();
   const { tree, setTree } = useCollection();
-  const { environments, create: createEnvironment, update: updateEnvironment } =
-    useEnvironments();
+  const {
+    environments,
+    collectionVariables,
+    setCollectionVariables,
+    create: createEnvironment,
+    update: updateEnvironment,
+  } = useEnvironments();
 
   const [config, setConfig] = useState<Stored>(() =>
     emptyConfig(active?.name ?? "workspace"),
@@ -130,6 +135,7 @@ export function GithubPanel() {
         workspace: active?.name ?? "Workspace",
         tree,
         environments,
+        collectionVariables,
       }),
     );
   }
@@ -257,6 +263,9 @@ export function GithubPanel() {
                       variables: environment.variables,
                     });
                   }
+                }
+                if (document.collectionVariables) {
+                  setCollectionVariables(document.collectionVariables);
                 }
                 remember(file.sha);
                 setStatus(

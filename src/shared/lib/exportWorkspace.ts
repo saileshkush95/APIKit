@@ -11,6 +11,7 @@ import {
   type Environment,
   type MockRoute,
   type Monitor,
+  type Variable,
   type RequestDraft,
   type TreeNode,
   type WorkspaceExport,
@@ -20,6 +21,7 @@ export interface ExportInput {
   workspace: string;
   tree: TreeNode[];
   environments: Environment[];
+  collectionVariables?: Variable[];
   monitors?: Monitor[];
   mockRoutes?: MockRoute[];
 }
@@ -108,6 +110,11 @@ export function buildExport(input: ExportInput): WorkspaceExport {
     workspace: input.workspace,
     tree: withoutCredentials(input.tree),
     environments: withoutSecrets(input.environments),
+    // Same rule as an environment's: a secret's name travels so a teammate
+    // knows what to fill in, its value does not.
+    collectionVariables: (input.collectionVariables ?? []).map((variable) =>
+      variable.secret ? { ...variable, value: "" } : variable,
+    ),
     monitors: input.monitors,
     mockRoutes: input.mockRoutes,
   };

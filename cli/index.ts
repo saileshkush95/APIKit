@@ -224,7 +224,13 @@ async function main(): Promise<number> {
     process.stderr.write(`no environment named \`${options.environment}\`\n`);
     return 2;
   }
-  const vars = { ...toVarMap(environment?.variables ?? []), ...options.vars };
+  // Same order as the app: collection under environment under overrides, so a
+  // --var from CI always wins and a run here resolves what a run there does.
+  const vars = {
+    ...toVarMap(document.collectionVariables ?? []),
+    ...toVarMap(environment?.variables ?? []),
+    ...options.vars,
+  };
 
   const settings = {
     ...defaultSettings(),
