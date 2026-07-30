@@ -143,6 +143,27 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The CLI runner is the whole point of the JUnit output, and a pipeline
+      # cannot install a Tauri bundle to get it. Bundled to plain JS because a
+      # CI runner has node, not necessarily bun.
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Build the CLI runner
+        run: |
+          bun install
+          bun run build:cli
+
+      # Uploaded before the release goes to `latest`, so a failure here leaves
+      # it a prerelease the updater ignores rather than publishing an
+      # incomplete set of assets.
+      - name: Attach the CLI runner
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ needs.release.outputs.tag }}"
+          gh release upload "$tag" dist-cli/apikit-run.js \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

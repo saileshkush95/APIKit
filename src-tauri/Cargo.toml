@@ -1,6 +1,6 @@
 [package]
 name = "apikit"
-version = "0.1.8"
+version = "0.1.9"
 description = "API client, mock server, load tester and HTTPS proxy"
 authors = ["you"]
 edition = "2021"
