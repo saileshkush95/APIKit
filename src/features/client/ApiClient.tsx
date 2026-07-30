@@ -27,6 +27,7 @@ import {
   enforceSecureUrl,
   resolveAuth,
 } from "../../shared/lib/request";
+import { tlsFor } from "../../shared/lib/certificates";
 import { currentAccessToken } from "../../shared/lib/oauth";
 import { activeRows } from "../../shared/lib/rows";
 import { runPostScript, runPreScript } from "../../shared/lib/scripts";
@@ -490,6 +491,7 @@ export function ApiClient({ intent }: ApiClientProps) {
         maxRedirects: config.maxRedirects,
         noReferer: config.noReferer,
         noCookieJar: config.noCookieJar,
+        ...tlsFor(wire.url, settings),
         multipart: built.multipart ?? null,
         bodyFilePath: built.bodyFilePath ?? null,
         // The tab id doubles as the cancel handle: one in-flight request per

@@ -10,6 +10,7 @@ mod mock;
 mod proxy;
 mod oauth;
 mod secrets;
+mod tls;
 mod store;
 mod sync;
 mod stream;

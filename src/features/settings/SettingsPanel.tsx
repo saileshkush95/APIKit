@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { CookieManager } from "./CookieManager";
+import { CertificatePanel } from "./CertificatePanel";
 import { ShortcutsPanel } from "./ShortcutsPanel";
 import { Toggle } from "../../shared/components/Toggle";
 import { cookiesEnabled, setCookiesEnabled } from "../../shared/lib/api";
@@ -47,6 +48,7 @@ const THEMES: { value: ThemeMode; label: string }[] = [
 type Category =
   | "general"
   | "themes"
+  | "certificates"
   | "cookies"
   | "background"
   | "identity"
@@ -56,6 +58,7 @@ type Category =
 const CATEGORIES: { key: Category; label: string; icon: string }[] = [
   { key: "general", label: "General", icon: "⚙" },
   { key: "themes", label: "Themes", icon: "◐" },
+  { key: "certificates", label: "Certificates", icon: "▤" },
   { key: "cookies", label: "Cookies", icon: "◎" },
   { key: "background", label: "Background", icon: "⏾" },
   { key: "identity", label: "Identity", icon: "◉" },
@@ -333,6 +336,8 @@ export function SettingsPanel() {
               </Row>
             </Section>
           )}
+
+          {category === "certificates" && <CertificatePanel />}
 
           {category === "cookies" && (
             <Section

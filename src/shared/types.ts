@@ -65,6 +65,10 @@ export interface HttpRequestSpec {
   noReferer?: boolean | null;
   /** Skip the shared cookie jar for this request, both directions. */
   noCookieJar?: boolean | null;
+  /** Client certificate for mutual TLS, already matched to this URL's host. */
+  clientCert?: { certPath: string; keyPath: string } | null;
+  /** Extra certificate authorities to trust, on top of the system roots. */
+  caCertPaths?: string[] | null;
 }
 
 export interface HttpResponseData {
@@ -297,6 +301,28 @@ export interface RequestConfig {
 
 // --- Application settings ----------------------------------------------------
 
+/**
+ * A client certificate, and which hosts it is presented to.
+ *
+ * Only paths are held. Key material must not go in the workspace database —
+ * export and sync both read it, and a private key is the one thing that must
+ * never travel.
+ *
+ * PEM only, because `.p12`/`.pfx` support in reqwest needs native-tls, which
+ * would pull OpenSSL in on Linux. The settings panel gives the openssl command
+ * to convert one.
+ */
+export interface ClientCertificate {
+  id: string;
+  /** Exact host, or one leading `*.` wildcard covering a single label. */
+  host: string;
+  /** PEM certificate; may hold the private key too. */
+  certPath: string;
+  /** Separate PKCS#8 key, when it is not in the certificate file. */
+  keyPath: string;
+  enabled: boolean;
+}
+
 export interface AppSettings {
   accentColor: string;
   uiFont: string;
@@ -308,6 +334,13 @@ export interface AppSettings {
   verifyTls: boolean;
   /** Rewrite http:// → https:// and ws:// → wss:// before connecting. */
   enforceSecure: boolean;
+  /** Presented when the server asks for one, matched by host. */
+  clientCertificates: ClientCertificate[];
+  /**
+   * Extra CAs to trust, as PEM paths. The alternative people reach for is
+   * switching verifyTls off, which stops checking every other server too.
+   */
+  caCertificatePaths: string[];
   defaultHttpVersion: HttpVersion;
   /** How many messages a streaming session keeps in memory. */
   maxStreamMessages: number;
@@ -415,6 +448,8 @@ export function defaultSettings(): AppSettings {
     followRedirects: true,
     verifyTls: true,
     enforceSecure: false,
+    clientCertificates: [],
+    caCertificatePaths: [],
     defaultHttpVersion: "auto",
     maxStreamMessages: 500,
     runInBackground: false,

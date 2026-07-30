@@ -24,6 +24,7 @@ import { environmentVars } from "../../shared/lib/vars";
 import { runAssertions } from "../../shared/lib/assertions";
 import { PRESETS, presetFor, totalDuration } from "../../shared/lib/loadPresets";
 import { buildWireRequest, enforceSecureUrl } from "../../shared/lib/request";
+import { tlsFor } from "../../shared/lib/certificates";
 import { currentAccessToken } from "../../shared/lib/oauth";
 import { activeRows } from "../../shared/lib/rows";
 import { isFolder } from "../../shared/lib/tree";
@@ -439,6 +440,7 @@ export function LoadTestPanel() {
           body: base.body || null,
           timeoutMs: settings.defaultTimeoutMs,
           verifyTls: settings.verifyTls,
+          ...tlsFor(target, settings),
           httpVersion: settings.defaultHttpVersion,
         },
         phases,
@@ -480,6 +482,7 @@ export function LoadTestPanel() {
           body: base.body || null,
           timeoutMs: settings.defaultTimeoutMs,
           verifyTls: settings.verifyTls,
+          ...tlsFor(target, settings),
         });
         for (const result of runAssertions(active.tests, response)) {
           if (result.passed) summary.passed += 1;

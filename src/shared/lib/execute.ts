@@ -6,6 +6,7 @@ import { sendRequest } from "./api";
 import { runAssertions } from "./assertions";
 import { currentAccessToken } from "./oauth";
 import { buildWireRequest, enforceSecureUrl, resolveAuth } from "./request";
+import { tlsFor } from "./certificates";
 import { activeRows } from "./rows";
 import { runPostScript, runPreScript } from "./scripts";
 import type { VarMap } from "./vars";
@@ -72,6 +73,7 @@ export async function executeRequest(
       maxRedirects: config.maxRedirects,
       noReferer: config.noReferer,
       noCookieJar: config.noCookieJar,
+      ...tlsFor(wire.url, settings),
       multipart: built.multipart ?? null,
       cancelId,
     });

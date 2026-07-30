@@ -95,6 +95,13 @@ pub struct HttpRequestSpec {
     /// Skip the shared cookie jar for this request, both directions.
     #[serde(default)]
     pub no_cookie_jar: Option<bool>,
+    /// Client certificate for mutual TLS, already matched to this request's host
+    /// by the caller — the host patterns live in settings, not here.
+    #[serde(default)]
+    pub client_cert: Option<crate::tls::ClientCertSpec>,
+    /// Extra certificate authorities to trust, on top of the system roots.
+    #[serde(default)]
+    pub ca_cert_paths: Option<Vec<String>>,
 }
 
 /// Response returned to the frontend.
@@ -164,6 +171,15 @@ pub async fn send_request(
     if spec.verify_tls == Some(false) {
         builder = builder.danger_accept_invalid_certs(true);
     }
+
+    // Before `build()`, and fatal if it fails: a request that quietly went out
+    // without its client certificate comes back as an opaque handshake failure
+    // from the server, with nothing pointing at the real cause.
+    builder = crate::tls::apply(
+        builder,
+        spec.client_cert.as_ref(),
+        spec.ca_cert_paths.as_deref().unwrap_or(&[]),
+    )?;
     if spec.follow_redirects == Some(false) {
         builder = builder.redirect(reqwest::redirect::Policy::none());
     } else if let Some(max) = spec.max_redirects {

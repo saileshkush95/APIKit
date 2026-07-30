@@ -160,6 +160,13 @@ fn build_client(spec: &HttpRequestSpec) -> Result<reqwest::Client, String> {
     if spec.verify_tls == Some(false) {
         builder = builder.danger_accept_invalid_certs(true);
     }
+    // The client is built once for the whole run, so a certificate that cannot
+    // be loaded fails the test up front rather than every request in it.
+    builder = crate::tls::apply(
+        builder,
+        spec.client_cert.as_ref(),
+        spec.ca_cert_paths.as_deref().unwrap_or(&[]),
+    )?;
     builder = match spec.http_version.as_deref() {
         Some("http1") => builder.http1_only(),
         Some("http2") => builder.http2_prior_knowledge(),
