@@ -145,6 +145,36 @@ body {
   padding: 0 0.5rem;
 }
 
+/* A field filling a table cell. The grid already draws a border on every side,
+   so the field draws none of its own — otherwise each cell reads as a floating
+   pill and a list of eight headers looks like 24 separate boxes. Focus is shown
+   by tinting the cell rather than outlining it, which would put a line back. */
+.wrk-field.cell {
+  height: 1.75rem;
+  border: none;
+  border-radius: 0;
+  background-color: transparent;
+  padding: 0 0.5rem;
+  font-size: 0.6875rem;
+}
+
+.wrk-field.cell:focus,
+.wrk-field.cell:focus-visible {
+  border: none;
+  background-color: color-mix(in srgb, var(--color-brand) 8%, transparent);
+}
+
+/* Row checkbox inside a grid. A switch is the right control for a setting that
+   takes effect immediately, but at 32x18 it dominates a 28px table row — and in
+   a grid the state reads from the column, not from each control. */
+.wrk-check {
+  width: 0.8125rem;
+  height: 0.8125rem;
+  margin: 0;
+  accent-color: var(--color-brand);
+  cursor: pointer;
+}
+
 /* The URL bar and other primary inputs. */
 .wrk-field.lg {
   height: 2.25rem;
@@ -226,6 +256,18 @@ body {
 .wrk-variable-overlay.lg {
   font-size: 0.8125rem;
   padding: 0 0.75rem;
+}
+
+/* Matches `.wrk-field.cell`: no border to sit inside, and no background, so the
+   grid line and the row's hover tint show through instead of being painted over.
+   The padding and font size must track the input exactly or the coloured text
+   drifts out of line with the caret. */
+.wrk-variable-overlay.cell {
+  inset: 0;
+  padding: 0 0.5rem;
+  font-size: 0.6875rem;
+  background-color: transparent;
+  border-radius: 0;
 }
 
 .wrk-variable-overlay.mono,

@@ -24,6 +24,7 @@ import { environmentVars } from "../../shared/lib/vars";
 import { runAssertions } from "../../shared/lib/assertions";
 import { PRESETS, presetFor, totalDuration } from "../../shared/lib/loadPresets";
 import { buildWireRequest, enforceSecureUrl } from "../../shared/lib/request";
+import { activeRows } from "../../shared/lib/rows";
 import { isFolder } from "../../shared/lib/tree";
 import { methodColor } from "../../shared/lib/ui";
 import { useActiveRequest } from "../../shared/state/activeRequest";
@@ -427,7 +428,7 @@ export function LoadTestPanel() {
         request: {
           method: method || base.method,
           url: enforceSecureUrl(target, settings.enforceSecure),
-          headers: base.headers.filter((h) => h.name.trim() !== ""),
+          headers: activeRows(base.headers),
           body: base.body || null,
           timeoutMs: settings.defaultTimeoutMs,
           verifyTls: settings.verifyTls,
@@ -468,7 +469,7 @@ export function LoadTestPanel() {
         const response = await sendRequest({
           method: method || base.method,
           url: enforceSecureUrl(target, settings.enforceSecure),
-          headers: base.headers.filter((h) => h.name.trim() !== ""),
+          headers: activeRows(base.headers),
           body: base.body || null,
           timeoutMs: settings.defaultTimeoutMs,
           verifyTls: settings.verifyTls,

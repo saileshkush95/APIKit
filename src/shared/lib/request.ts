@@ -2,6 +2,7 @@
 // method/url/headers/body that go over the wire.
 
 import { applyQuery, parseQuery } from "./query";
+import { activeRows } from "./rows";
 import { folderPathTo } from "./tree";
 import { interpolate, resolveDraft, type VarMap, type WireRequest } from "./vars";
 import type { Auth, KeyValue, MultipartPart, RequestDraft, TreeNode } from "../types";
@@ -36,10 +37,6 @@ export interface BuiltRequest extends WireRequest {
   multipart?: MultipartPart[];
   /** A file the backend streams as the whole body, in `binary` mode. */
   bodyFilePath?: string;
-}
-
-function activeRows(rows: KeyValue[]): KeyValue[] {
-  return rows.filter((row) => row.name.trim() !== "");
 }
 
 function urlEncode(rows: KeyValue[]): string {

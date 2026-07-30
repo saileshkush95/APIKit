@@ -326,6 +326,8 @@ export function BodyEditor({
 
       {config.bodyMode === "formData" && (
         <KeyValueEditor
+          allowDisable
+          allowDescription
           rows={config.formData}
           onChange={(formData) => onConfigChange({ formData })}
           keyPlaceholder="Key"
@@ -337,6 +339,8 @@ export function BodyEditor({
 
       {config.bodyMode === "urlEncoded" && (
         <KeyValueEditor
+          allowDisable
+          allowDescription
           rows={config.urlEncoded}
           onChange={(urlEncoded) => onConfigChange({ urlEncoded })}
           keyPlaceholder="Key"

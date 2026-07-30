@@ -29,6 +29,7 @@ import {
   RESPONSE_HEADERS,
 } from "../../shared/lib/headerSuggestions";
 import { usePersist } from "../../shared/lib/persist";
+import { activeRows } from "../../shared/lib/rows";
 import { newId, SETTINGS } from "../../shared/lib/storage";
 import { methodColor, statusColor } from "../../shared/lib/ui";
 import { useWorkspaceId } from "../../shared/state/workspaces";
@@ -86,6 +87,19 @@ function newFolder(parentId: string | null = null): MockRoute {
   };
 }
 
+
+/**
+ * Strips rows the user switched off before the routes reach the server. Only
+ * the wire copy is filtered — the saved copy keeps every row, so switching one
+ * back on does not mean retyping it.
+ */
+function servable(routes: MockRoute[]): MockRoute[] {
+  return routes.map((route) => ({
+    ...route,
+    headers: activeRows(route.headers),
+    matchHeaders: activeRows(route.matchHeaders),
+  }));
+}
 
 export function MockPanel() {
   const workspaceId = useWorkspaceId();
@@ -161,9 +175,11 @@ export function MockPanel() {
   }, [workspaceId]);
 
   // Persisted, and pushed to the running server so edits apply immediately.
+  // What is saved keeps every row; what the server gets does not, so a header
+  // switched off is neither served nor demanded of an incoming request.
   usePersist(routes, ready, async (value) => {
     await saveMockRoutes(workspaceId, value);
-    await applyMockRoutes(value);
+    await applyMockRoutes(servable(value));
   });
 
   useEffect(() => {
@@ -182,7 +198,7 @@ export function MockPanel() {
         await stopMockServer();
       } else {
         await startMockServer(workspaceId, port);
-        await applyMockRoutes(routes);
+        await applyMockRoutes(servable(routes));
         await setSetting(workspaceId, SETTINGS.mockPort, String(port));
       }
       setStatus(await mockStatus());
@@ -688,15 +704,14 @@ export function MockPanel() {
                     [
                       "headers",
                       "Headers",
-                      selected.headers.filter((h) => h.name.trim() !== "").length ||
-                        "",
+                      activeRows(selected.headers).length || "",
                     ],
                     [
                       "matching",
                       "Matching",
                       selected.matchQuery ||
                       selected.matchBody ||
-                      selected.matchHeaders.some((h) => h.name.trim() !== "")
+                      activeRows(selected.matchHeaders).length > 0
                         ? "●"
                         : "",
                     ],
@@ -726,6 +741,8 @@ export function MockPanel() {
 
               <div className={editorTab === "headers" ? "" : "hidden"}>
                 <KeyValueEditor
+                  allowDisable
+                  allowDescription
                   rows={
                     selected.headers.length
                       ? selected.headers
@@ -811,6 +828,8 @@ export function MockPanel() {
                       header to be present
                     </div>
                     <KeyValueEditor
+                  allowDisable
+                  allowDescription
                       rows={
                         selected.matchHeaders.length
                           ? selected.matchHeaders

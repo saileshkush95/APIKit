@@ -14,12 +14,13 @@ import { ScriptsEditor } from "./ScriptsEditor";
 import { StreamConsole } from "./StreamConsole";
 import { TestsEditor } from "./TestsEditor";
 import { WebRtcPanel } from "./WebRtcPanel";
-import { applyQuery, parseQuery } from "../../shared/lib/query";
+import { applyQuery, mergeParams } from "../../shared/lib/query";
 import {
   matchHeaderValues,
   matchHeaders,
 } from "../../shared/lib/headerSuggestions";
 import { buildWireRequest } from "../../shared/lib/request";
+import { activeRows } from "../../shared/lib/rows";
 import { unresolvedVars } from "../../shared/lib/vars";
 import { methodColor } from "../../shared/lib/ui";
 import { useComments } from "../../shared/state/comments";
@@ -131,7 +132,7 @@ function PaneTab({
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs ${
+      className={`flex items-center gap-1.5 rounded px-2.5 py-0.5 text-xs ${
         active
           ? "bg-elevated font-medium text-ink"
           : "text-muted hover:text-ink"
@@ -217,8 +218,8 @@ export function RequestPane({
     tab.stream.state === "open" || tab.stream.state === "connecting";
 
   const commentCount = tab.sourceId ? forRequest(tab.sourceId).length : 0;
-  const params = parseQuery(tab.url);
-  const activeHeaders = tab.headers.filter((h) => h.name.trim() !== "").length;
+  const params = mergeParams(tab.url, tab.config.params ?? []);
+  const activeHeaders = activeRows(tab.headers).length;
   const hasBody = tab.config.bodyMode !== "none";
   const hasAuth = tab.config.auth.type !== "none";
 
@@ -529,7 +530,7 @@ export function RequestPane({
       >
         <div
           data-tour="request-tabs"
-          className="flex flex-none items-center gap-0.5 overflow-x-auto border-b border-edge px-2 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="flex flex-none items-center gap-0.5 overflow-x-auto border-b border-edge px-2 py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {visibleTabs.map((key) => (
             <PaneTab
@@ -572,7 +573,7 @@ export function RequestPane({
           ))}
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-auto p-3">
+        <div className="flex min-h-0 flex-1 flex-col overflow-auto p-2">
           {reqTab === "connection" && (
             <ConnectionEditor
               protocol={protocol}
@@ -587,7 +588,22 @@ export function RequestPane({
                  out and never comes back. It is appended here instead, or there
                  would be nowhere to type the next parameter. */
               rows={[...params, { name: "", value: "" }]}
-              onChange={(rows) => onChange({ url: applyQuery(tab.url, rows) })}
+              allowDisable
+              allowDescription
+              /* One patch, not two: the url and the config both come off the
+                 same `tab`, so patching them separately would let the second
+                 write overwrite the first. */
+              onChange={(rows) =>
+                onChange({
+                  url: applyQuery(tab.url, rows),
+                  config: {
+                    ...tab.config,
+                    params: rows.filter(
+                      (row) => row.name.trim() !== "" || row.value.trim() !== "",
+                    ),
+                  },
+                })
+              }
               keyPlaceholder="Parameter"
               valuePlaceholder="Value"
               highlightVariables
@@ -604,6 +620,8 @@ export function RequestPane({
           {reqTab === "headers" && (
             <KeyValueEditor
               rows={tab.headers}
+              allowDisable
+              allowDescription
               onChange={(headers) => onChange({ headers: headers as Header[] })}
               keyPlaceholder="Header"
               valuePlaceholder="Value"

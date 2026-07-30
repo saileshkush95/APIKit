@@ -4,6 +4,7 @@
 // "true" into a boolean would silently change what gets sent, and `{{var}}`
 // placeholders only survive as strings.
 
+import { isActive } from "./rows";
 import type { KeyValue } from "../types";
 
 /** Form rows → a pretty-printed JSON object body. */
@@ -14,7 +15,7 @@ export function rowsToJson(rows: KeyValue[]): {
   const result: Record<string, unknown> = {};
   let skippedFiles = 0;
   for (const row of rows) {
-    if (row.name.trim() === "") continue;
+    if (!isActive(row)) continue;
     if (row.kind === "file") {
       skippedFiles += 1;
       continue;

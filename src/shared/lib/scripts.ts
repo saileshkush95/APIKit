@@ -5,6 +5,7 @@
 // are given an explicit `wrk` API instead of raw access to app internals, and
 // every error is captured so a bad script fails only its own request.
 
+import { isActive } from "./rows";
 import type { AssertionResult, HttpResponseData, KeyValue } from "../types";
 import type { WireRequest } from "./vars";
 
@@ -28,7 +29,7 @@ function emptyOutcome(): ScriptOutcome {
 function headersToObject(headers: KeyValue[]): Record<string, string> {
   const object: Record<string, string> = {};
   for (const header of headers) {
-    if (header.name.trim() !== "") object[header.name] = header.value;
+    if (isActive(header)) object[header.name] = header.value;
   }
   return object;
 }

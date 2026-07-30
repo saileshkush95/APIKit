@@ -1,6 +1,7 @@
 // `{{variable}}` substitution driven by the active environment.
 
 import { generateDynamic, isDynamic } from "./dynamicVars";
+import { isActive } from "./rows";
 import type { Environment, RequestDraft, Variable } from "../types";
 
 // Must accept `$`, which prefixes the generated variables in dynamicVars.ts.
@@ -12,7 +13,10 @@ export type VarMap = Record<string, string>;
 export function toVarMap(variables: Variable[]): VarMap {
   const map: VarMap = {};
   for (const v of variables) {
-    if (v.name.trim() !== "") map[v.name.trim()] = v.value;
+    // A variable switched off must not resolve — leaving `{{name}}` as literal
+    // text is the visible failure, and the warning colour in VariableInput
+    // already flags it. Silently substituting a parked value would not.
+    if (isActive(v)) map[v.name.trim()] = v.value;
   }
   return map;
 }

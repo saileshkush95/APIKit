@@ -27,6 +27,7 @@ import {
   enforceSecureUrl,
   resolveAuth,
 } from "../../shared/lib/request";
+import { activeRows } from "../../shared/lib/rows";
 import { runPostScript, runPreScript } from "../../shared/lib/scripts";
 import {
   buildExport,
@@ -451,7 +452,7 @@ export function ApiClient({ intent }: ApiClientProps) {
 
     const wire = pre.request;
     const sentUrl = enforceSecureUrl(wire.url, settings.enforceSecure);
-    const sentHeaders = wire.headers.filter((h) => h.name.trim() !== "");
+    const sentHeaders = activeRows(wire.headers);
     const sent: SentRequest = {
       method: wire.method,
       url: sentUrl,
@@ -583,7 +584,7 @@ export function ApiClient({ intent }: ApiClientProps) {
         target,
         method,
         body: interpolate(tab.body, vars),
-        metadata: tab.headers.filter((h) => h.name.trim() !== ""),
+        metadata: activeRows(tab.headers),
         timeoutMs: tab.config.timeoutMs ?? settings.defaultTimeoutMs,
         plaintext: tab.config.grpcPlaintext,
       });
@@ -692,7 +693,7 @@ export function ApiClient({ intent }: ApiClientProps) {
       const sessionId = await streamConnect({
         kind: config.protocol,
         url: enforceSecureUrl(interpolate(tab.url, vars), settings.enforceSecure),
-        headers: tab.headers.filter((h) => h.name.trim() !== ""),
+        headers: activeRows(tab.headers),
         topics: config.mqttTopics
           .split(",")
           .map((topic) => topic.trim())

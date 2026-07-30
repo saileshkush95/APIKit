@@ -13,8 +13,11 @@ import type {
   TextareaHTMLAttributes,
 } from "react";
 
-/** `compact` for dense rows and toolbars, `lg` for the URL bar. */
-export type FieldSize = "compact" | "default" | "lg";
+/**
+ * `compact` for dense rows and toolbars, `lg` for the URL bar, `cell` for a
+ * field inside a table cell — bare, because the grid draws the borders.
+ */
+export type FieldSize = "compact" | "default" | "lg" | "cell";
 
 function classes(
   size: FieldSize | undefined,

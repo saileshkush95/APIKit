@@ -2,6 +2,7 @@
 // rather than the `URL` API because a URL under edit may still contain
 // `{{variables}}` and be unparseable.
 
+import { activeRows } from "./rows";
 import type { KeyValue } from "../types";
 
 function decode(value: string): string {
@@ -39,10 +40,38 @@ export function applyQuery(url: string, params: KeyValue[]): string {
   const base = start === -1 ? (hashIndex === -1 ? url : url.slice(0, hashIndex)) : url.slice(0, start);
   const fragment = hashIndex === -1 ? "" : url.slice(hashIndex);
 
-  const query = params
-    .filter((p) => p.name.trim() !== "")
+  const query = activeRows(params)
     .map((p) => `${encode(p.name)}=${encode(p.value)}`)
     .join("&");
 
   return query === "" ? `${base}${fragment}` : `${base}?${query}${fragment}`;
+}
+
+/**
+ * The rows to show in the Params tab, from the two places their state lives.
+ *
+ * A query string can only say which params are set and to what, so the URL owns
+ * that much — it is what the user edits in the URL bar, and it wins. Everything
+ * else has no slot in a URL and is kept in `config.params` alongside it: the
+ * description, and rows switched off, which by definition are not in the URL.
+ *
+ * Descriptions are carried over by name. Rows that are off collect at the end,
+ * because a query string cannot record where they used to sit — once a row
+ * leaves the URL its position is genuinely gone, and inventing one would move
+ * the user's rows around behind their back.
+ */
+export function mergeParams(url: string, stored: KeyValue[]): KeyValue[] {
+  const described = new Map<string, string>();
+  for (const row of stored) {
+    if (row.enabled !== false && row.description) {
+      described.set(row.name, row.description);
+    }
+  }
+
+  const active = parseQuery(url).map((row) => {
+    const description = described.get(row.name);
+    return description ? { ...row, description } : row;
+  });
+
+  return [...active, ...stored.filter((row) => row.enabled === false)];
 }

@@ -477,6 +477,8 @@ export function MonitorPanel() {
                             ? monitor.headers
                             : [{ name: "", value: "" }]
                         }
+                        allowDisable
+                        allowDescription
                         onChange={(headers) =>
                           update(monitor.id, { headers })
                         }

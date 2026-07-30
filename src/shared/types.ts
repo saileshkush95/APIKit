@@ -10,6 +10,14 @@ export interface KeyValue {
   filePath?: string;
   /** Environment variables only: never synced, never exported. */
   secret?: boolean;
+  /**
+   * Off keeps the row in the list but out of the request — the way to park a
+   * header without losing it. Optional, and absent means on, so every row
+   * saved before this existed still counts as enabled.
+   */
+  enabled?: boolean;
+  /** Documentation for the reader of the request. Never sent. */
+  description?: string;
 }
 
 /** One part of a multipart body; the backend reads `filePath` from disk. */
@@ -184,6 +192,12 @@ export interface RequestConfig {
   rawLanguage: RawLanguage;
   formData: KeyValue[];
   urlEncoded: KeyValue[];
+  /**
+   * Metadata for the query params, which otherwise live only in the URL: their
+   * descriptions, and any row switched off. See `mergeParams` — the URL stays
+   * authoritative for which params are set and to what.
+   */
+  params: KeyValue[];
   graphqlQuery: string;
   graphqlVariables: string;
   /** Files uploaded with a GraphQL request (multipart request spec). */
@@ -379,6 +393,9 @@ export function defaultConfig(): RequestConfig {
     rawLanguage: "json",
     formData: [{ name: "", value: "" }],
     urlEncoded: [{ name: "", value: "" }],
+    // Empty, not a blank row: this list only ever holds metadata for params
+    // that exist in the URL, so a placeholder row would have nothing to attach.
+    params: [],
     graphqlQuery: "",
     graphqlVariables: "{}",
     graphqlFiles: [],
@@ -417,6 +434,7 @@ export function normalizeConfig(config?: Partial<RequestConfig> | null): Request
     formData: config.formData?.length ? config.formData : base.formData,
     graphqlFiles: config.graphqlFiles ?? base.graphqlFiles,
     urlEncoded: config.urlEncoded?.length ? config.urlEncoded : base.urlEncoded,
+    params: config.params ?? base.params,
   };
 }
 

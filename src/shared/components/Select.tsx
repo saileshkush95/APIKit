@@ -9,6 +9,8 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+// Type-only, so the Field -> Select value re-export does not become a cycle.
+import type { FieldSize } from "./Field";
 
 /**
  * A dropdown that renders its own list.
@@ -35,7 +37,7 @@ interface Props {
   onChange?: (event: { target: { value: string } }) => void;
   children?: ReactNode;
   className?: string;
-  size?: "compact" | "default" | "lg";
+  size?: FieldSize;
   mono?: boolean;
   disabled?: boolean;
   title?: string;

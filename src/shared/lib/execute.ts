@@ -5,6 +5,7 @@
 import { sendRequest } from "./api";
 import { runAssertions } from "./assertions";
 import { buildWireRequest, enforceSecureUrl, resolveAuth } from "./request";
+import { activeRows } from "./rows";
 import { runPostScript, runPreScript } from "./scripts";
 import type { VarMap } from "./vars";
 import {
@@ -58,7 +59,7 @@ export async function executeRequest(
     const response = await sendRequest({
       method: wire.method,
       url: enforceSecureUrl(wire.url, settings.enforceSecure),
-      headers: wire.headers.filter((h) => h.name.trim() !== ""),
+      headers: activeRows(wire.headers),
       body: wire.body || null,
       timeoutMs: config.timeoutMs ?? settings.defaultTimeoutMs,
       httpVersion: config.httpVersion,

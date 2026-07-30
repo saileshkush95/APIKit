@@ -2,6 +2,7 @@
 // editor can suggest fields and show the server's own documentation.
 
 import { sendRequest } from "./api";
+import { activeRows } from "./rows";
 import type { Header } from "../types";
 
 /** Trimmed introspection query — types, fields, args and descriptions only. */
@@ -119,7 +120,7 @@ export async function introspect(
     url,
     headers: [
       { name: "Content-Type", value: "application/json" },
-      ...headers.filter((header) => header.name.trim() !== ""),
+      ...activeRows(headers),
     ],
     body: JSON.stringify({ query: INTROSPECTION_QUERY }),
     timeoutMs: options.timeoutMs,

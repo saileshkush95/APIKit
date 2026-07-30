@@ -187,6 +187,8 @@ export function EnvironmentManager({ onClose }: Props) {
                   <code className="font-mono text-brand">{"{{name}}"}</code>.
                 </p>
                 <KeyValueEditor
+                  allowDisable
+                  allowDescription
                   rows={selected.variables}
                   onChange={(variables) =>
                     update(selected.id, { variables })

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Input, Select } from "../../shared/components/Field";
 import { KeyValueEditor } from "../../shared/components/KeyValueEditor";
 import { Modal } from "../../shared/components/Modal";
+import { activeRows } from "../../shared/lib/rows";
 import { matchHeaders, matchHeaderValues } from "../../shared/lib/headerSuggestions";
 import { methodColor, statusColor } from "../../shared/lib/ui";
 import { HTTP_METHODS, type Header } from "../../shared/types";
@@ -42,7 +43,7 @@ export function HeldRequestDialog({ held, queued, onResolve }: Props) {
       status: isResponse ? status : null,
       method,
       url,
-      headers,
+      headers: activeRows(headers),
       body,
     });
   }
@@ -100,7 +101,7 @@ export function HeldRequestDialog({ held, queued, onResolve }: Props) {
         <div className="flex items-center gap-1 border-b border-edge">
           {(
             [
-              ["headers", "Headers", headers.length],
+              ["headers", "Headers", activeRows(headers).length],
               ["body", "Body", body ? 1 : 0],
             ] as const
           ).map(([key, label, count]) => (
@@ -127,6 +128,7 @@ export function HeldRequestDialog({ held, queued, onResolve }: Props) {
             onChange={setHeaders}
             keyPlaceholder="Header"
             valuePlaceholder="Value"
+            allowDisable
             suggestName={(query) => matchHeaders(query)}
             suggestValue={matchHeaderValues}
           />
