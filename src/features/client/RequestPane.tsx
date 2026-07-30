@@ -24,7 +24,7 @@ import {
 import { buildWireRequest } from "../../shared/lib/request";
 import { activeRows, storableRows } from "../../shared/lib/rows";
 import { unresolvedVars } from "../../shared/lib/vars";
-import { methodColor } from "../../shared/lib/ui";
+import { formatBytes, methodColor, statusColor } from "../../shared/lib/ui";
 import { useComments } from "../../shared/state/comments";
 import { useEnvironments } from "../../shared/state/environments";
 import {
@@ -210,6 +210,18 @@ export function RequestPane({
       : "vertical",
   );
   const columns = layout === "horizontal";
+  // Folded away entirely, to give the whole pane to the request. Kept across
+  // sends on purpose: the rail carries the status, so a collapsed response
+  // still says whether the last send worked, and reopening on every request
+  // would make the setting worthless to anyone who wanted the room.
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem("clientResponseCollapsed") === "1",
+  );
+
+  function setResponseCollapsed(next: boolean) {
+    setCollapsed(next);
+    localStorage.setItem("clientResponseCollapsed", next ? "1" : "0");
+  }
   const [dragging, setDragging] = useState(false);
   const [showCode, setShowCode] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -237,6 +249,18 @@ export function RequestPane({
 
   /** Sits at the end of the response's status line, in both states. */
   const layoutButton = (
+    <>
+    <button
+      onClick={() => setResponseCollapsed(true)}
+      className="rounded px-1 text-[11px] text-muted hover:bg-elevated hover:text-ink"
+      title={
+        columns
+          ? "Minimize the response to the right edge"
+          : "Minimize the response to the bottom"
+      }
+    >
+      {columns ? "⇥" : "⇩"}
+    </button>
     <button
       onClick={() => {
         const next = columns ? "vertical" : "horizontal";
@@ -252,6 +276,7 @@ export function RequestPane({
     >
       {columns ? "⬓" : "◧"}
     </button>
+    </>
   );
 
   /**
@@ -279,6 +304,63 @@ export function RequestPane({
         {layoutButton}
       </div>
     </div>
+  );
+
+  /**
+   * What is left of the response when it is minimized: a rail on the edge it
+   * occupied — the bottom when stacked, the right when side by side, so the
+   * pane folds away from the request rather than jumping across it.
+   *
+   * It still reports the last status, time and size. A collapsed response that
+   * said nothing would mean minimizing it cost you the one thing worth glancing
+   * at, and you would open it again on every send.
+   */
+  const responseRail = (
+    <button
+      type="button"
+      onClick={() => setResponseCollapsed(false)}
+      title="Show the response"
+      className={`group flex flex-none items-center gap-2 bg-panel text-[11px] text-muted hover:bg-elevated hover:text-ink ${
+        columns
+          ? "w-7 flex-col justify-start border-l border-edge py-2"
+          : "h-7 justify-start border-t border-edge px-2"
+      }`}
+    >
+      <span className={columns ? "text-[10px]" : "text-[10px]"}>
+        {columns ? "⇤" : "⇧"}
+      </span>
+      <span
+        className={columns ? "[writing-mode:vertical-rl] tracking-wide" : ""}
+      >
+        {streaming ? "Console" : "Response"}
+      </span>
+      {streaming && (
+        <span className={tab.stream.state === "open" ? "text-ok" : "text-muted"}>
+          ● {tab.stream.events.length}
+        </span>
+      )}
+      {!streaming && tab.loading && <span className="text-brand">…</span>}
+      {!streaming && !tab.loading && tab.error && (
+        <span className="text-err">failed</span>
+      )}
+      {!streaming && !tab.loading && tab.response && (
+        <>
+          <span
+            className={`rounded px-1 font-mono font-bold ${statusColor(
+              tab.response.status,
+            )}`}
+          >
+            {tab.response.status}
+          </span>
+          {/* Stacked, there is room for the rest of the line. */}
+          {!columns && (
+            <span className="font-mono text-muted">
+              {tab.response.timeMs} ms · {formatBytes(tab.response.sizeBytes)}
+            </span>
+          )}
+        </>
+      )}
+    </button>
   );
 
   function patchConfig(patch: Partial<RequestConfig>) {
@@ -563,7 +645,11 @@ export function RequestPane({
         // No border on the divider's side: the divider draws its own line, and
         // the two together read as a double rule.
         className={`flex min-h-0 min-w-0 flex-col ${columns ? "" : "border-t border-edge"}`}
-        style={{ flexBasis: `${split * 100}%`, flexGrow: 0, flexShrink: 1 }}
+        style={
+          collapsed
+            ? { flex: "1 1 auto" }
+            : { flexBasis: `${split * 100}%`, flexGrow: 0, flexShrink: 1 }
+        }
       >
         <div
           data-tour="request-tabs"
@@ -709,9 +795,8 @@ export function RequestPane({
         </div>
       </div>
 
-      {/* Divider */}
-      {/* One rule, with a taller invisible area to grab. `border-y` here drew a
-          line on each edge of the bar, which read as two. */}
+      {/* Divider — nothing to resize while the response is folded away. */}
+      {!collapsed && (
       <div
         onMouseDown={(e) => {
           e.preventDefault();
@@ -722,6 +807,8 @@ export function RequestPane({
         }`}
         title="Drag to resize"
       >
+        {/* One rule, with a taller invisible area to grab. `border-y` here
+            drew a line on each edge of the bar, which read as two. */}
         <div
           className={`absolute bg-edge group-hover:bg-brand ${
             columns
@@ -730,9 +817,12 @@ export function RequestPane({
           }`}
         />
       </div>
+      )}
 
       {/* Response, or the live session for streaming protocols */}
-      {streaming ? (
+      {collapsed ? (
+        responseRail
+      ) : streaming ? (
         <StreamConsole
           protocol={protocol}
           config={tab.config}
@@ -740,6 +830,7 @@ export function RequestPane({
           onConfigChange={patchConfig}
           onSend={onStreamSend}
           onClear={onClearStream}
+          trailing={layoutButton}
         />
       ) : (
       <section className="flex min-h-0 min-w-0 flex-1 flex-col">

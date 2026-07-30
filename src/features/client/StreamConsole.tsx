@@ -10,6 +10,8 @@ interface Props {
   onConfigChange: (patch: Partial<RequestConfig>) => void;
   onSend: () => void;
   onClear: () => void;
+  /** The layout switch and minimize control, as the response viewer has. */
+  trailing?: React.ReactNode;
 }
 
 const STATE_COLORS: Record<StreamSession["state"], string> = {
@@ -33,6 +35,7 @@ export function StreamConsole({
   onConfigChange,
   onSend,
   onClear,
+  trailing,
 }: Props) {
   const logRef = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
@@ -96,6 +99,7 @@ export function StreamConsole({
         >
           Clear
         </button>
+        {trailing}
       </div>
 
       <div
