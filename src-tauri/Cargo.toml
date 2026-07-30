@@ -92,3 +92,4 @@ prost-reflect = { version = "0.16", features = ["serde"] }
 prost-types = "0.14"
 sha2 = "0.10"
 rand = "0.9"
+protox = "0.9.1"

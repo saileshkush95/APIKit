@@ -5,6 +5,7 @@ import { BodyEditor } from "./BodyEditor";
 import { CodeDialog } from "./CodeDialog";
 import { CommentsPanel } from "./CommentsPanel";
 import { DocsEditor } from "./DocsEditor";
+import { GrpcSchemaPanel } from "./GrpcSchemaPanel";
 import { ConnectionEditor } from "./ConnectionEditor";
 import { KeyValueEditor } from "../../shared/components/KeyValueEditor";
 import { RequestSettingsPanel } from "./RequestSettingsPanel";
@@ -211,6 +212,7 @@ export function RequestPane({
   const [dragging, setDragging] = useState(false);
   const [showCode, setShowCode] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [grpcSchema, setGrpcSchema] = useState(false);
 
   const protocol = tab.config.protocol;
   const streaming = isStreaming(protocol);
@@ -403,6 +405,23 @@ export function RequestPane({
         />
       )}
 
+      {grpcSchema && (
+        <GrpcSchemaPanel
+          target={tab.url}
+          config={tab.config}
+          onChange={patchConfig}
+          onPick={(grpcMethod, template) =>
+            // The body is only seeded when empty: replacing a request the user
+            // already wrote would lose it.
+            onChange({
+              config: { ...tab.config, grpcMethod },
+              ...(tab.body.trim() === "" ? { body: template } : {}),
+            })
+          }
+          onClose={() => setGrpcSchema(false)}
+        />
+      )}
+
       {/* URL bar */}
       <div data-tour="urlbar" className="flex flex-none gap-2 px-4 py-2">
         <Select
@@ -453,15 +472,26 @@ export function RequestPane({
         )}
 
         {protocol === "grpc" && (
-          <VariableInput
-            value={tab.config.grpcMethod}
-            onChange={(grpcMethod) => patchConfig({ grpcMethod })}
-            placeholder="package.Service/Method"
-            mono
-            size="lg"
-            className="w-72 flex-none"
-            title="The method to call. The server's own descriptors are fetched by reflection, so no .proto file is needed."
-          />
+          <>
+            <VariableInput
+              value={tab.config.grpcMethod}
+              onChange={(grpcMethod) => patchConfig({ grpcMethod })}
+              placeholder="package.Service/Method"
+              mono
+              size="lg"
+              className="w-72 flex-none"
+              title="The method to call. Descriptors come from any .proto files you add, or from server reflection."
+            />
+            <button
+              onClick={() => setGrpcSchema(true)}
+              className="flex-none rounded-md border border-edge px-2 py-1 text-[11px] text-muted hover:border-brand hover:text-ink"
+              title="Browse services and methods, and choose .proto files"
+            >
+              {(tab.config.grpcProtoFiles ?? []).length > 0
+                ? `.proto (${(tab.config.grpcProtoFiles ?? []).length})`
+                : "Methods…"}
+            </button>
+          </>
         )}
 
         {!streaming && protocol !== "webrtc" && protocol !== "grpc" && (

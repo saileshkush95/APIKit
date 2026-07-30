@@ -598,6 +598,8 @@ export function ApiClient({ intent }: ApiClientProps) {
         metadata: activeRows(tab.headers),
         timeoutMs: tab.config.timeoutMs ?? settings.defaultTimeoutMs,
         plaintext: tab.config.grpcPlaintext,
+        protoFiles: tab.config.grpcProtoFiles ?? [],
+        importPaths: tab.config.grpcImportPaths ?? [],
       });
       logConsole({
         level: "response",

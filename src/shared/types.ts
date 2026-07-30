@@ -280,6 +280,13 @@ export interface RequestConfig {
   grpcMethod: string;
   /** gRPC: plaintext h2c rather than TLS — the default for local servers. */
   grpcPlaintext: boolean;
+  /**
+   * gRPC: `.proto` files to compile instead of using server reflection, which
+   * most production servers have switched off.
+   */
+  grpcProtoFiles: string[];
+  /** gRPC: directories `import` statements resolve against. */
+  grpcImportPaths: string[];
   /** Markdown documentation shown in the request's Docs tab. */
   docs: string;
   /** JavaScript run before the request is sent. */
@@ -538,6 +545,8 @@ export function defaultConfig(): RequestConfig {
     iceServers: "stun:stun.l.google.com:19302",
     grpcMethod: "",
     grpcPlaintext: true,
+    grpcProtoFiles: [],
+    grpcImportPaths: [],
     docs: "",
     preScript: "",
     postScript: "",

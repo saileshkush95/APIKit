@@ -174,6 +174,7 @@ pub fn run() {
             oauth::oauth_device_start,
             oauth::oauth_device_poll,
             grpc::grpc_call,
+            grpc::grpc_methods,
             grpc::grpc_services,
             proxy::start_proxy,
             proxy::stop_proxy,

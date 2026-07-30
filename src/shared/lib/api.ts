@@ -503,6 +503,23 @@ export interface GrpcSpec {
   metadata: Header[];
   timeoutMs?: number | null;
   plaintext: boolean;
+  /** Compiled instead of asking the server for descriptors. */
+  protoFiles?: string[];
+  /** Directories `import` statements resolve against. */
+  importPaths?: string[];
+}
+
+/** One method of a service, as returned by `grpcMethods`. */
+export interface GrpcMethodInfo {
+  name: string;
+  /** `package.Service/Method`, ready for the method field. */
+  fullName: string;
+  clientStreaming: boolean;
+  serverStreaming: boolean;
+  inputType: string;
+  outputType: string;
+  /** A JSON skeleton of the request message. */
+  inputTemplate: string;
 }
 
 export interface GrpcResponse {
@@ -518,6 +535,13 @@ export function grpcCall(spec: GrpcSpec): Promise<GrpcResponse> {
 }
 
 /** The services a server exposes, via reflection. */
+export function grpcMethods(
+  spec: GrpcSpec,
+  service: string,
+): Promise<GrpcMethodInfo[]> {
+  return invoke<GrpcMethodInfo[]>("grpc_methods", { spec, service });
+}
+
 export function grpcServices(spec: GrpcSpec): Promise<string[]> {
   return invoke<string[]>("grpc_services", { spec });
 }
