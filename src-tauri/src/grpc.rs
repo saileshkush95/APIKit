@@ -1,18 +1,26 @@
-//! gRPC over HTTP/2, driven by server reflection.
+//! gRPC over HTTP/2: unary and all three streaming kinds.
 //!
-//! No `.proto` file is required: the server is asked for its own descriptors,
-//! which are used to build a dynamic message from the JSON the user typed and
-//! to turn the reply back into JSON. That keeps gRPC feeling like the rest of
-//! the app — type a body, press send — rather than a build step.
+//! Message shapes come from the user's `.proto` files, or from the server's own
+//! reflection service when none are given. Either way there is no build step —
+//! type a body, press send — and no protoc on the machine.
 //!
-//! Unary calls only. Streaming methods are listed but refused, because a single
-//! request/response pane cannot honestly represent a stream.
+//! The transport is tonic rather than a hand-rolled framing layer over reqwest.
+//! That is not a tidying exercise: `grpc-status` travels in HTTP/2 *trailers*
+//! for every call that is not an immediate failure, and reqwest does not expose
+//! trailers at all. The old code read the status out of the response headers,
+//! which only ever caught the trailers-only error case — a call that failed
+//! partway through looked like a success with a short reply. tonic surfaces the
+//! real `Status`, and gives streaming for free.
 
 use std::time::Duration;
 
 use prost::Message;
-use prost_reflect::{DescriptorPool, DynamicMessage, MethodDescriptor, SerializeOptions};
+use prost_reflect::{DescriptorPool, DynamicMessage, MessageDescriptor, MethodDescriptor, SerializeOptions};
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
+use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
+use tonic::transport::{Channel, ClientTlsConfig};
+use tonic::{Request, Status};
 
 /// Reflection is itself a gRPC service; these are the two messages of it that
 /// matter, hand-written so the build needs no protoc.
@@ -83,6 +91,19 @@ pub struct GrpcSpec {
     /// each file is always searched, so a self-contained proto needs none.
     #[serde(default)]
     pub import_paths: Vec<String>,
+    /// Tags the `grpc://message` events of a streaming call, so a pane can tell
+    /// its own stream from one started in another tab.
+    #[serde(default)]
+    pub call_id: Option<String>,
+}
+
+/// One message of a server stream, as it arrives.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrpcStreamMessage {
+    pub call_id: String,
+    pub index: u32,
+    pub body: String,
 }
 
 /// One method of a service, as the UI needs to describe it.
@@ -122,134 +143,335 @@ fn endpoint(target: &str, plaintext: bool) -> String {
     }
 }
 
-/// Frames a message the way gRPC does: a compression byte, a big-endian length,
-/// then the payload.
-fn frame(payload: &[u8]) -> Vec<u8> {
-    let mut framed = Vec::with_capacity(payload.len() + 5);
-    framed.push(0);
-    framed.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-    framed.extend_from_slice(payload);
-    framed
+// --- codecs ------------------------------------------------------------------
+//
+// tonic handles gRPC framing, compression and trailers; a codec only has to say
+// how one message turns into bytes and back. tonic 0.14 moved its own prost
+// codec into a separate crate, so both of these are written here.
+
+/// Encodes and decodes `DynamicMessage`, whose shape is only known at runtime.
+#[derive(Clone)]
+struct DynamicCodec {
+    output: MessageDescriptor,
 }
 
-/// Strips that framing. Returns the first message only, which is all a unary
-/// call has.
-fn unframe(body: &[u8]) -> Result<Vec<u8>, String> {
-    if body.len() < 5 {
-        return Err("the reply was too short to be a gRPC message".into());
+impl Codec for DynamicCodec {
+    type Encode = DynamicMessage;
+    type Decode = DynamicMessage;
+    type Encoder = DynamicEncoder;
+    type Decoder = DynamicDecoder;
+
+    fn encoder(&mut self) -> Self::Encoder {
+        DynamicEncoder
     }
-    let length = u32::from_be_bytes([body[1], body[2], body[3], body[4]]) as usize;
-    body.get(5..5 + length)
-        .map(|slice| slice.to_vec())
-        .ok_or_else(|| "the reply was truncated".into())
+
+    fn decoder(&mut self) -> Self::Decoder {
+        DynamicDecoder(self.output.clone())
+    }
 }
 
-/// One raw gRPC call over HTTP/2. Used for both reflection and the user's own
-/// method, since they differ only in path and payload.
-async fn call_raw(
-    client: &reqwest::Client,
-    endpoint: &str,
-    path: &str,
-    payload: Vec<u8>,
+struct DynamicEncoder;
+
+impl Encoder for DynamicEncoder {
+    type Item = DynamicMessage;
+    type Error = Status;
+
+    fn encode(&mut self, item: Self::Item, dst: &mut EncodeBuf<'_>) -> Result<(), Status> {
+        item.encode(dst)
+            .map_err(|e| Status::internal(format!("could not encode the request: {e}")))
+    }
+}
+
+struct DynamicDecoder(MessageDescriptor);
+
+impl Decoder for DynamicDecoder {
+    type Item = DynamicMessage;
+    type Error = Status;
+
+    fn decode(&mut self, src: &mut DecodeBuf<'_>) -> Result<Option<Self::Item>, Status> {
+        DynamicMessage::decode(self.0.clone(), src)
+            .map(Some)
+            .map_err(|e| Status::internal(format!("could not decode the reply: {e}")))
+    }
+}
+
+/// The same for a statically known prost message — used by reflection, which is
+/// itself a gRPC service and so needs a codec of its own.
+struct PbCodec<T, U>(std::marker::PhantomData<fn() -> (T, U)>);
+
+impl<T, U> PbCodec<T, U> {
+    fn new() -> Self {
+        Self(std::marker::PhantomData)
+    }
+}
+
+impl<T, U> Codec for PbCodec<T, U>
+where
+    T: Message + Send + 'static,
+    U: Message + Default + Send + 'static,
+{
+    type Encode = T;
+    type Decode = U;
+    type Encoder = PbEncoder<T>;
+    type Decoder = PbDecoder<U>;
+
+    fn encoder(&mut self) -> Self::Encoder {
+        PbEncoder(std::marker::PhantomData)
+    }
+
+    fn decoder(&mut self) -> Self::Decoder {
+        PbDecoder(std::marker::PhantomData)
+    }
+}
+
+struct PbEncoder<T>(std::marker::PhantomData<fn() -> T>);
+
+impl<T: Message> Encoder for PbEncoder<T> {
+    type Item = T;
+    type Error = Status;
+
+    fn encode(&mut self, item: Self::Item, dst: &mut EncodeBuf<'_>) -> Result<(), Status> {
+        item.encode(dst)
+            .map_err(|e| Status::internal(format!("could not encode the request: {e}")))
+    }
+}
+
+struct PbDecoder<U>(std::marker::PhantomData<fn() -> U>);
+
+impl<U: Message + Default> Decoder for PbDecoder<U> {
+    type Item = U;
+    type Error = Status;
+
+    fn decode(&mut self, src: &mut DecodeBuf<'_>) -> Result<Option<Self::Item>, Status> {
+        U::decode(src)
+            .map(Some)
+            .map_err(|e| Status::internal(format!("could not decode the reply: {e}")))
+    }
+}
+
+// --- connection --------------------------------------------------------------
+
+/// Opens a channel to the target.
+///
+/// The proxy is deliberately not honoured. This app can itself be the system
+/// proxy, and routing a gRPC call through an HTTP proxy that does not speak h2
+/// end to end fails in a way that looks like the server is broken.
+async fn connect(endpoint: &str, plaintext: bool, timeout: Duration) -> Result<Channel, String> {
+    let mut builder = Channel::from_shared(endpoint.to_string())
+        .map_err(|e| format!("`{endpoint}` is not a usable gRPC target: {e}"))?
+        .connect_timeout(timeout)
+        .timeout(timeout);
+
+    if !plaintext {
+        builder = builder
+            .tls_config(ClientTlsConfig::new().with_enabled_roots())
+            .map_err(|e| format!("cannot set up TLS: {e}"))?;
+    }
+
+    builder
+        .connect()
+        .await
+        .map_err(|e| format!("cannot reach {endpoint}: {}", chain(&e)))
+}
+
+/// The cause chain of an error. tonic's outer message is often just
+/// "transport error", with the real reason one or two levels down.
+fn chain(error: &dyn std::error::Error) -> String {
+    let mut parts = vec![error.to_string()];
+    let mut source = error.source();
+    while let Some(cause) = source {
+        parts.push(cause.to_string());
+        source = cause.source();
+    }
+    parts.dedup();
+    parts.join(": ")
+}
+
+/// `/package.Service/Method`, as a path tonic accepts.
+fn grpc_path(service: &str, method: &str) -> Result<http::uri::PathAndQuery, String> {
+    format!("/{service}/{method}")
+        .parse()
+        .map_err(|e| format!("`{service}/{method}` is not a valid method path: {e}"))
+}
+
+/// Copies user metadata onto a request.
+///
+/// A `-bin` suffixed key takes raw bytes and a different setter; anything else
+/// must be ASCII. An invalid name is reported rather than dropped, because a
+/// silently missing auth header looks exactly like a rejected credential.
+fn apply_metadata<T>(
+    request: &mut Request<T>,
     metadata: &[crate::http_client::Header],
-    timeout: Duration,
-) -> Result<(Vec<u8>, Vec<crate::http_client::Header>), String> {
-    let mut request = client
-        .post(format!("{endpoint}/{path}"))
-        .header("content-type", "application/grpc+proto")
-        .header("te", "trailers")
-        .timeout(timeout)
-        .body(frame(&payload));
-
+) -> Result<(), String> {
     for entry in metadata {
-        if !entry.name.trim().is_empty() {
-            request = request.header(entry.name.trim(), entry.value.clone());
+        let name = entry.name.trim();
+        if name.is_empty() {
+            continue;
         }
+        if name.ends_with("-bin") {
+            let key: tonic::metadata::MetadataKey<tonic::metadata::Binary> = name
+                .parse()
+                .map_err(|_| format!("`{name}` is not a valid metadata key"))?;
+            request
+                .metadata_mut()
+                .insert_bin(key, tonic::metadata::MetadataValue::from_bytes(entry.value.as_bytes()));
+            continue;
+        }
+        let key: tonic::metadata::MetadataKey<tonic::metadata::Ascii> = name
+            .parse()
+            .map_err(|_| format!("`{name}` is not a valid metadata key"))?;
+        let value: tonic::metadata::MetadataValue<tonic::metadata::Ascii> = entry
+            .value
+            .parse()
+            .map_err(|_| format!("`{name}` has a value that is not valid ASCII; use a -bin key for raw bytes"))?;
+        request.metadata_mut().insert(key, value);
     }
+    Ok(())
+}
 
-    let response = request
-        .send()
-        .await
-        .map_err(|e| format!("cannot reach {endpoint}: {e}"))?;
-
-    let headers: Vec<crate::http_client::Header> = response
-        .headers()
-        .iter()
-        .map(|(name, value)| crate::http_client::Header {
-            name: name.to_string(),
-            value: value.to_str().unwrap_or("<binary>").to_string(),
+/// Response metadata, flattened for display.
+fn read_metadata(map: &tonic::metadata::MetadataMap) -> Vec<crate::http_client::Header> {
+    map.iter()
+        .filter_map(|entry| match entry {
+            tonic::metadata::KeyAndValueRef::Ascii(key, value) => {
+                Some(crate::http_client::Header {
+                    name: key.to_string(),
+                    value: value.to_str().unwrap_or("<invalid>").to_string(),
+                })
+            }
+            tonic::metadata::KeyAndValueRef::Binary(key, _) => Some(crate::http_client::Header {
+                name: key.to_string(),
+                value: "<binary>".to_string(),
+            }),
         })
-        .collect();
+        .collect()
+}
 
-    // gRPC reports failure in a header, not the HTTP status, which stays 200.
-    let status = headers
-        .iter()
-        .find(|header| header.name == "grpc-status")
-        .map(|header| header.value.clone());
-    let message = headers
-        .iter()
-        .find(|header| header.name == "grpc-message")
-        .map(|header| header.value.clone())
-        .unwrap_or_default();
+/// A gRPC failure, said in full: the code's name, the server's message, and any
+/// detail it attached.
+fn describe(status: &Status) -> String {
+    let mut text = format!("{:?} ({})", status.code(), status.code() as i32);
+    if !status.message().is_empty() {
+        text.push_str(": ");
+        text.push_str(status.message());
+    }
+    text
+}
 
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("could not read the reply: {e}"))?;
+fn to_json(message: &DynamicMessage) -> Result<String, String> {
+    let mut serializer = serde_json::Serializer::pretty(Vec::new());
+    message
+        .serialize_with_options(
+            &mut serializer,
+            // Field names as written in the .proto, and defaults included, so
+            // the shape of the reply is visible rather than implied.
+            &SerializeOptions::new()
+                .use_proto_field_name(true)
+                .skip_default_fields(false),
+        )
+        .map_err(|e| format!("could not render the reply: {e}"))?;
+    String::from_utf8(serializer.into_inner())
+        .map_err(|e| format!("the reply was not valid UTF-8 once rendered: {e}"))
+}
 
-    if let Some(code) = status {
-        if code != "0" {
-            return Err(format!(
-                "gRPC status {code}{}",
-                if message.is_empty() {
-                    String::new()
-                } else {
-                    format!(": {message}")
-                }
-            ));
-        }
+/// Parses the request body into one or more messages.
+///
+/// A client-streaming method takes a JSON array, one element per message; a
+/// single object is also accepted and sent as one. A unary method takes an
+/// object, and an empty body means the default message.
+fn parse_messages(
+    body: &str,
+    input: &MessageDescriptor,
+    client_streaming: bool,
+) -> Result<Vec<DynamicMessage>, String> {
+    let text = body.trim();
+    if text.is_empty() {
+        return Ok(vec![DynamicMessage::new(input.clone())]);
     }
 
-    Ok((bytes.to_vec(), headers))
+    let one = |value: &serde_json::Value| -> Result<DynamicMessage, String> {
+        DynamicMessage::deserialize(input.clone(), value).map_err(|e| {
+            format!("the request body does not match {}: {e}", input.full_name())
+        })
+    };
+
+    let value: serde_json::Value = serde_json::from_str(text)
+        .map_err(|e| format!("the request body is not valid JSON: {e}"))?;
+
+    match value {
+        serde_json::Value::Array(items) if client_streaming => {
+            if items.is_empty() {
+                return Err("a client-streaming call needs at least one message".into());
+            }
+            items.iter().map(one).collect()
+        }
+        serde_json::Value::Array(_) => Err(format!(
+            "{} is not a client-streaming method, so its body must be a single \
+             JSON object rather than an array",
+            input.full_name()
+        )),
+        other => Ok(vec![one(&other)?]),
+    }
+}
+
+/// One reflection round trip.
+///
+/// ServerReflectionInfo is declared bidirectional streaming, so it is called as
+/// a stream of exactly one request. Half-closing tells a well-behaved server
+/// that nothing more is coming, and it answers and completes.
+///
+/// Both package names are tried: `v1` is current, `v1alpha` is still what many
+/// deployed servers expose, and there is no way to tell without asking.
+async fn reflection_call(
+    channel: &Channel,
+    request: reflection::ServerReflectionRequest,
+    metadata: &[crate::http_client::Header],
+) -> Result<reflection::ServerReflectionResponse, String> {
+    let mut last: Option<String> = None;
+    for package in ["grpc.reflection.v1", "grpc.reflection.v1alpha"] {
+        let path = grpc_path(
+            &format!("{package}.ServerReflection"),
+            "ServerReflectionInfo",
+        )?;
+
+        let mut outbound = Request::new(tokio_stream::once(request.clone()));
+        apply_metadata(&mut outbound, metadata)?;
+
+        let mut client = tonic::client::Grpc::new(channel.clone());
+        let codec = PbCodec::<
+            reflection::ServerReflectionRequest,
+            reflection::ServerReflectionResponse,
+        >::new();
+
+        match client.streaming(outbound, path, codec).await {
+            Ok(response) => {
+                let mut stream = response.into_inner();
+                match stream.message().await {
+                    Ok(Some(message)) => return Ok(message),
+                    Ok(None) => {
+                        last = Some("the reflection service closed without replying".into());
+                    }
+                    Err(status) => last = Some(describe(&status)),
+                }
+            }
+            Err(status) => last = Some(describe(&status)),
+        }
+    }
+    Err(last.unwrap_or_else(|| "reflection failed".into()))
 }
 
 /// Asks the server for the descriptors covering `symbol`, and builds a pool.
 async fn reflect(
-    client: &reqwest::Client,
-    endpoint: &str,
+    channel: &Channel,
     symbol: &str,
     metadata: &[crate::http_client::Header],
-    timeout: Duration,
 ) -> Result<DescriptorPool, String> {
     let request = reflection::ServerReflectionRequest {
         host: String::new(),
         file_containing_symbol: symbol.to_string(),
         list_services: String::new(),
     };
-    let (body, _) = call_raw(
-        client,
-        endpoint,
-        "grpc.reflection.v1.ServerReflection/ServerReflectionInfo",
-        request.encode_to_vec(),
-        metadata,
-        timeout,
-    )
-    .await
-    // The older package name is still what many servers expose.
-    .or(
-        call_raw(
-            client,
-            endpoint,
-            "grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo",
-            request.encode_to_vec(),
-            metadata,
-            timeout,
-        )
-        .await,
-    )?;
-
-    let decoded = reflection::ServerReflectionResponse::decode(unframe(&body)?.as_slice())
-        .map_err(|e| format!("could not read the reflection reply: {e}"))?;
+    let decoded = reflection_call(channel, request, metadata).await?;
     let files = decoded
         .file_descriptor_response
         .ok_or_else(|| format!("the server does not know the symbol `{symbol}`"))?;
@@ -302,17 +524,23 @@ fn compile_protos(files: &[String], imports: &[String]) -> Result<DescriptorPool
 
 /// Where the message shapes come from: the user's own `.proto` files if they
 /// gave any, otherwise the server's reflection service.
+///
+/// Returns the channel too, so a caller that goes on to make the call does not
+/// open a second connection.
 async fn descriptors(
     spec: &GrpcSpec,
-    client: &reqwest::Client,
-    endpoint: &str,
     symbol: &str,
-    timeout: Duration,
-) -> Result<DescriptorPool, String> {
+) -> Result<(DescriptorPool, Option<Channel>), String> {
     if spec.proto_files.iter().any(|f| !f.trim().is_empty()) {
-        return compile_protos(&spec.proto_files, &spec.import_paths);
+        // No connection is opened at all: the method list has to work before
+        // the server is running.
+        return Ok((compile_protos(&spec.proto_files, &spec.import_paths)?, None));
     }
-    reflect(client, endpoint, symbol, &spec.metadata, timeout)
+
+    let endpoint = endpoint(&spec.target, spec.plaintext);
+    let timeout = Duration::from_millis(spec.timeout_ms.unwrap_or(30_000));
+    let channel = connect(&endpoint, spec.plaintext, timeout).await?;
+    let pool = reflect(&channel, symbol, &spec.metadata)
         .await
         // Reflection being absent is the common case, not an exotic failure, so
         // the message points at the alternative rather than just reporting it.
@@ -321,7 +549,8 @@ async fn descriptors(
                 "{e}\n\nThis server may not expose reflection — most production \
                  servers do not. Add the service's .proto files instead."
             )
-        })
+        })?;
+    Ok((pool, Some(channel)))
 }
 
 fn split_method(method: &str) -> Result<(String, String), String> {
@@ -355,44 +584,21 @@ pub async fn grpc_services(spec: GrpcSpec) -> Result<Vec<String>, String> {
 
     let endpoint = endpoint(&spec.target, spec.plaintext);
     let timeout = Duration::from_millis(spec.timeout_ms.unwrap_or(30_000));
-    let client = reqwest::Client::builder()
-        .http2_prior_knowledge()
-        .no_proxy()
-        .build()
-        .map_err(|e| e.to_string())?;
+    let channel = connect(&endpoint, spec.plaintext, timeout).await?;
 
     let request = reflection::ServerReflectionRequest {
         host: String::new(),
         file_containing_symbol: String::new(),
         list_services: "*".into(),
     };
-    let (body, _) = call_raw(
-        &client,
-        &endpoint,
-        "grpc.reflection.v1.ServerReflection/ServerReflectionInfo",
-        request.encode_to_vec(),
-        &spec.metadata,
-        timeout,
-    )
-    .await
-    .or(
-        call_raw(
-            &client,
-            &endpoint,
-            "grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo",
-            request.encode_to_vec(),
-            &spec.metadata,
-            timeout,
-        )
-        .await,
-    )?;
+    let decoded = reflection_call(&channel, request, &spec.metadata).await?;
 
-    let decoded = reflection::ServerReflectionResponse::decode(unframe(&body)?.as_slice())
-        .map_err(|e| format!("could not read the reflection reply: {e}"))?;
-    Ok(decoded
+    let mut names: Vec<String> = decoded
         .list_services_response
         .map(|list| list.service.into_iter().map(|item| item.name).collect())
-        .unwrap_or_default())
+        .unwrap_or_default();
+    names.sort();
+    Ok(names)
 }
 
 /// The methods of one service, with the shape of each request.
@@ -401,15 +607,7 @@ pub async fn grpc_services(spec: GrpcSpec) -> Result<Vec<String>, String> {
 /// user does not have to know the message shape to make a first call.
 #[tauri::command]
 pub async fn grpc_methods(spec: GrpcSpec, service: String) -> Result<Vec<GrpcMethod>, String> {
-    let endpoint = endpoint(&spec.target, spec.plaintext);
-    let timeout = Duration::from_millis(spec.timeout_ms.unwrap_or(30_000));
-    let client = reqwest::Client::builder()
-        .http2_prior_knowledge()
-        .no_proxy()
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let pool = descriptors(&spec, &client, &endpoint, &service, timeout).await?;
+    let (pool, _channel) = descriptors(&spec, &service).await?;
     let descriptor = pool
         .get_service_by_name(&service)
         .ok_or_else(|| format!("`{service}` is not in these descriptors"))?;
@@ -475,77 +673,136 @@ fn example_value(field: &prost_reflect::FieldDescriptor) -> serde_json::Value {
     }
 }
 
-/// Invokes a unary method, converting JSON in and out via the server's own
-/// descriptors.
+/// Invokes a method — unary, or any of the three streaming kinds.
+///
+/// A server-streaming reply is emitted message by message on `grpc://message` as
+/// it arrives, so a long-lived stream shows progress instead of appearing to
+/// hang, and the collected messages are also returned when it ends.
 #[tauri::command]
-pub async fn grpc_call(spec: GrpcSpec) -> Result<GrpcResponse, String> {
+pub async fn grpc_call(app: tauri::AppHandle, spec: GrpcSpec) -> Result<GrpcResponse, String> {
     let started = std::time::Instant::now();
     let endpoint = endpoint(&spec.target, spec.plaintext);
     let timeout = Duration::from_millis(spec.timeout_ms.unwrap_or(30_000));
     let (service, name) = split_method(&spec.method)?;
 
-    let client = reqwest::Client::builder()
-        // gRPC is HTTP/2 only, and a local server has no TLS to negotiate over.
-        .http2_prior_knowledge()
-        .no_proxy()
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let pool = descriptors(&spec, &client, &endpoint, &service, timeout).await?;
+    let (pool, existing) = descriptors(&spec, &service).await?;
     let service_descriptor = pool
         .get_service_by_name(&service)
-        .ok_or_else(|| format!("the server does not expose `{service}`"))?;
+        .ok_or_else(|| format!("`{service}` is not in these descriptors"))?;
     let method: MethodDescriptor = service_descriptor
         .methods()
         .find(|candidate| candidate.name() == name)
         .ok_or_else(|| format!("`{service}` has no method `{name}`"))?;
 
-    if method.is_client_streaming() || method.is_server_streaming() {
-        return Err(format!(
-            "`{name}` is a streaming method, and only unary calls are supported"
-        ));
-    }
+    // Reflection already opened one; .proto files open none.
+    let channel = match existing {
+        Some(channel) => channel,
+        None => connect(&endpoint, spec.plaintext, timeout).await?,
+    };
 
-    let input = spec.body.trim();
-    let json = if input.is_empty() { "{}" } else { input };
-    let mut deserializer = serde_json::Deserializer::from_str(json);
-    let message = DynamicMessage::deserialize(method.input(), &mut deserializer)
-        .map_err(|e| format!("the request body does not match {}: {e}", method.input().full_name()))?;
-    deserializer
-        .end()
-        .map_err(|e| format!("trailing content after the request body: {e}"))?;
+    let messages = parse_messages(&spec.body, &method.input(), method.is_client_streaming())?;
+    let path = grpc_path(&service, &name)?;
+    let codec = DynamicCodec { output: method.output() };
+    let mut client = tonic::client::Grpc::new(channel);
 
-    let (body, metadata) = call_raw(
-        &client,
-        &endpoint,
-        &format!("{service}/{name}"),
-        message.encode_to_vec(),
-        &spec.metadata,
-        timeout,
-    )
-    .await?;
+    let call_id = spec.call_id.clone().unwrap_or_default();
 
-    let reply = DynamicMessage::decode(method.output(), unframe(&body)?.as_slice())
-        .map_err(|e| format!("could not read the reply: {e}"))?;
+    let (bodies, metadata) = match (method.is_client_streaming(), method.is_server_streaming()) {
+        (false, false) => {
+            let mut request = Request::new(messages.into_iter().next().unwrap());
+            apply_metadata(&mut request, &spec.metadata)?;
+            let response = client
+                .unary(request, path, codec)
+                .await
+                .map_err(|status| describe(&status))?;
+            let metadata = read_metadata(response.metadata());
+            (vec![to_json(response.get_ref())?], metadata)
+        }
+        (true, false) => {
+            let mut request = Request::new(tokio_stream::iter(messages));
+            apply_metadata(&mut request, &spec.metadata)?;
+            let response = client
+                .client_streaming(request, path, codec)
+                .await
+                .map_err(|status| describe(&status))?;
+            let metadata = read_metadata(response.metadata());
+            (vec![to_json(response.get_ref())?], metadata)
+        }
+        (false, true) => {
+            let mut request = Request::new(messages.into_iter().next().unwrap());
+            apply_metadata(&mut request, &spec.metadata)?;
+            let response = client
+                .server_streaming(request, path, codec)
+                .await
+                .map_err(|status| describe(&status))?;
+            let metadata = read_metadata(response.metadata());
+            (drain(&app, &call_id, response.into_inner()).await?, metadata)
+        }
+        (true, true) => {
+            let mut request = Request::new(tokio_stream::iter(messages));
+            apply_metadata(&mut request, &spec.metadata)?;
+            let response = client
+                .streaming(request, path, codec)
+                .await
+                .map_err(|status| describe(&status))?;
+            let metadata = read_metadata(response.metadata());
+            (drain(&app, &call_id, response.into_inner()).await?, metadata)
+        }
+    };
 
-    let mut serializer = serde_json::Serializer::pretty(Vec::new());
-    reply
-        .serialize_with_options(
-            &mut serializer,
-            // Field names as written in the .proto, and defaults included, so
-            // the shape of the reply is visible rather than implied.
-            &SerializeOptions::new()
-                .use_proto_field_name(true)
-                .skip_default_fields(false),
-        )
-        .map_err(|e| format!("could not render the reply: {e}"))?;
+    // A stream's messages are returned as a JSON array so the response pane has
+    // one document to show; a unary reply stays the bare object it was.
+    let body = if method.is_server_streaming() {
+        format!("[\n{}\n]", bodies.join(",\n"))
+    } else {
+        bodies.into_iter().next().unwrap_or_else(|| "{}".into())
+    };
 
     Ok(GrpcResponse {
-        body: String::from_utf8(serializer.into_inner()).unwrap_or_default(),
+        body,
         status: "OK".into(),
         time_ms: started.elapsed().as_millis() as u64,
         metadata,
     })
+}
+
+/// Reads a server stream to its end, emitting each message as it arrives.
+///
+/// The error case is the whole reason this module moved to tonic: a stream that
+/// fails partway through ends with a `Status` in the trailers, and the messages
+/// already received are still worth keeping — so they are returned alongside the
+/// failure rather than being thrown away with it.
+async fn drain(
+    app: &tauri::AppHandle,
+    call_id: &str,
+    mut stream: tonic::Streaming<DynamicMessage>,
+) -> Result<Vec<String>, String> {
+    let mut bodies: Vec<String> = Vec::new();
+    loop {
+        match stream.message().await {
+            Ok(Some(message)) => {
+                let json = to_json(&message)?;
+                let _ = app.emit(
+                    "grpc://message",
+                    GrpcStreamMessage {
+                        call_id: call_id.to_string(),
+                        index: bodies.len() as u32,
+                        body: json.clone(),
+                    },
+                );
+                bodies.push(json);
+            }
+            Ok(None) => return Ok(bodies),
+            Err(status) => {
+                return Err(format!(
+                    "{} (after {} message{})",
+                    describe(&status),
+                    bodies.len(),
+                    if bodies.len() == 1 { "" } else { "s" }
+                ))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -614,7 +871,7 @@ service Greeter {
 
     #[test]
     fn a_request_template_matches_the_message_shape() {
-        let (dir, file) = write_proto("template", GREETER);
+        let (_dir, file) = write_proto("template", GREETER);
         let pool = compile_protos(&[file.to_string_lossy().into()], &[]).unwrap();
         let message = pool.get_message_by_name("demo.HelloRequest").unwrap();
         let template: serde_json::Value =
@@ -681,9 +938,51 @@ service Greeter {
             plaintext: true,
             proto_files: vec![file.to_string_lossy().into()],
             import_paths: vec![],
+            call_id: None,
         };
         let services = grpc_services(spec).await.unwrap();
         assert_eq!(services, vec!["demo.Greeter".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_body_becomes_one_message_or_many_by_streaming_kind() {
+        let (dir, file) = write_proto("bodies", GREETER);
+        let pool = compile_protos(&[file.to_string_lossy().into()], &[]).unwrap();
+        let input = pool.get_message_by_name("demo.HelloRequest").unwrap();
+
+        // Unary: one object, one message.
+        let one = parse_messages(r#"{"name":"a"}"#, &input, false).unwrap();
+        assert_eq!(one.len(), 1);
+
+        // An empty body is the default message, not an error — pressing send on
+        // a method with no required fields should just work.
+        assert_eq!(parse_messages("   ", &input, false).unwrap().len(), 1);
+
+        // Client streaming: an array is one message per element.
+        let many = parse_messages(r#"[{"name":"a"},{"name":"b"}]"#, &input, true).unwrap();
+        assert_eq!(many.len(), 2);
+
+        // A single object is still accepted for a streaming method.
+        assert_eq!(parse_messages(r#"{"name":"a"}"#, &input, true).unwrap().len(), 1);
+
+        // An array sent to a non-streaming method is a mistake worth naming
+        // rather than silently sending only the first element.
+        let error = parse_messages(r#"[{"name":"a"}]"#, &input, false).unwrap_err();
+        assert!(error.contains("not a client-streaming method"), "{error}");
+
+        // An empty array for a streaming call has nothing to send.
+        assert!(parse_messages("[]", &input, true).is_err());
+
+        // Malformed JSON and a field that is not in the message are both errors,
+        // and both name what went wrong.
+        assert!(parse_messages("{oops", &input, false)
+            .unwrap_err()
+            .contains("not valid JSON"));
+        assert!(parse_messages(r#"{"nope":1}"#, &input, false)
+            .unwrap_err()
+            .contains("does not match demo.HelloRequest"));
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -704,21 +1003,29 @@ service Greeter {
 mod tests {
     use super::*;
 
+    // Framing, length prefixes and truncation are tonic's responsibility now,
+    // so the tests that covered the hand-rolled versions are gone with them.
+
     #[test]
-    fn framing_round_trips() {
-        let payload = b"hello world".to_vec();
-        let framed = frame(&payload);
-        // Compression byte, 4-byte length, then the payload itself.
-        assert_eq!(framed[0], 0);
-        assert_eq!(&framed[1..5], &(payload.len() as u32).to_be_bytes());
-        assert_eq!(unframe(&framed).unwrap(), payload);
+    fn a_method_path_starts_with_a_slash() {
+        // tonic rejects a path without one, and the failure is opaque.
+        assert_eq!(
+            grpc_path("demo.Greeter", "SayHello").unwrap().as_str(),
+            "/demo.Greeter/SayHello"
+        );
     }
 
     #[test]
-    fn a_truncated_reply_is_an_error() {
-        assert!(unframe(&[0, 0, 0, 0]).is_err());
-        // Claims 100 bytes, carries 2.
-        assert!(unframe(&[0, 0, 0, 0, 100, 1, 2]).is_err());
+    fn a_status_reads_as_a_name_a_number_and_the_servers_message() {
+        let status = Status::new(tonic::Code::NotFound, "no such user");
+        let text = describe(&status);
+        assert!(text.contains("NotFound"), "{text}");
+        assert!(text.contains("(5)"), "{text}");
+        assert!(text.contains("no such user"), "{text}");
+
+        // A code with no message must not leave a dangling colon.
+        let bare = describe(&Status::new(tonic::Code::Unavailable, ""));
+        assert_eq!(bare, "Unavailable (14)");
     }
 
     #[test]

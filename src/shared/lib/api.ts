@@ -507,6 +507,8 @@ export interface GrpcSpec {
   protoFiles?: string[];
   /** Directories `import` statements resolve against. */
   importPaths?: string[];
+  /** Tags this call's `grpc://message` events, for streaming replies. */
+  callId?: string;
 }
 
 /** One method of a service, as returned by `grpcMethods`. */
@@ -532,6 +534,25 @@ export interface GrpcResponse {
 /** Invokes a unary method, using the server's own descriptors for JSON. */
 export function grpcCall(spec: GrpcSpec): Promise<GrpcResponse> {
   return invoke<GrpcResponse>("grpc_call", { spec });
+}
+
+/** One message of a server-streaming reply, as it arrives. */
+export interface GrpcStreamMessage {
+  callId: string;
+  index: number;
+  body: string;
+}
+
+/**
+ * Subscribe to the messages of streaming calls. Returns an unlisten function.
+ *
+ * A long-lived stream would otherwise look like a hung request until it ended,
+ * so these arrive while the call is still open.
+ */
+export function onGrpcMessage(
+  cb: (message: GrpcStreamMessage) => void,
+): Promise<UnlistenFn> {
+  return listen<GrpcStreamMessage>("grpc://message", (event) => cb(event.payload));
 }
 
 /** The services a server exposes, via reflection. */

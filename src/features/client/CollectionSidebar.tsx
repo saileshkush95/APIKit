@@ -470,7 +470,13 @@ export function CollectionSidebar({
             if (handleSelectClick(node.id, e)) return;
             clearSelection();
             if (isFolder(node)) {
-              setSelectedFolderId(node.id);
+              // Clicking the selected folder again lets go of it. Selection
+              // decides where a new request or folder is created, so with no
+              // way to clear it everything kept landing inside whichever
+              // folder was touched last.
+              setSelectedFolderId((current) =>
+                current === node.id ? null : node.id,
+              );
               onToggleExpanded(node.id);
             } else {
               setSelectedFolderId(null);
@@ -629,7 +635,13 @@ export function CollectionSidebar({
           ) : (
             visible.map((node) => renderNode(node, 0))
           )}
-          <RootDropZone active={dropTarget?.id === null && dragId !== null} />
+          <RootDropZone
+            active={dropTarget?.id === null && dragId !== null}
+            onClick={() => {
+              setSelectedFolderId(null);
+              clearSelection();
+            }}
+          />
         </div>
 
         <DragOverlay dropAnimation={null}>
@@ -745,13 +757,26 @@ function FolderAuthDialog({
   );
 }
 
-/** Empty space below the tree; dropping here moves a node to the root. */
-function RootDropZone({ active }: { active: boolean }) {
+/**
+ * Empty space below the tree. Dropping here moves a node to the root, and
+ * clicking here clears the folder selection — the same "nothing in particular"
+ * meaning in both gestures.
+ */
+function RootDropZone({
+  active,
+  onClick,
+}: {
+  active: boolean;
+  onClick: () => void;
+}) {
   const { setNodeRef } = useDroppable({ id: ROOT_DROP_ID });
   return (
     <div
       ref={setNodeRef}
-      className={`min-h-12 ${active ? "bg-brand/10" : ""}`}
+      onClick={onClick}
+      // flex-1 so it fills the rest of the panel: a 48px strip is a small
+      // target for the gesture that gets you back to the root.
+      className={`min-h-12 flex-1 ${active ? "bg-brand/10" : ""}`}
       aria-hidden
     />
   );

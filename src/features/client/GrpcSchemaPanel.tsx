@@ -113,7 +113,6 @@ export function GrpcSchemaPanel({
   const button =
     "rounded-md border border-edge px-2.5 py-1 text-[11px] text-ink hover:border-brand disabled:cursor-default disabled:opacity-40";
 
-  /** A streaming method cannot be invoked yet, so say so on the row itself. */
   function kindOf(method: GrpcMethodInfo): string {
     if (method.clientStreaming && method.serverStreaming) return "bidirectional streaming";
     if (method.clientStreaming) return "client streaming";
@@ -251,34 +250,31 @@ export function GrpcSchemaPanel({
                   That service has no methods.
                 </p>
               )}
-              {methods.map((method) => {
-                const streaming =
-                  method.clientStreaming || method.serverStreaming;
-                return (
-                  <button
-                    key={method.fullName}
-                    disabled={streaming}
-                    onClick={() => {
-                      onPick(method.fullName, method.inputTemplate);
-                      onClose();
-                    }}
-                    className="block w-full rounded px-1.5 py-1 text-left hover:bg-elevated disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
-                    title={
-                      streaming
-                        ? "Streaming methods cannot be invoked yet — only unary calls are supported"
-                        : `${method.inputType} → ${method.outputType}`
-                    }
-                  >
-                    <span className="block font-mono text-[11px] text-ink">
-                      {method.name}
-                    </span>
-                    <span className="block text-[10px] text-muted">
-                      {kindOf(method)}
-                      {streaming && " · not callable yet"}
-                    </span>
-                  </button>
-                );
-              })}
+              {methods.map((method) => (
+                <button
+                  key={method.fullName}
+                  onClick={() => {
+                    // A client-streaming method takes an array of messages, so
+                    // the skeleton is wrapped to show that up front.
+                    onPick(
+                      method.fullName,
+                      method.clientStreaming
+                        ? `[\n${method.inputTemplate}\n]`
+                        : method.inputTemplate,
+                    );
+                    onClose();
+                  }}
+                  className="block w-full rounded px-1.5 py-1 text-left hover:bg-elevated"
+                  title={`${method.inputType} → ${method.outputType}`}
+                >
+                  <span className="block font-mono text-[11px] text-ink">
+                    {method.name}
+                  </span>
+                  <span className="block text-[10px] text-muted">
+                    {kindOf(method)}
+                  </span>
+                </button>
+              ))}
             </div>
           </div>
         )}

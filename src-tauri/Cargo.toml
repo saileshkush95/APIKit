@@ -86,10 +86,12 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
 futures = "0.3"
-tonic = "0.14"
+tonic = { version = "0.14", features = ["tls-native-roots", "tls-ring", "tls-webpki-roots"] }
 prost = "0.14"
 prost-reflect = { version = "0.16", features = ["serde"] }
 prost-types = "0.14"
 sha2 = "0.10"
 rand = "0.9"
 protox = "0.9.1"
+tokio-stream = "0.1.19"
+http = "1.5.0"

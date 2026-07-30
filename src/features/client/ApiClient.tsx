@@ -13,6 +13,7 @@ import {
   onStreamStatus,
   saveTabs,
   grpcCall,
+  onGrpcMessage,
   sendRequest,
   setSetting,
   writeTextFile,
@@ -261,6 +262,23 @@ export function ApiClient({ intent }: ApiClientProps) {
       String(sidebarCollapsed),
     ).catch(() => {});
   }, [ready, workspaceId, sidebarCollapsed]);
+
+  // Messages of a gRPC server stream, logged as they arrive. The response pane
+  // only gets the collected array when the call ends, so without this a
+  // long-lived stream would look like a hung request the whole time.
+  useEffect(() => {
+    const unlisten = onGrpcMessage((message) => {
+      logConsole({
+        level: "response",
+        source: "gRPC stream",
+        message: `#${message.index + 1}`,
+        detail: { body: message.body },
+      });
+    });
+    return () => {
+      unlisten.then((un) => un()).catch(() => {});
+    };
+  }, []);
 
   useEffect(() => {
     if (!ready) return;
@@ -600,6 +618,9 @@ export function ApiClient({ intent }: ApiClientProps) {
         plaintext: tab.config.grpcPlaintext,
         protoFiles: tab.config.grpcProtoFiles ?? [],
         importPaths: tab.config.grpcImportPaths ?? [],
+        // Tags the stream events so a reply cannot be attributed to the wrong
+        // tab when two streams are open at once.
+        callId: tab.id,
       });
       logConsole({
         level: "response",
