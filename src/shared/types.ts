@@ -592,7 +592,14 @@ export interface RequestDraft {
 
 export interface Assertion {
   id: string;
-  source: "status" | "responseTime" | "header" | "jsonBody" | "bodyText";
+  source:
+    | "status"
+    | "responseTime"
+    | "header"
+    | "jsonBody"
+    | "bodyText"
+    /** `expected` holds a JSON Schema; there is no target or operator. */
+    | "jsonSchema";
   /** Header name or JSON path, depending on `source`. */
   target: string;
   op:

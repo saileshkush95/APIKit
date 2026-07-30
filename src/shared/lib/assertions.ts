@@ -1,6 +1,7 @@
 // Declarative response assertions. Requests carry a list of these; the runner
 // and the response pane both evaluate them with `runAssertions`.
 
+import { checkSchema } from "./schema";
 import type { Assertion, AssertionResult, HttpResponseData } from "../types";
 
 export const ASSERTION_SOURCES = [
@@ -9,6 +10,7 @@ export const ASSERTION_SOURCES = [
   { value: "header", label: "Header" },
   { value: "jsonBody", label: "JSON path" },
   { value: "bodyText", label: "Body text" },
+  { value: "jsonSchema", label: "JSON Schema" },
 ] as const;
 
 export const ASSERTION_OPS = [
@@ -24,6 +26,14 @@ export const ASSERTION_OPS = [
 /** Whether a source needs the "target" field (header name / JSON path). */
 export function sourceNeedsTarget(source: Assertion["source"]): boolean {
   return source === "header" || source === "jsonBody";
+}
+
+/**
+ * A schema is the whole assertion — there is no operator to choose and nothing
+ * to compare against, so the editor drops both fields for it.
+ */
+export function sourceIsSchema(source: Assertion["source"]): boolean {
+  return source === "jsonSchema";
 }
 
 /**
@@ -88,6 +98,9 @@ function actualFor(
     }
     case "bodyText":
       return { actual: response.body, present: true };
+    case "jsonSchema":
+      // Handled in runAssertion, which does not go through here.
+      return { actual: "", present: true };
   }
 }
 
@@ -125,6 +138,7 @@ export function describeAssertion(assertion: Assertion): string {
     assertion.source;
   const op =
     ASSERTION_OPS.find((o) => o.value === assertion.op)?.label ?? assertion.op;
+  if (assertion.source === "jsonSchema") return "body matches the schema";
   const subject = sourceNeedsTarget(assertion.source)
     ? `${source} ${assertion.target}`
     : source;
@@ -137,6 +151,18 @@ export function runAssertion(
   assertion: Assertion,
   response: HttpResponseData,
 ): AssertionResult {
+  if (assertion.source === "jsonSchema") {
+    const check = checkSchema(assertion.expected, response.body);
+    return {
+      assertion,
+      passed: check.valid,
+      actual: check.errors.join("; "),
+      message: check.valid
+        ? "body matches the schema"
+        : `body does not match the schema — ${check.errors.join("; ")}`,
+    };
+  }
+
   const { actual, present } = actualFor(assertion, response);
   const passed = compare(assertion.op, actual, assertion.expected, present);
   // Long bodies make failure lines unreadable; a prefix is enough to diagnose.

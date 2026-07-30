@@ -1,11 +1,23 @@
-import { Input, Select } from "../../shared/components/Field";
+import { Input, Select, Textarea } from "../../shared/components/Field";
 import {
   ASSERTION_OPS,
   ASSERTION_SOURCES,
+  sourceIsSchema,
   sourceNeedsTarget,
 } from "../../shared/lib/assertions";
 import { newId } from "../../shared/lib/storage";
 import type { Assertion } from "../../shared/types";
+
+/** A shape rather than prose: the point is what to replace, not what to read. */
+const SCHEMA_PLACEHOLDER = `{
+  "type": "object",
+  "required": ["id", "name"],
+  "properties": {
+    "id": { "type": "integer" },
+    "name": { "type": "string", "minLength": 1 },
+    "email": { "type": "string", "format": "email" }
+  }
+}`;
 
 interface Props {
   tests: Assertion[];
@@ -39,7 +51,17 @@ export function TestsEditor({ tests, onChange }: Props) {
       )}
 
       {tests.map((test) => (
-        <div key={test.id} className="flex items-center gap-1.5">
+        // A schema needs a whole textarea, so its row stacks instead of sitting
+        // on one line with the others.
+        <div
+          key={test.id}
+          className={
+            sourceIsSchema(test.source)
+              ? "flex flex-col gap-1.5"
+              : "flex items-center gap-1.5"
+          }
+        >
+          <div className="flex items-center gap-1.5">
           <Select
             value={test.source}
             onChange={(e) =>
@@ -68,21 +90,25 @@ export function TestsEditor({ tests, onChange }: Props) {
             />
           )}
 
-          <Select
-            value={test.op}
-            onChange={(e) =>
-              update(test.id, { op: e.target.value as Assertion["op"] })
-            }
-            className={"wrk-field w-32 flex-none cursor-pointer"}
-          >
-            {ASSERTION_OPS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </Select>
+          {/* A schema is the entire assertion: there is nothing to compare
+              it against and no operator to pick. */}
+          {!sourceIsSchema(test.source) && (
+            <Select
+              value={test.op}
+              onChange={(e) =>
+                update(test.id, { op: e.target.value as Assertion["op"] })
+              }
+              className={"wrk-field w-32 flex-none cursor-pointer"}
+            >
+              {ASSERTION_OPS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+          )}
 
-          {test.op !== "exists" && (
+          {!sourceIsSchema(test.source) && test.op !== "exists" && (
             <Input
               value={test.expected}
               spellCheck={false}
@@ -92,6 +118,16 @@ export function TestsEditor({ tests, onChange }: Props) {
             />
           )}
 
+          {sourceIsSchema(test.source) && (
+            <span className="min-w-0 flex-1 text-[11px] text-muted">
+              Draft 2020-12 or draft-07, picked from the schema's{" "}
+              <span className="font-mono">$schema</span>. Paste one straight out
+              of an OpenAPI document — <span className="font-mono">$ref</span>,{" "}
+              <span className="font-mono">oneOf</span> and{" "}
+              <span className="font-mono">format</span> all work.
+            </span>
+          )}
+
           <button
             onClick={() => onChange(tests.filter((t) => t.id !== test.id))}
             className="flex-none px-1.5 text-lg leading-none text-muted hover:text-err"
@@ -99,6 +135,18 @@ export function TestsEditor({ tests, onChange }: Props) {
           >
             ×
           </button>
+          </div>
+
+          {sourceIsSchema(test.source) && (
+            <Textarea
+              value={test.expected}
+              spellCheck={false}
+              rows={8}
+              placeholder={SCHEMA_PLACEHOLDER}
+              onChange={(e) => update(test.id, { expected: e.target.value })}
+              className="wrk-field font-mono text-[11px]"
+            />
+          )}
         </div>
       ))}
 
