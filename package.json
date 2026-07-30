@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "cli": "bun run cli/index.ts",
+    "build:cli": "bun build cli/index.ts --target=node --outfile=dist-cli/apikit-run.js"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -37,5 +39,8 @@
     "tailwindcss": "^4.3.3",
     "typescript": "~5.8.3",
     "vite": "^7.0.4"
+  },
+  "bin": {
+    "apikit-run": "dist-cli/apikit-run.js"
   }
 }

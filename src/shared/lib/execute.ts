@@ -14,6 +14,9 @@ import {
   normalizeConfig,
   type AppSettings,
   type AssertionResult,
+  type Auth,
+  type HttpRequestSpec,
+  type HttpResponseData,
   type SavedRequest,
   type TreeNode,
 } from "../types";
@@ -30,6 +33,21 @@ export interface ExecuteContext {
    * rather than waiting out its timeout.
    */
   cancelId?: string;
+  /**
+   * How the request actually goes out. Defaults to the Rust backend over Tauri.
+   *
+   * The CLI runner supplies a fetch-based transport instead, which is the whole
+   * reason this is injectable: build → pre-script → send → post-script →
+   * assertions has to stay in one place, or the CLI would slowly disagree with
+   * the app about what a request means.
+   */
+  send?: (spec: HttpRequestSpec) => Promise<HttpResponseData>;
+  /**
+   * Resolves the OAuth access token. Defaults to the keychain-backed resolver,
+   * which exists only inside the app — outside it, tokens come from the
+   * environment instead.
+   */
+  resolveToken?: (auth: Auth, vars: VarMap) => Promise<string>;
 }
 
 export interface ExecuteResult {
@@ -45,13 +63,14 @@ export interface ExecuteResult {
 
 export async function executeRequest(
   request: SavedRequest,
-  { vars, settings, onVariables, tree, cancelId }: ExecuteContext,
+  { vars, settings, onVariables, tree, cancelId, send, resolveToken }: ExecuteContext,
 ): Promise<ExecuteResult> {
+  const transport = send ?? sendRequest;
   const config = normalizeConfig(request.config);
   config.auth = resolveAuth(tree ?? [], request.id, config.auth);
   // Renews the token first if it has expired, which is why this is awaited
   // before the request is assembled rather than inside it.
-  const token = await currentAccessToken(config.auth, vars);
+  const token = await (resolveToken ?? currentAccessToken)(config.auth, vars);
   const built = buildWireRequest({ ...request, config }, vars, token);
 
   const pre = runPreScript(config.preScript, built, vars);
@@ -61,7 +80,7 @@ export async function executeRequest(
   const started = performance.now();
 
   try {
-    const response = await sendRequest({
+    const response = await transport({
       method: wire.method,
       url: enforceSecureUrl(wire.url, settings.enforceSecure),
       headers: activeRows(wire.headers),

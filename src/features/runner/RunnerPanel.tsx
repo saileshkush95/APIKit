@@ -15,6 +15,10 @@ import { SETTINGS } from "../../shared/lib/storage";
 import { useWorkspaceId } from "../../shared/state/workspaces";
 import { parseDataFile, type DataSet } from "../../shared/lib/dataFile";
 import { executeRequest } from "../../shared/lib/execute";
+import {
+  junitXml,
+  type RunSummary as SharedRunSummary,
+} from "../../shared/lib/junit";
 import { notify, notifyError } from "../../shared/lib/notify";
 import { logConsole } from "../../shared/state/console";
 import { findNode, isFolder } from "../../shared/lib/tree";
@@ -34,28 +38,8 @@ interface Entry {
 }
 
 /** A finished run, kept so the view can be left and come back to. */
-interface RunSummary {
+interface RunSummary extends SharedRunSummary {
   id: string;
-  atMs: number;
-  target: string;
-  environment: string;
-  iterations: number;
-  total: number;
-  passed: number;
-  failed: number;
-  errored: number;
-  timeMs: number;
-  /** Enough of each row to render the table again without re-running. */
-  rows: {
-    name: string;
-    path: string[];
-    method: string;
-    iteration: number;
-    status: number | null;
-    timeMs: number;
-    error: string | null;
-    assertions: { passed: boolean; message: string }[];
-  }[];
 }
 
 interface RunResult extends Entry {
@@ -69,53 +53,12 @@ interface RunResult extends Entry {
   body: string;
 }
 
-function escapeXml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
 
 /**
  * JUnit XML, which is what CI dashboards read. One testcase per request, a
  * failure element per failed assertion, and an error element when the request
  * itself never completed.
  */
-function junitXml(summary: RunSummary): string {
-  const cases = summary.rows
-    .map((row) => {
-      const name = escapeXml(
-        [...row.path, row.name].join(" / ") +
-          (summary.iterations > 1 ? ` #${row.iteration}` : ""),
-      );
-      const body = [
-        ...(row.error
-          ? [`      <error message="${escapeXml(row.error)}"/>`]
-          : []),
-        ...row.assertions
-          .filter((assertion) => !assertion.passed)
-          .map(
-            (assertion) =>
-              `      <failure message="${escapeXml(assertion.message)}"/>`,
-          ),
-      ].join("\n");
-      const time = (row.timeMs / 1000).toFixed(3);
-      return body === ""
-        ? `    <testcase name="${name}" time="${time}"/>`
-        : `    <testcase name="${name}" time="${time}">\n${body}\n    </testcase>`;
-    })
-    .join("\n");
-
-  return [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    `<testsuites name="APIKit" tests="${summary.total}" failures="${summary.failed}" errors="${summary.errored}" time="${(summary.timeMs / 1000).toFixed(3)}">`,
-    `  <testsuite name="${escapeXml(summary.target)}" tests="${summary.total}" failures="${summary.failed}" errors="${summary.errored}" timestamp="${new Date(summary.atMs).toISOString()}">`,
-    cases,
-    "  </testsuite>",
-    "</testsuites>",
-  ].join("\n");
-}
 
 /** Depth-first list of requests, so runs follow the visible sidebar order. */
 function flatten(nodes: TreeNode[], path: string[] = []): Entry[] {
