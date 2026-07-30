@@ -1,27 +1,27 @@
-mod background;
-mod client_app;
-mod cookies;
-mod email;
-mod github;
-mod grpc;
-mod http_client;
-mod load;
+// Grouped by what the code is for, not by what it happens to import.
+//
+//   net    — making a request: HTTP, gRPC, streams, load, TLS, cookies
+//   auth   — obtaining credentials, and keeping them in the OS keychain
+//   proxy  — the MITM engine, the OS proxy settings, the app-name lookup
+//   sync   — moving a workspace between machines: LAN peers and GitHub
+//   app    — desktop shell concerns: the tray, monitor email
+//
+// `store` and `mock` stay at the top level: the database is used by everything,
+// and the mock server is a single file with nothing to group it with.
+mod app;
+mod auth;
 mod mock;
+mod net;
 mod proxy;
-mod oauth;
-mod secrets;
-mod tls;
 mod store;
 mod sync;
-mod stream;
-mod system_proxy;
 
-use background::BackgroundMode;
-use cookies::CookieState;
-use load::LoadState;
+use app::background::BackgroundMode;
 use mock::MockState;
+use net::cookies::CookieState;
+use net::load::LoadState;
+use net::stream::StreamState;
 use proxy::ProxyState;
-use stream::StreamState;
 use sync::SyncState;
 use tauri::Manager;
 
@@ -42,7 +42,7 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .manage(http_client::CancelState::default())
+        .manage(net::http_client::CancelState::default())
         .manage(ProxyState::default())
         .manage(MockState::default())
         .manage(StreamState::default())
@@ -56,11 +56,11 @@ pub fn run() {
             // first request of a session already carries them.
             {
                 let conn = db.0.lock().map_err(|e| e.to_string())?;
-                cookies::restore(&app.state::<CookieState>().0, &conn);
+                net::cookies::restore(&app.state::<CookieState>().0, &conn);
             }
             app.manage(db);
-            background::init_tray(app.handle())?;
-            system_proxy::heal_on_startup(app.handle());
+            app::background::init_tray(app.handle())?;
+            proxy::system::heal_on_startup(app.handle());
 
             // Insurance against a hidden main window. The frontend normally
             // reveals it as soon as the workspace opens; if that never happens
@@ -107,14 +107,14 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            http_client::send_request,
-            http_client::cancel_request,
-            cookies::list_cookies,
-            cookies::cookies_enabled,
-            cookies::set_cookies_enabled,
-            cookies::put_cookie,
-            cookies::delete_cookie,
-            cookies::clear_cookies,
+            net::http_client::send_request,
+            net::http_client::cancel_request,
+            net::cookies::list_cookies,
+            net::cookies::cookies_enabled,
+            net::cookies::set_cookies_enabled,
+            net::cookies::put_cookie,
+            net::cookies::delete_cookie,
+            net::cookies::clear_cookies,
             store::list_workspaces,
             store::create_workspace,
             store::rename_workspace,
@@ -146,41 +146,41 @@ pub fn run() {
             sync::sync_watch_peer,
             sync::sync_unwatch_peer,
             store::local_change_stamp,
-            github::github_pull,
-            github::github_push,
-            github::github_check,
-            github::write_text_file,
-            github::read_text_file,
-            github::save_binary_file,
-            secrets::secret_set,
-            secrets::secret_get,
-            secrets::secret_delete,
-            email::send_email,
-            email::smtp_check,
+            sync::github::github_pull,
+            sync::github::github_push,
+            sync::github::github_check,
+            sync::github::write_text_file,
+            sync::github::read_text_file,
+            sync::github::save_binary_file,
+            auth::secrets::secret_set,
+            auth::secrets::secret_get,
+            auth::secrets::secret_delete,
+            app::email::send_email,
+            app::email::smtp_check,
             store::set_setting,
-            background::set_background_mode,
-            background::background_mode,
+            app::background::set_background_mode,
+            app::background::background_mode,
             mock::start_mock_server,
             mock::stop_mock_server,
             mock::mock_status,
             mock::apply_mock_routes,
-            stream::stream_connect,
-            stream::stream_send,
-            stream::stream_disconnect,
-            load::run_load_test,
-            load::stop_load_test,
-            oauth::oauth_token,
-            oauth::oauth_authorize,
-            oauth::oauth_device_start,
-            oauth::oauth_device_poll,
-            grpc::grpc_call,
-            grpc::grpc_methods,
-            grpc::grpc_services,
+            net::stream::stream_connect,
+            net::stream::stream_send,
+            net::stream::stream_disconnect,
+            net::load::run_load_test,
+            net::load::stop_load_test,
+            auth::oauth::oauth_token,
+            auth::oauth::oauth_authorize,
+            auth::oauth::oauth_device_start,
+            auth::oauth::oauth_device_poll,
+            net::grpc::grpc_call,
+            net::grpc::grpc_methods,
+            net::grpc::grpc_services,
             proxy::start_proxy,
             proxy::stop_proxy,
-            system_proxy::set_system_proxy,
-            system_proxy::ca_trusted,
-            system_proxy::trust_ca_certificate,
+            proxy::system::set_system_proxy,
+            proxy::system::ca_trusted,
+            proxy::system::trust_ca_certificate,
             proxy::proxy_status,
             proxy::get_flows,
             proxy::clear_flows,
@@ -195,7 +195,7 @@ pub fn run() {
             // Whatever ends the process, the OS must not be left pointing at a
             // proxy that no longer exists.
             if let tauri::RunEvent::Exit = event {
-                system_proxy::restore_on_exit(app);
+                proxy::system::restore_on_exit(app);
             }
         });
 }

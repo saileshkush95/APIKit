@@ -8,6 +8,11 @@
 //! time the proxy runs. The user installs/trusts that CA so the proxy can sign
 //! per-host leaf certificates on the fly.
 
+// The OS proxy settings this engine points at itself, and the lookup that
+// names the app behind a connection.
+pub mod apps;
+pub mod system;
+
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -28,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::oneshot;
 
-use crate::http_client::Header;
+use crate::net::http_client::Header;
 
 /// Maximum number of body characters we retain for display. The full body is
 /// still forwarded to the destination; this only caps what we keep in memory
@@ -369,7 +374,7 @@ impl HttpHandler for CaptureHandler {
             method: parts.method.to_string(),
             url,
             host,
-            app: crate::client_app::describe(ctx.client_addr),
+            app: crate::proxy::apps::describe(ctx.client_addr),
             request_headers: headers_to_vec(&parts.headers),
             request_body: truncate_body(&bytes),
             status: None,
@@ -451,7 +456,7 @@ impl HttpHandler for CaptureHandler {
             flow.response_body_base64 = if std::str::from_utf8(&bytes).is_ok() {
                 None
             } else {
-                Some(crate::github::base64_encode(&bytes))
+                Some(crate::sync::github::base64_encode(&bytes))
             };
             flow.duration_ms = epoch_ms().saturating_sub(self.started_at.unwrap_or(flow.started_ms));
 

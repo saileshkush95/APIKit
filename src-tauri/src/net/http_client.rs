@@ -12,7 +12,7 @@ use futures::future::{AbortHandle, Abortable};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::cookies::CookieState;
+use crate::net::cookies::CookieState;
 use crate::store::Db;
 
 /// Abort handles for in-flight requests, keyed by the caller's cancel id.
@@ -98,7 +98,7 @@ pub struct HttpRequestSpec {
     /// Client certificate for mutual TLS, already matched to this request's host
     /// by the caller — the host patterns live in settings, not here.
     #[serde(default)]
-    pub client_cert: Option<crate::tls::ClientCertSpec>,
+    pub client_cert: Option<crate::net::tls::ClientCertSpec>,
     /// Extra certificate authorities to trust, on top of the system roots.
     #[serde(default)]
     pub ca_cert_paths: Option<Vec<String>>,
@@ -175,7 +175,7 @@ pub async fn send_request(
     // Before `build()`, and fatal if it fails: a request that quietly went out
     // without its client certificate comes back as an opaque handshake failure
     // from the server, with nothing pointing at the real cause.
-    builder = crate::tls::apply(
+    builder = crate::net::tls::apply(
         builder,
         spec.client_cert.as_ref(),
         spec.ca_cert_paths.as_deref().unwrap_or(&[]),
@@ -255,7 +255,7 @@ pub async fn send_request(
             Ok(text) => (text.to_owned(), None),
             Err(_) => (
                 String::from_utf8_lossy(&bytes).into_owned(),
-                Some(crate::github::base64_encode(&bytes)),
+                Some(crate::sync::github::base64_encode(&bytes)),
             ),
         };
 
@@ -300,7 +300,7 @@ pub async fn send_request(
     };
 
     if result.is_ok() && !skip_cookie_jar {
-        crate::cookies::persist_after_request(&cookies, &db);
+        crate::net::cookies::persist_after_request(&cookies, &db);
     }
     result
 }

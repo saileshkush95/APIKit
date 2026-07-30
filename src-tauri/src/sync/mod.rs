@@ -9,6 +9,9 @@
 //! The transport is plain HTTP on the local network guarded by a pairing token,
 //! so it is only appropriate on a network you trust.
 
+// The other way a workspace travels: committed to a GitHub repository.
+pub mod github;
+
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::{SocketAddr, UdpSocket};

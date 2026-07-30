@@ -76,7 +76,7 @@ pub struct GrpcSpec {
     /// The request message as JSON.
     pub body: String,
     #[serde(default)]
-    pub metadata: Vec<crate::http_client::Header>,
+    pub metadata: Vec<crate::net::http_client::Header>,
     #[serde(default)]
     pub timeout_ms: Option<u64>,
     /// Plaintext h2c rather than TLS; the default for local servers.
@@ -128,7 +128,7 @@ pub struct GrpcResponse {
     pub body: String,
     pub status: String,
     pub time_ms: u64,
-    pub metadata: Vec<crate::http_client::Header>,
+    pub metadata: Vec<crate::net::http_client::Header>,
 }
 
 fn endpoint(target: &str, plaintext: bool) -> String {
@@ -301,7 +301,7 @@ fn grpc_path(service: &str, method: &str) -> Result<http::uri::PathAndQuery, Str
 /// silently missing auth header looks exactly like a rejected credential.
 fn apply_metadata<T>(
     request: &mut Request<T>,
-    metadata: &[crate::http_client::Header],
+    metadata: &[crate::net::http_client::Header],
 ) -> Result<(), String> {
     for entry in metadata {
         let name = entry.name.trim();
@@ -330,16 +330,16 @@ fn apply_metadata<T>(
 }
 
 /// Response metadata, flattened for display.
-fn read_metadata(map: &tonic::metadata::MetadataMap) -> Vec<crate::http_client::Header> {
+fn read_metadata(map: &tonic::metadata::MetadataMap) -> Vec<crate::net::http_client::Header> {
     map.iter()
         .filter_map(|entry| match entry {
             tonic::metadata::KeyAndValueRef::Ascii(key, value) => {
-                Some(crate::http_client::Header {
+                Some(crate::net::http_client::Header {
                     name: key.to_string(),
                     value: value.to_str().unwrap_or("<invalid>").to_string(),
                 })
             }
-            tonic::metadata::KeyAndValueRef::Binary(key, _) => Some(crate::http_client::Header {
+            tonic::metadata::KeyAndValueRef::Binary(key, _) => Some(crate::net::http_client::Header {
                 name: key.to_string(),
                 value: "<binary>".to_string(),
             }),
@@ -425,7 +425,7 @@ fn parse_messages(
 async fn reflection_call(
     channel: &Channel,
     request: reflection::ServerReflectionRequest,
-    metadata: &[crate::http_client::Header],
+    metadata: &[crate::net::http_client::Header],
 ) -> Result<reflection::ServerReflectionResponse, String> {
     let mut last: Option<String> = None;
     for package in ["grpc.reflection.v1", "grpc.reflection.v1alpha"] {
@@ -464,7 +464,7 @@ async fn reflection_call(
 async fn reflect(
     channel: &Channel,
     symbol: &str,
-    metadata: &[crate::http_client::Header],
+    metadata: &[crate::net::http_client::Header],
 ) -> Result<DescriptorPool, String> {
     let request = reflection::ServerReflectionRequest {
         host: String::new(),

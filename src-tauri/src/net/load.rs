@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
-use crate::http_client::{Header, HttpRequestSpec};
+use crate::net::http_client::{Header, HttpRequestSpec};
 
 #[derive(Default)]
 pub struct LoadState {
@@ -162,7 +162,7 @@ fn build_client(spec: &HttpRequestSpec) -> Result<reqwest::Client, String> {
     }
     // The client is built once for the whole run, so a certificate that cannot
     // be loaded fails the test up front rather than every request in it.
-    builder = crate::tls::apply(
+    builder = crate::net::tls::apply(
         builder,
         spec.client_cert.as_ref(),
         spec.ca_cert_paths.as_deref().unwrap_or(&[]),

@@ -284,7 +284,7 @@ async fn post_token(
 
 /// Standard base64 with padding, for HTTP Basic.
 fn base64_standard(input: &[u8]) -> String {
-    crate::github::base64_encode(input)
+    crate::sync::github::base64_encode(input)
 }
 
 /// The chain of a reqwest failure. The outer message is usually just
