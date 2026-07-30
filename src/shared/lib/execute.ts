@@ -4,6 +4,7 @@
 
 import { sendRequest } from "./api";
 import { runAssertions } from "./assertions";
+import { currentAccessToken } from "./oauth";
 import { buildWireRequest, enforceSecureUrl, resolveAuth } from "./request";
 import { activeRows } from "./rows";
 import { runPostScript, runPreScript } from "./scripts";
@@ -47,7 +48,10 @@ export async function executeRequest(
 ): Promise<ExecuteResult> {
   const config = normalizeConfig(request.config);
   config.auth = resolveAuth(tree ?? [], request.id, config.auth);
-  const built = buildWireRequest({ ...request, config }, vars);
+  // Renews the token first if it has expired, which is why this is awaited
+  // before the request is assembled rather than inside it.
+  const token = await currentAccessToken(config.auth, vars);
+  const built = buildWireRequest({ ...request, config }, vars, token);
 
   const pre = runPreScript(config.preScript, built, vars);
   onVariables?.(pre.outcome.variables);

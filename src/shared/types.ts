@@ -132,7 +132,63 @@ export type BodyMode =
 
 export type RawLanguage = "json" | "text" | "xml" | "html" | "javascript";
 
-export type AuthType = "none" | "bearer" | "basic" | "apiKey" | "inherit";
+export type AuthType =
+  | "none"
+  | "bearer"
+  | "basic"
+  | "apiKey"
+  | "oauth2"
+  | "inherit";
+
+/**
+ * Which OAuth 2.0 grant to run. Implicit is absent on purpose: its token comes
+ * back in the URL fragment, which the browser never sends to the redirect host,
+ * so the loopback listener cannot see it. OAuth 2.1 drops it too.
+ */
+export type OauthGrant =
+  | "authorizationCode"
+  | "clientCredentials"
+  | "password"
+  | "deviceCode";
+
+/**
+ * Flow parameters only. The tokens themselves never live here — they go to the
+ * OS keychain under `oauth2:<id>`, because this object is persisted with the
+ * collection and so is carried by every export, backup and sync. See
+ * `shared/lib/oauth.ts`.
+ *
+ * Every field is interpolated, so a client secret can be held in an environment
+ * variable marked secret rather than typed in here.
+ */
+export interface OAuth2Config {
+  /** Stable across edits; keys the token in the keychain. */
+  id: string;
+  grant: OauthGrant;
+  authorizeUrl: string;
+  tokenUrl: string;
+  /** RFC 8628 device authorization endpoint. */
+  deviceUrl: string;
+  clientId: string;
+  clientSecret: string;
+  scope: string;
+  /** Must be loopback with an explicit port — this process answers it. */
+  redirectUri: string;
+  username: string;
+  password: string;
+  /** Client id/secret in the Authorization header, or in the form body. */
+  clientAuth: "basic" | "body";
+  usePkce: boolean;
+  /** The parameters providers invent: audience, resource, prompt, tenant. */
+  extraParams: KeyValue[];
+  /** Where the acquired token is placed on the request. */
+  addTo: "header" | "query";
+  headerName: string;
+  /** Usually "Bearer"; some providers want "token" or nothing at all. */
+  headerPrefix: string;
+  queryName: string;
+  /** Refresh automatically when the token has expired and a refresh exists. */
+  autoRefresh: boolean;
+}
 
 export interface Auth {
   type: AuthType;
@@ -143,6 +199,7 @@ export interface Auth {
   value: string;
   /** Where an API key is placed. */
   addTo: "header" | "query";
+  oauth2: OAuth2Config;
 }
 
 /** Protocols a request can speak. */
@@ -382,7 +439,42 @@ export function defaultAuth(): Auth {
     key: "",
     value: "",
     addTo: "header",
+    oauth2: defaultOauth2(),
   };
+}
+
+export function defaultOauth2(): OAuth2Config {
+  return {
+    // Regenerated per auth block so two requests cannot overwrite each other's
+    // token in the keychain.
+    id: newAuthId(),
+    grant: "authorizationCode",
+    authorizeUrl: "",
+    tokenUrl: "",
+    deviceUrl: "",
+    clientId: "",
+    clientSecret: "",
+    scope: "",
+    // A port the provider must have registered. 8731 is arbitrary but stable,
+    // so the registered value keeps working between sessions.
+    redirectUri: "http://127.0.0.1:8731/callback",
+    username: "",
+    password: "",
+    clientAuth: "basic",
+    // On by default: PKCE is required for public clients and harmless for
+    // confidential ones, and OAuth 2.1 makes it mandatory.
+    usePkce: true,
+    extraParams: [],
+    addTo: "header",
+    headerName: "Authorization",
+    headerPrefix: "Bearer",
+    queryName: "access_token",
+    autoRefresh: true,
+  };
+}
+
+function newAuthId(): string {
+  return `a${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
 }
 
 export function defaultConfig(): RequestConfig {
@@ -430,7 +522,13 @@ export function normalizeConfig(config?: Partial<RequestConfig> | null): Request
   return {
     ...base,
     ...config,
-    auth: { ...base.auth, ...(config.auth ?? {}) },
+    auth: {
+      ...base.auth,
+      ...(config.auth ?? {}),
+      // Auth saved before OAuth existed has no oauth2 block, and a missing id
+      // would key every request's token to the same keychain entry.
+      oauth2: config.auth?.oauth2 ?? defaultOauth2(),
+    },
     formData: config.formData?.length ? config.formData : base.formData,
     graphqlFiles: config.graphqlFiles ?? base.graphqlFiles,
     urlEncoded: config.urlEncoded?.length ? config.urlEncoded : base.urlEncoded,

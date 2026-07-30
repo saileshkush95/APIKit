@@ -8,6 +8,7 @@ mod http_client;
 mod load;
 mod mock;
 mod proxy;
+mod oauth;
 mod secrets;
 mod store;
 mod sync;
@@ -167,6 +168,10 @@ pub fn run() {
             stream::stream_disconnect,
             load::run_load_test,
             load::stop_load_test,
+            oauth::oauth_token,
+            oauth::oauth_authorize,
+            oauth::oauth_device_start,
+            oauth::oauth_device_poll,
             grpc::grpc_call,
             grpc::grpc_services,
             proxy::start_proxy,

@@ -1,6 +1,7 @@
 import { Input, Select } from "../../shared/components/Field";
 import { VariableInput } from "../../shared/components/VariableInput";
-import type { Auth, AuthType } from "../../shared/types";
+import { OauthPanel } from "./OauthPanel";
+import { defaultOauth2, type Auth, type AuthType } from "../../shared/types";
 
 interface Props {
   auth: Auth;
@@ -13,6 +14,7 @@ const TYPES: { value: AuthType; label: string }[] = [
   { value: "bearer", label: "Bearer Token" },
   { value: "basic", label: "Basic Auth" },
   { value: "apiKey", label: "API Key" },
+  { value: "oauth2", label: "OAuth 2.0" },
 ];
 
 
@@ -34,7 +36,7 @@ function Field({
 /** Auth is applied at send time — see `buildWireRequest`. */
 export function AuthEditor({ auth, onChange }: Props) {
   return (
-    <div className="flex max-w-2xl flex-col gap-2.5">
+    <div className={`flex flex-col gap-2.5 ${auth.type === "oauth2" ? "max-w-3xl" : "max-w-2xl"}`}>
       <Field label="Type">
         <Select
           value={auth.type}
@@ -93,6 +95,18 @@ export function AuthEditor({ auth, onChange }: Props) {
             />
           </Field>
         </>
+      )}
+
+      {auth.type === "oauth2" && (
+        <OauthPanel
+          /* Auth blocks saved before OAuth existed have no config; a fresh one
+             is minted here rather than in render-time state so its id — which
+             keys the token in the keychain — is written back and stays put. */
+          config={auth.oauth2 ?? defaultOauth2()}
+          onChange={(patch) =>
+            onChange({ oauth2: { ...(auth.oauth2 ?? defaultOauth2()), ...patch } })
+          }
+        />
       )}
 
       {auth.type === "apiKey" && (

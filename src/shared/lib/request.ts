@@ -71,6 +71,13 @@ const RAW_CONTENT_TYPES: Record<string, string> = {
 export function buildWireRequest(
   draft: RequestDraft,
   vars: VarMap,
+  /**
+   * The OAuth access token to attach, resolved by `currentAccessToken` — this
+   * function is synchronous and fetching a token is not. Omitted while merely
+   * previewing a request (the Code dialog, the unresolved-variable check), so
+   * the preview shows the placement without the credential.
+   */
+  oauthToken?: string,
 ): BuiltRequest {
   const { config } = draft;
   let headers = activeRows(draft.headers);
@@ -183,6 +190,25 @@ export function buildWireRequest(
         ...parseQuery(url),
         { name: auth.key, value: auth.value },
       ]);
+    }
+  } else if (auth.type === "oauth2" && oauthToken) {
+    const oauth = auth.oauth2;
+    if (oauth.addTo === "query") {
+      url = applyQuery(url, [
+        ...parseQuery(url),
+        { name: oauth.queryName || "access_token", value: oauthToken },
+      ]);
+    } else {
+      // A prefix is conventional but not universal — some providers want the
+      // bare token, so an empty prefix must not leave a leading space.
+      const prefix = oauth.headerPrefix.trim();
+      headers = [
+        ...headers,
+        {
+          name: oauth.headerName || "Authorization",
+          value: prefix ? `${prefix} ${oauthToken}` : oauthToken,
+        },
+      ];
     }
   }
 

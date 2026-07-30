@@ -27,6 +27,7 @@ import {
   enforceSecureUrl,
   resolveAuth,
 } from "../../shared/lib/request";
+import { currentAccessToken } from "../../shared/lib/oauth";
 import { activeRows } from "../../shared/lib/rows";
 import { runPostScript, runPreScript } from "../../shared/lib/scripts";
 import {
@@ -438,7 +439,8 @@ export function ApiClient({ intent }: ApiClientProps) {
       ...tab.config,
       auth: resolveAuth(tree, tab.sourceId, tab.config.auth),
     };
-    const built = buildWireRequest({ ...tab, config }, vars);
+    const oauth = await currentAccessToken(config.auth, vars);
+    const built = buildWireRequest({ ...tab, config }, vars, oauth);
 
     // Pre-request script may rewrite anything about the request.
     const pre = runPreScript(tab.config.preScript, built, vars);

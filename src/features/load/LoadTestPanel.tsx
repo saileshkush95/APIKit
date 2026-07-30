@@ -24,6 +24,7 @@ import { environmentVars } from "../../shared/lib/vars";
 import { runAssertions } from "../../shared/lib/assertions";
 import { PRESETS, presetFor, totalDuration } from "../../shared/lib/loadPresets";
 import { buildWireRequest, enforceSecureUrl } from "../../shared/lib/request";
+import { currentAccessToken } from "../../shared/lib/oauth";
 import { activeRows } from "../../shared/lib/rows";
 import { isFolder } from "../../shared/lib/tree";
 import { methodColor } from "../../shared/lib/ui";
@@ -405,8 +406,14 @@ export function LoadTestPanel() {
     // overrides the method and URL.
     const pinned = environments.find((env) => env.id === environmentId);
     const runVars = pinned ? environmentVars(pinned) : vars;
+    // Resolved once for the whole run, not per request: a load test would
+    // otherwise hit the keychain thousands of times, and the token is the same
+    // for every iteration.
+    const oauth = active
+      ? await currentAccessToken(active.config.auth, runVars)
+      : "";
     const base = active
-      ? buildWireRequest(active, runVars)
+      ? buildWireRequest(active, runVars, oauth)
       : { method, url, headers: [], body: "" };
 
     const target = url.trim() === "" ? base.url : url;

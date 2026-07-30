@@ -345,6 +345,82 @@ export function clearMonitorRuns(monitorId: string): Promise<void> {
   return invoke<void>("clear_monitor_runs", { monitorId });
 }
 
+// --- OAuth 2.0 ---------------------------------------------------------------
+
+/** Flow parameters, with `{{variables}}` already substituted. */
+export interface OauthConfigSpec {
+  tokenUrl: string;
+  authorizeUrl: string;
+  deviceUrl: string;
+  clientId: string;
+  clientSecret: string;
+  scope: string;
+  redirectUri: string;
+  username: string;
+  password: string;
+  clientAuth: "basic" | "body";
+  usePkce: boolean;
+  extraParams: { name: string; value: string }[];
+  verifyTls?: boolean | null;
+}
+
+export interface OauthTokenSet {
+  accessToken: string;
+  tokenType: string;
+  refreshToken: string;
+  idToken: string;
+  scope: string;
+  expiresAtMs: number | null;
+  raw: string;
+}
+
+export interface OauthDeviceAuth {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string;
+  intervalSecs: number;
+  expiresInSecs: number;
+}
+
+/** The grants that need no browser. */
+export function oauthToken(
+  config: OauthConfigSpec,
+  grant: "clientCredentials" | "password" | "refreshToken",
+  refreshToken = "",
+): Promise<OauthTokenSet> {
+  return invoke<OauthTokenSet>("oauth_token", { config, grant, refreshToken });
+}
+
+/**
+ * Opens the system browser and waits for the redirect. Resolves once the code
+ * has been exchanged, or rejects after five minutes of nothing.
+ */
+export function oauthAuthorize(config: OauthConfigSpec): Promise<OauthTokenSet> {
+  return invoke<OauthTokenSet>("oauth_authorize", { config });
+}
+
+export function oauthDeviceStart(
+  config: OauthConfigSpec,
+): Promise<OauthDeviceAuth> {
+  return invoke<OauthDeviceAuth>("oauth_device_start", { config });
+}
+
+/** Polls until the user approves on the other device, or the code expires. */
+export function oauthDevicePoll(
+  config: OauthConfigSpec,
+  deviceCode: string,
+  intervalSecs: number,
+  expiresInSecs: number,
+): Promise<OauthTokenSet> {
+  return invoke<OauthTokenSet>("oauth_device_poll", {
+    config,
+    deviceCode,
+    intervalSecs,
+    expiresInSecs,
+  });
+}
+
 // --- Mock server -------------------------------------------------------------
 
 export function startMockServer(
