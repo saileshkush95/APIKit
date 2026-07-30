@@ -9,6 +9,9 @@ import { checkForUpdate } from "../shared/lib/updater";
 import { Toaster } from "../shared/components/Toaster";
 import { ConfirmProvider } from "../shared/state/confirm";
 import { useWorkspacesStore } from "../shared/state/workspaces";
+import { HistoryScope } from "../shared/components/HistoryScope";
+import { clearFieldHistories } from "../shared/lib/fieldHistory";
+import { clearValueHistories } from "../shared/lib/valueHistory";
 import { routeTree } from "../routeTree.gen";
 import { AppEngines } from "./AppEngines";
 import "./App.css";
@@ -75,6 +78,14 @@ function App() {
   const loaded = useWorkspacesStore((s) => s.loaded);
   const error = useWorkspacesStore((s) => s.error);
   const workspaces = useWorkspacesStore((s) => s.workspaces);
+  const activeWorkspace = useWorkspacesStore((s) => s.activeId);
+
+  // Undo histories are keyed by workspace, so entries from the one just closed
+  // can never be reached. Dropping them keeps the registry to what is open.
+  useEffect(() => {
+    clearFieldHistories();
+    clearValueHistories();
+  }, [activeWorkspace]);
   const [failed, setFailed] = useState<string | null>(null);
 
   useEffect(() => {
@@ -120,9 +131,11 @@ function App() {
 
   return (
     <ConfirmProvider>
-      <AppEngines />
-      <RouterProvider router={router} />
-      <Toaster />
+      <HistoryScope id={activeWorkspace ?? "none"}>
+        <AppEngines />
+        <RouterProvider router={router} />
+        <Toaster />
+      </HistoryScope>
     </ConfirmProvider>
   );
 }

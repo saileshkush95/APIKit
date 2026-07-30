@@ -472,6 +472,7 @@ export function MonitorPanel() {
                         Headers
                       </div>
                       <KeyValueEditor
+                        historyId={`monitor:${monitor.id}:headers`}
                         rows={
                           monitor.headers.length
                             ? monitor.headers

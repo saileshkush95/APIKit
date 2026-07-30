@@ -210,6 +210,7 @@ export function ScriptsEditor({ config, onChange, logs }: Props) {
             : "// Runs when the response arrives.\n// wrk.response.status / .headers / .body / .json()\n// wrk.test(name, fn), wrk.expect(value).toBe(other)\n// wrk.env.set(name, value)"
         }
         className="min-h-[8rem] flex-1"
+        historyKey={`script:${phase}`}
         language="javascript"
         suggest={phase === "pre" ? suggestPre : suggestPost}
       />

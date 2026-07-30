@@ -234,6 +234,7 @@ export function EnvironmentManager({ onClose }: Props) {
                   onChange={setCollectionVariables}
                   keyPlaceholder="Variable"
                   valuePlaceholder="Value"
+                  historyId="collectionVariables"
                 />
                 <p className="mt-2 text-[11px] leading-relaxed text-muted">
                   A script writing <code className="font-mono">wrk.env.set</code>{" "}
@@ -256,6 +257,7 @@ export function EnvironmentManager({ onClose }: Props) {
                   }
                   keyPlaceholder="Variable"
                   valuePlaceholder="Value"
+                  historyId={`env:${selected.id}`}
                   allowSecrets
                 />
                 <p className="mt-2 text-[11px] leading-relaxed text-muted">

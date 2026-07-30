@@ -71,6 +71,7 @@ export function AuthEditor({ auth, onChange }: Props) {
             value={auth.token}
             placeholder="{{accessToken}}"
             mono
+            historyKey="auth:token"
             onChange={(token) => onChange({ token })}
           />
         </Field>
@@ -82,6 +83,7 @@ export function AuthEditor({ auth, onChange }: Props) {
             <VariableInput
               value={auth.username}
               mono
+              historyKey="auth:username"
               onChange={(username) => onChange({ username })}
             />
           </Field>
@@ -90,6 +92,7 @@ export function AuthEditor({ auth, onChange }: Props) {
               value={auth.password}
               type="password"
               spellCheck={false}
+              historyKey="auth:password"
               onChange={(e) => onChange({ password: e.target.value })}
               className="wrk-field"
             />
@@ -116,6 +119,7 @@ export function AuthEditor({ auth, onChange }: Props) {
               value={auth.key}
               placeholder="X-API-Key"
               mono
+              historyKey="auth:key"
               onChange={(key) => onChange({ key })}
             />
           </Field>
@@ -124,6 +128,7 @@ export function AuthEditor({ auth, onChange }: Props) {
               value={auth.value}
               placeholder="{{apiKey}}"
               mono
+              historyKey="auth:value"
               onChange={(value) => onChange({ value })}
             />
           </Field>

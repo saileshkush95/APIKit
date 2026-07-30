@@ -194,6 +194,7 @@ export function OauthPanel({ config, onChange }: Props) {
               value={config.authorizeUrl}
               placeholder="https://accounts.example.com/authorize"
               mono
+              historyKey="oauth:authorizeUrl"
               onChange={(authorizeUrl) => onChange({ authorizeUrl })}
             />
           </Row>
@@ -205,6 +206,7 @@ export function OauthPanel({ config, onChange }: Props) {
               value={config.redirectUri}
               placeholder="http://127.0.0.1:8731/callback"
               mono
+              historyKey="oauth:redirectUri"
               onChange={(redirectUri) => onChange({ redirectUri })}
             />
           </Row>
@@ -217,6 +219,7 @@ export function OauthPanel({ config, onChange }: Props) {
             value={config.deviceUrl}
             placeholder="https://accounts.example.com/device/code"
             mono
+            historyKey="oauth:deviceUrl"
             onChange={(deviceUrl) => onChange({ deviceUrl })}
           />
         </Row>
@@ -227,6 +230,7 @@ export function OauthPanel({ config, onChange }: Props) {
           value={config.tokenUrl}
           placeholder="https://accounts.example.com/oauth/token"
           mono
+          historyKey="oauth:tokenUrl"
           onChange={(tokenUrl) => onChange({ tokenUrl })}
         />
       </Row>
@@ -235,6 +239,7 @@ export function OauthPanel({ config, onChange }: Props) {
         <VariableInput
           value={config.clientId}
           mono
+          historyKey="oauth:clientId"
           onChange={(clientId) => onChange({ clientId })}
         />
       </Row>
@@ -247,6 +252,7 @@ export function OauthPanel({ config, onChange }: Props) {
           value={config.clientSecret}
           placeholder="{{clientSecret}}"
           mono
+          historyKey="oauth:clientSecret"
           onChange={(clientSecret) => onChange({ clientSecret })}
         />
       </Row>
@@ -257,6 +263,7 @@ export function OauthPanel({ config, onChange }: Props) {
             <VariableInput
               value={config.username}
               mono
+              historyKey="oauth:username"
               onChange={(username) => onChange({ username })}
             />
           </Row>
@@ -265,6 +272,7 @@ export function OauthPanel({ config, onChange }: Props) {
               value={config.password}
               placeholder="{{password}}"
               mono
+              historyKey="oauth:password"
               onChange={(password) => onChange({ password })}
             />
           </Row>
@@ -276,6 +284,7 @@ export function OauthPanel({ config, onChange }: Props) {
           value={config.scope}
           placeholder="openid profile email"
           mono
+          historyKey="oauth:scope"
           onChange={(scope) => onChange({ scope })}
         />
       </Row>
@@ -365,6 +374,7 @@ export function OauthPanel({ config, onChange }: Props) {
           </span>
         </div>
         <KeyValueEditor
+          historyId="oauthExtraParams"
           rows={
             config.extraParams.length
               ? config.extraParams

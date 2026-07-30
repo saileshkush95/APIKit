@@ -743,6 +743,7 @@ export function MockPanel() {
                 <KeyValueEditor
                   allowDisable
                   allowDescription
+                  historyId={`route:${selected.id}:headers`}
                   rows={
                     selected.headers.length
                       ? selected.headers
@@ -830,6 +831,7 @@ export function MockPanel() {
                     <KeyValueEditor
                   allowDisable
                   allowDescription
+                      historyId={`route:${selected.id}:matchHeaders`}
                       rows={
                         selected.matchHeaders.length
                           ? selected.matchHeaders

@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { CodeEditor } from "../../shared/components/CodeEditor";
+import { typeInto } from "../../shared/lib/textEdit";
 import { renderMarkdown } from "../../shared/lib/markdown";
 import type { RequestConfig } from "../../shared/types";
 
@@ -90,8 +91,10 @@ export function DocsEditor({ config, onChange, requestName }: Props) {
       inserted = `${tool.before}${target}${tool.after ?? ""}`;
     }
 
-    const next = source.slice(0, start) + inserted + source.slice(end);
-    onChange({ docs: next });
+    // Through the field, so a toolbar insert is one Cmd+Z like a typed one.
+    if (!typeInto(textarea, inserted, start, end)) {
+      onChange({ docs: source.slice(0, start) + inserted + source.slice(end) });
+    }
 
     // Put the caret after what was inserted so typing continues naturally.
     requestAnimationFrame(() => {
@@ -109,6 +112,7 @@ export function DocsEditor({ config, onChange, requestName }: Props) {
       placeholder={"# Endpoint\n\nDescribe what this request does…"}
       className="min-h-[10rem] flex-1"
       inputRef={inputRef}
+      historyKey="docs"
       completeVariables={false}
     />
   );

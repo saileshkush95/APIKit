@@ -6,12 +6,35 @@
 // its own font metrics and draws its own arrow, so the appearance is reset
 // there and the chevron drawn as a background image.
 
+import { useRef, type Ref } from "react";
 import type {
   InputHTMLAttributes,
   ReactNode,
-  Ref,
   TextareaHTMLAttributes,
 } from "react";
+import { useFieldHistory } from "../lib/fieldHistory";
+
+/**
+ * Undo history for a primitive, given the field's short name.
+ *
+ * Both primitives take their value straight from the DOM attributes, so the
+ * hook needs a ref of its own — merged with whatever ref the caller passed,
+ * since a formatting toolbar or an autofocus may already want it.
+ */
+function useHistory<T extends HTMLInputElement | HTMLTextAreaElement>(
+  historyKey: string | undefined,
+  value: unknown,
+  forwarded: Ref<T> | undefined,
+) {
+  const own = useRef<T | null>(null);
+  const history = useFieldHistory(historyKey, String(value ?? ""), own);
+  const ref = (node: T | null) => {
+    own.current = node;
+    if (typeof forwarded === "function") forwarded(node);
+    else if (forwarded) (forwarded as { current: T | null }).current = node;
+  };
+  return { ref, handleKey: history.handleKey };
+}
 
 /**
  * `compact` for dense rows and toolbars, `lg` for the URL bar, `cell` for a
@@ -38,13 +61,38 @@ interface Common {
   size?: FieldSize;
   /** Monospace, for URLs, headers, tokens and anything code-like. */
   mono?: boolean;
+  /**
+   * Short name for this field's undo history, scoped by the surrounding
+   * `HistoryScope` — `"name"` inside a grid row, `"clientSecret"` in an auth
+   * form. Left out, the browser's own undo stack is used unchanged.
+   */
+  historyKey?: string;
 }
 
 export type InputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "size"> &
   Common & { ref?: Ref<HTMLInputElement> };
 
-export function Input({ size, mono, className, ...rest }: InputProps) {
-  return <input {...rest} className={classes(size, mono, className)} />;
+export function Input({
+  size,
+  mono,
+  className,
+  historyKey,
+  ref,
+  onKeyDown,
+  ...rest
+}: InputProps) {
+  const history = useHistory<HTMLInputElement>(historyKey, rest.value, ref);
+  return (
+    <input
+      {...rest}
+      ref={history.ref}
+      onKeyDown={(e) => {
+        if (history.handleKey(e)) return;
+        onKeyDown?.(e);
+      }}
+      className={classes(size, mono, className)}
+    />
+  );
 }
 
 // The dropdown draws its own list rather than using the native popup, which
@@ -52,10 +100,29 @@ export function Input({ size, mono, className, ...rest }: InputProps) {
 export { Select } from "./Select";
 
 export type TextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement> &
-  Common;
+  Common & { ref?: Ref<HTMLTextAreaElement> };
 
-export function Textarea({ size, mono, className, ...rest }: TextareaProps) {
-  return <textarea {...rest} className={classes(size, mono, className)} />;
+export function Textarea({
+  size,
+  mono,
+  className,
+  historyKey,
+  ref,
+  onKeyDown,
+  ...rest
+}: TextareaProps) {
+  const history = useHistory<HTMLTextAreaElement>(historyKey, rest.value, ref);
+  return (
+    <textarea
+      {...rest}
+      ref={history.ref}
+      onKeyDown={(e) => {
+        if (history.handleKey(e)) return;
+        onKeyDown?.(e);
+      }}
+      className={classes(size, mono, className)}
+    />
+  );
 }
 
 interface LabelledProps {

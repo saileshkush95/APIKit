@@ -124,6 +124,7 @@ export function HeldRequestDialog({ held, queued, onResolve }: Props) {
 
         <div className={tab === "headers" ? "" : "hidden"}>
           <KeyValueEditor
+            historyId="heldHeaders"
             rows={headers.length ? headers : [{ name: "", value: "" }]}
             onChange={setHeaders}
             keyPlaceholder="Header"

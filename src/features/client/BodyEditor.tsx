@@ -14,6 +14,7 @@ import {
 } from "../../shared/lib/graphql";
 import { notify, notifyError } from "../../shared/lib/notify";
 import { beautify } from "../../shared/lib/request";
+import { replaceAll } from "../../shared/lib/textEdit";
 import { useSettings } from "../../shared/state/settings";
 import type { BodyMode, Header, RawLanguage, RequestConfig } from "../../shared/types";
 
@@ -204,6 +205,9 @@ export function BodyEditor({
   url = "",
   headers = [],
 }: Props) {
+  // Lets Beautify rewrite the body through the textarea, which keeps it undoable.
+  const rawRef = useRef<HTMLTextAreaElement | null>(null);
+
   // The GraphQL protocol drives the body directly — no mode selector.
   if (config.protocol === "graphql") {
     return (
@@ -282,7 +286,12 @@ export function BodyEditor({
               </button>
             )}
             <button
-              onClick={() => onBodyChange(beautify(body, config.rawLanguage))}
+              onClick={() => {
+                const formatted = beautify(body, config.rawLanguage);
+                // Through the field where possible, so one Cmd+Z undoes the
+                // reformat instead of there being no way back.
+                if (!replaceAll(rawRef.current, formatted)) onBodyChange(formatted);
+              }}
               className={`text-xs text-brand hover:underline ${
                 config.rawLanguage === "json" ? "" : "ml-auto"
               }`}
@@ -333,6 +342,7 @@ export function BodyEditor({
           keyPlaceholder="Key"
           valuePlaceholder="Value"
           allowFiles
+          historyId="formData"
           highlightVariables
         />
       )}
@@ -345,6 +355,7 @@ export function BodyEditor({
           onChange={(urlEncoded) => onConfigChange({ urlEncoded })}
           keyPlaceholder="Key"
           valuePlaceholder="Value"
+          historyId="urlEncoded"
           highlightVariables
         />
       )}
@@ -353,6 +364,8 @@ export function BodyEditor({
         <CodeEditor
           value={body}
           onChange={onBodyChange}
+          inputRef={rawRef}
+          historyKey="body"
           placeholder='{ "key": "value" }'
           className="min-h-[10rem] flex-1"
           language={EDITOR_LANGUAGE[config.rawLanguage]}
@@ -495,11 +508,12 @@ function GraphqlBody({
             )}
             <button
               type="button"
-              onClick={() =>
-                onConfigChange({
-                  graphqlQuery: beautifyGraphql(config.graphqlQuery),
-                })
-              }
+              onClick={() => {
+                const formatted = beautifyGraphql(config.graphqlQuery);
+                if (!replaceAll(queryRef.current, formatted)) {
+                  onConfigChange({ graphqlQuery: formatted });
+                }
+              }}
               className="ml-auto text-xs text-brand hover:underline"
             >
               Beautify
@@ -511,6 +525,7 @@ function GraphqlBody({
             placeholder={"query {\n  viewer { id }\n}"}
             className="min-h-[8rem] flex-1"
             inputRef={queryRef}
+            historyKey="graphql"
             language="graphql"
             suggest={suggestQuery}
           />

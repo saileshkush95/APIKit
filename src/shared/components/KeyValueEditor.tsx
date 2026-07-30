@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Autocomplete } from "./Autocomplete";
+import { HistoryScope } from "./HistoryScope";
+import { useValueHistory } from "../lib/valueHistory";
 import { VariableInput } from "./VariableInput";
 import { Input, Select } from "./Field";
 import { open } from "@tauri-apps/plugin-dialog";
+import { isEmptyRow } from "../lib/rows";
 import type { KeyValue } from "../types";
 
 interface Props {
@@ -28,6 +31,17 @@ interface Props {
   suggestValue?: (name: string, query: string) => string[];
   /** Colour {{variables}} in the value column and complete them. */
   highlightVariables?: boolean;
+  /**
+   * Names this list for undo purposes — `"headers"`, `"params"`, `"formData"`.
+   * Cells are then keyed by row and column beneath it. Without it the rows keep
+   * the browser's own undo, since two unnamed grids in one scope would collide.
+   *
+   * Rows are addressed by position, which is what a list with no ids of its own
+   * allows: reordering or deleting a row shifts the history with the position
+   * rather than with the row. The alternative was an id in the stored data,
+   * which would end up in every export and sync commit for no other reason.
+   */
+  historyId?: string;
 }
 
 function fileNameOf(path: string): string {
@@ -39,10 +53,8 @@ function fileNameOf(path: string): string {
 const CELL = "border border-edge p-0";
 const HEAD = "border border-edge px-2 py-0.5 text-left font-medium text-muted";
 
-/** A row the user has typed nothing into — the trailing placeholder. */
-function isBlank(row: KeyValue): boolean {
-  return row.name.trim() === "" && row.value.trim() === "";
-}
+/** The trailing placeholder — see `isEmptyRow`, which every list shares. */
+const isBlank = isEmptyRow;
 
 /**
  * `Key: Value` per line, `//` in front of a row that is switched off — the
@@ -103,6 +115,7 @@ export function KeyValueEditor({
   suggestName,
   suggestValue,
   highlightVariables = false,
+  historyId,
 }: Props) {
   // Held separately from `rows` while bulk editing: the textarea must show
   // exactly what was typed, and a round trip through the rows would eat a
@@ -118,6 +131,22 @@ export function KeyValueEditor({
   // A file cannot be written as text, so a grid that allows them has no faithful
   // bulk form — offering one would silently drop the files.
   const canBulk = !allowFiles;
+
+  /**
+   * A cell's undo key, relative to the list's scope. Undefined without a
+   * `historyId`, which leaves those cells on the browser's own undo.
+   */
+  const cellKey = (index: number, column: string) =>
+    historyId ? `#${index}:${column}` : undefined;
+
+  // Undo for what a field cannot hold: a removed row, a cleared list, a list
+  // replaced from bulk text. The focused cell gets Cmd+Z first and only passes
+  // it on once its own text history is spent.
+  const structure = useValueHistory(
+    historyId ? `${historyId}:rows` : undefined,
+    rows,
+    onChange,
+  );
   const descriptionColumn = allowDescription && showDescription;
   // The Type and file-picker columns are meaningless without their value cell.
   const valueColumn = showValue || allowFiles;
@@ -144,20 +173,20 @@ export function KeyValueEditor({
   function update(index: number, patch: Partial<KeyValue>) {
     const next = rows.map((row, i) => (i === index ? { ...row, ...patch } : row));
     const last = next[next.length - 1];
-    if (last && (last.name !== "" || last.value !== "")) {
-      next.push({ name: "", value: "" });
-    }
+    if (last && !isBlank(last)) next.push({ name: "", value: "" });
     onChange(next);
   }
 
   function remove(index: number) {
     const next = rows.filter((_, i) => i !== index);
     if (next.length === 0) next.push({ name: "", value: "" });
+    structure.commit(rows);
     onChange(next);
   }
 
   /** Switches every row that has a name; the placeholder is left alone. */
   function setAll(enabled: boolean) {
+    structure.commit(rows);
     onChange(rows.map((row) => (isBlank(row) ? row : { ...row, enabled })));
   }
 
@@ -239,6 +268,7 @@ export function KeyValueEditor({
               className={item}
               disabled={filled.length === 0}
               onClick={() => {
+                structure.commit(rows);
                 onChange([{ name: "", value: "" }]);
                 setBulkText(bulk ? "" : null);
                 setMenuOpen(false);
@@ -279,8 +309,8 @@ export function KeyValueEditor({
     </div>
   );
 
-  return (
-    <div>
+  const editor = (
+    <div onKeyDown={structure.handleKey}>
       {bulk ? (
         <div>
           {/* No header row to hold the button while the table is hidden. */}
@@ -291,6 +321,10 @@ export function KeyValueEditor({
             autoFocus
             placeholder={`${keyPlaceholder}:${valuePlaceholder}`}
             onChange={(e) => {
+              // Committed once, on the first keystroke: the bulk textarea has
+              // its own field history for the text, and one structural step
+              // back to the rows as they were is what is missing.
+              if (bulkText === "") structure.commit(rows);
               setBulkText(e.target.value);
               onChange(fromBulkText(e.target.value, rows));
             }}
@@ -340,6 +374,9 @@ export function KeyValueEditor({
             {rows.map((row, i) => {
               const off = allowDisable && row.enabled === false;
               const blank = isBlank(row);
+              // Only the last row is the placeholder to type into. Any other
+              // empty row is debris, and has to be removable like the rest.
+              const removable = !blank || i !== rows.length - 1;
               return (
                 <tr
                   key={i}
@@ -372,6 +409,7 @@ export function KeyValueEditor({
                         placeholder={keyPlaceholder}
                         size="cell"
                         mono
+                        historyKey={cellKey(i, "name")}
                         suggest={suggestName}
                         onChange={(name) => update(i, { name })}
                       />
@@ -381,6 +419,7 @@ export function KeyValueEditor({
                         placeholder={keyPlaceholder}
                         size="cell"
                         mono
+                        historyKey={cellKey(i, "name")}
                         onChange={(name) => update(i, { name })}
                       />
                     ) : (
@@ -389,6 +428,7 @@ export function KeyValueEditor({
                         spellCheck={false}
                         placeholder={keyPlaceholder}
                         size="cell"
+                        historyKey={cellKey(i, "name")}
                         onChange={(e) => update(i, { name: e.target.value })}
                       />
                     )}
@@ -443,6 +483,7 @@ export function KeyValueEditor({
                                 placeholder={valuePlaceholder}
                                 size="cell"
                                 mono
+                                historyKey={cellKey(i, "value")}
                                 onChange={(value) => update(i, { value })}
                               />
                             );
@@ -454,6 +495,7 @@ export function KeyValueEditor({
                               placeholder={valuePlaceholder}
                               size="cell"
                               mono
+                              historyKey={cellKey(i, "value")}
                               suggest={(query) => suggestValue(row.name, query)}
                               onChange={(value) => update(i, { value })}
                             />
@@ -465,6 +507,7 @@ export function KeyValueEditor({
                               type={secret ? "password" : "text"}
                               placeholder={valuePlaceholder}
                               size="cell"
+                              historyKey={cellKey(i, "value")}
                               onChange={(e) => update(i, { value: e.target.value })}
                             />
                           );
@@ -479,6 +522,7 @@ export function KeyValueEditor({
                         spellCheck={false}
                         placeholder="Description"
                         size="cell"
+                        historyKey={cellKey(i, "description")}
                         onChange={(e) =>
                           update(i, { description: e.target.value })
                         }
@@ -497,7 +541,7 @@ export function KeyValueEditor({
                     </td>
                   )}
                   <td className={`${CELL} text-center align-middle`}>
-                    {!blank && (
+                    {removable && (
                       <button
                         className="px-1 text-base leading-none text-muted opacity-0 group-hover:opacity-100 hover:text-err focus-visible:opacity-100"
                         onClick={() => remove(i)}
@@ -514,5 +558,12 @@ export function KeyValueEditor({
         </table>
       )}
     </div>
+  );
+
+  // The list names itself for undo, so a cell only needs its row and column.
+  return historyId ? (
+    <HistoryScope id={historyId}>{editor}</HistoryScope>
+  ) : (
+    editor
   );
 }
