@@ -1,5 +1,6 @@
 // Generates client code for the request currently being edited.
 
+import type { HighlightLanguage } from "./highlight";
 import type { WireRequest } from "./vars";
 
 /** A request whose body may be a file on disk rather than text. */
@@ -36,6 +37,22 @@ export const CODE_TARGETS: { value: CodeTarget; label: string }[] = [
   { value: "swift", label: "Swift — URLSession" },
 ];
 
+/** How each target's output is highlighted when it is shown. */
+export const CODE_LANGUAGE: Record<CodeTarget, HighlightLanguage> = {
+  curl: "shell",
+  httpie: "shell",
+  fetch: "javascript",
+  axios: "javascript",
+  python: "python",
+  go: "go",
+  rust: "rust",
+  java: "java",
+  csharp: "csharp",
+  php: "php",
+  ruby: "ruby",
+  swift: "swift",
+};
+
 function quote(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
@@ -52,7 +69,12 @@ function hasBody(request: WireRequest): boolean {
 }
 
 function curl(request: CodeRequest): string {
-  const parts = [`curl --request ${request.method.toUpperCase()} \\`];
+  // No trailing `\` on the parts: the join below adds the continuation. Having
+  // one here too produced `POST \ \`, where the first pair is an escaped space —
+  // an argument of one space, which curl reads as a second URL and rejects
+  // ("URL rejected: Malformed input to a URL function") before running the real
+  // request.
+  const parts = [`curl --request ${request.method.toUpperCase()}`];
   parts.push(`  --url ${shellQuote(request.url)}`);
   for (const header of request.headers) {
     parts.push(`  --header ${shellQuote(`${header.name}: ${header.value}`)}`);
@@ -63,7 +85,7 @@ function curl(request: CodeRequest): string {
   } else if (hasBody(request)) {
     parts.push(`  --data ${shellQuote(request.body)}`);
   }
-  return parts.join(" \\\n").replace(" \\\n  --url", " \\\n  --url");
+  return parts.join(" \\\n");
 }
 
 function httpie(request: CodeRequest): string {

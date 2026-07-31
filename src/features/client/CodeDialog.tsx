@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { CODE_TARGETS, generateCode, type CodeTarget } from "../../shared/lib/codegen";
+import {
+  CODE_LANGUAGE,
+  CODE_TARGETS,
+  generateCode,
+  type CodeTarget,
+} from "../../shared/lib/codegen";
+import { renderLine } from "../../shared/lib/highlight";
 import type { WireRequest } from "../../shared/lib/vars";
 
 interface Props {
@@ -21,6 +27,8 @@ export function CodeDialog({ request, onClose }: Props) {
   }, [onClose]);
 
   const code = useMemo(() => generateCode(request, target), [request, target]);
+  // Highlighting is line-oriented, and `code` is short enough to tokenize whole.
+  const lines = useMemo(() => code.split("\n"), [code]);
 
   async function copy() {
     try {
@@ -82,7 +90,9 @@ export function CodeDialog({ request, onClose }: Props) {
             </button>
           </div>
           <pre className="min-h-0 flex-1 overflow-auto p-3 font-mono text-[12.5px] leading-relaxed whitespace-pre">
-            {code}
+            {lines.map((line, index) => (
+              <div key={index}>{renderLine(line, CODE_LANGUAGE[target])}</div>
+            ))}
           </pre>
         </div>
       </div>

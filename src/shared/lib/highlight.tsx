@@ -15,6 +15,17 @@ export type HighlightLanguage =
   | "yaml"
   | "javascript"
   | "graphql"
+  // Targets of the code generator. These are read, not edited, so the rules
+  // only need to cover what `codegen.ts` actually emits.
+  | "shell"
+  | "python"
+  | "go"
+  | "rust"
+  | "java"
+  | "csharp"
+  | "php"
+  | "ruby"
+  | "swift"
   | "none";
 
 interface Rule {
@@ -37,6 +48,28 @@ const KWD = "text-redirect";
 const COMMENT = "text-muted italic";
 const PUNCT = "text-muted";
 const TAG = "text-redirect";
+
+// Pieces shared by the generated-code languages. Rule objects are reused across
+// languages, which is safe because `tokenizeLine` sets `lastIndex` before every
+// exec rather than relying on where the previous match left off.
+const SLASH_COMMENT: Rule = { re: /\/\/.*/y, cls: COMMENT };
+const BLOCK_COMMENT: Rule = { re: /\/\*.*?(?:\*\/|$)/y, cls: COMMENT };
+const HASH_COMMENT: Rule = { re: /#.*/y, cls: COMMENT };
+const QUOTED: Rule = {
+  re: /"(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?/y,
+  cls: STR,
+};
+const NUMBER: Rule = {
+  re: /\b0[xX][0-9a-fA-F]+\b|(?:-|\b)\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/y,
+  cls: NUM,
+};
+/** Type and constant names, by the convention every one of these languages
+    follows: `HttpClient`, `URLSession`, `CURLOPT_URL`, `Net::HTTP`. */
+const CAPITALIZED: Rule = { re: /\b[A-Z][A-Za-z0-9_]*\b/y, cls: KEY };
+
+function words(list: string[], cls = KWD): Rule {
+  return { re: new RegExp(`\\b(?:${list.join("|")})\\b`, "y"), cls };
+}
 
 const RULES: Record<Exclude<HighlightLanguage, "none">, Rule[]> = {
   json: [
@@ -89,6 +122,164 @@ const RULES: Record<Exclude<HighlightLanguage, "none">, Rule[]> = {
     },
     { re: /[A-Za-z_]\w*(?=\s*:)/y, cls: KEY },
     { re: /(?:-|\b)\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/y, cls: NUM },
+  ],
+
+  // curl and HTTPie. Strings come first so that a `Content-Type` header or a
+  // URL inside quotes is not picked apart as flags and numbers.
+  shell: [
+    HASH_COMMENT,
+    { re: /'[^']*'?|"(?:[^"\\]|\\.)*"?/y, cls: STR },
+    { re: /\$\{?\w+\}?/y, cls: NUM },
+    words([
+      "curl", "http", "https", "wget",
+      "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS",
+    ]),
+    { re: /--?[A-Za-z][\w-]*/y, cls: KEY },
+    { re: /<<<|[<>|]/y, cls: PUNCT },
+    // The line continuation that holds a curl command together.
+    { re: /\\$/y, cls: PUNCT },
+  ],
+
+  python: [
+    HASH_COMMENT,
+    // Dict keys, as in JSON. Python has no `? :`, so a string before a colon is
+    // a key and not the middle of a ternary.
+    { re: /(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')(?=\s*:)/y, cls: KEY },
+    { re: /[rbfRBF]{0,2}"(?:[^"\\]|\\.)*"?|[rbfRBF]{0,2}'(?:[^'\\]|\\.)*'?/y, cls: STR },
+    words([
+      "and", "as", "assert", "async", "await", "break", "class", "continue",
+      "def", "del", "elif", "else", "except", "finally", "for", "from",
+      "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or",
+      "pass", "raise", "return", "try", "while", "with", "yield",
+      "True", "False", "None",
+    ]),
+    NUMBER,
+  ],
+
+  go: [
+    SLASH_COMMENT,
+    BLOCK_COMMENT,
+    { re: /`[^`]*`?/y, cls: STR },
+    QUOTED,
+    words([
+      "break", "case", "chan", "const", "continue", "default", "defer", "else",
+      "fallthrough", "for", "func", "go", "goto", "if", "import", "interface",
+      "map", "package", "range", "return", "select", "struct", "switch",
+      "type", "var", "nil", "true", "false",
+    ]),
+    NUMBER,
+    CAPITALIZED,
+  ],
+
+  rust: [
+    SLASH_COMMENT,
+    BLOCK_COMMENT,
+    // Attributes: #[tokio::main]. Not a comment here, despite the `#`.
+    { re: /#!?\[[^\]]*\]?/y, cls: KWD },
+    { re: /"(?:[^"\\]|\\.)*"?/y, cls: STR },
+    words([
+      "as", "async", "await", "break", "const", "continue", "crate", "dyn",
+      "else", "enum", "extern", "fn", "for", "if", "impl", "in", "let", "loop",
+      "match", "mod", "move", "mut", "pub", "ref", "return", "static", "struct",
+      "super", "trait", "type", "unsafe", "use", "where", "while",
+      "true", "false",
+    ]),
+    // Macros: println!, vec!.
+    { re: /\b[a-z_]\w*!/y, cls: KWD },
+    NUMBER,
+    CAPITALIZED,
+  ],
+
+  java: [
+    SLASH_COMMENT,
+    BLOCK_COMMENT,
+    QUOTED,
+    { re: /@[A-Za-z_]\w*/y, cls: KWD },
+    words([
+      "abstract", "assert", "boolean", "break", "byte", "case", "catch",
+      "char", "class", "const", "continue", "default", "do", "double", "else",
+      "enum", "extends", "final", "finally", "float", "for", "if",
+      "implements", "import", "instanceof", "int", "interface", "long",
+      "native", "new", "package", "private", "protected", "public", "return",
+      "short", "static", "super", "switch", "synchronized", "this", "throw",
+      "throws", "try", "var", "void", "volatile", "while",
+      "true", "false", "null",
+    ]),
+    NUMBER,
+    CAPITALIZED,
+  ],
+
+  csharp: [
+    SLASH_COMMENT,
+    BLOCK_COMMENT,
+    QUOTED,
+    words([
+      "abstract", "as", "async", "await", "base", "bool", "break", "byte",
+      "case", "catch", "char", "class", "const", "continue", "decimal",
+      "default", "delegate", "do", "double", "else", "enum", "event",
+      "finally", "float", "for", "foreach", "goto", "if", "in", "int",
+      "interface", "internal", "is", "lock", "long", "namespace", "new",
+      "object", "operator", "out", "override", "params", "private",
+      "protected", "public", "readonly", "ref", "return", "sealed", "short",
+      "static", "string", "struct", "switch", "this", "throw", "try", "typeof",
+      "uint", "ulong", "unchecked", "unsafe", "ushort", "using", "var",
+      "virtual", "void", "while", "true", "false", "null",
+    ]),
+    NUMBER,
+    CAPITALIZED,
+  ],
+
+  php: [
+    { re: /<\?php|\?>/y, cls: KWD },
+    { re: /(?:#|\/\/).*/y, cls: COMMENT },
+    BLOCK_COMMENT,
+    QUOTED,
+    { re: /\$\w+/y, cls: NUM },
+    words([
+      "array", "as", "break", "case", "catch", "class", "const", "continue",
+      "default", "do", "echo", "else", "elseif", "extends", "finally", "fn",
+      "for", "foreach", "function", "global", "if", "implements", "include",
+      "instanceof", "interface", "namespace", "new", "print", "private",
+      "protected", "public", "require", "return", "static", "switch", "throw",
+      "try", "use", "var", "while", "true", "false", "null",
+    ]),
+    NUMBER,
+    { re: /=>/y, cls: PUNCT },
+    CAPITALIZED,
+  ],
+
+  ruby: [
+    HASH_COMMENT,
+    QUOTED,
+    // Before the symbol rule: `Net::HTTP` is a scope, not `:HTTP`.
+    { re: /::/y, cls: PUNCT },
+    { re: /:[A-Za-z_]\w*[?!]?/y, cls: KEY },
+    { re: /@@?\w+/y, cls: NUM },
+    words([
+      "begin", "break", "case", "class", "def", "do", "else", "elsif", "end",
+      "ensure", "for", "if", "in", "module", "next", "not", "or", "and",
+      "puts", "raise", "require", "require_relative", "rescue", "return",
+      "self", "then", "unless", "until", "when", "while", "yield",
+      "true", "false", "nil",
+    ]),
+    NUMBER,
+    CAPITALIZED,
+  ],
+
+  swift: [
+    SLASH_COMMENT,
+    BLOCK_COMMENT,
+    { re: /"(?:[^"\\]|\\.)*"?/y, cls: STR },
+    words([
+      "as", "async", "await", "break", "case", "catch", "class", "continue",
+      "default", "defer", "do", "else", "enum", "extension", "fallthrough",
+      "for", "func", "guard", "if", "import", "in", "init", "internal", "is",
+      "let", "private", "public", "repeat", "return", "self", "static",
+      "struct", "subscript", "super", "switch", "throw", "throws", "try",
+      "var", "where", "while", "true", "false", "nil",
+    ]),
+    NUMBER,
+    CAPITALIZED,
   ],
 };
 
