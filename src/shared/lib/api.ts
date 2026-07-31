@@ -113,6 +113,18 @@ export function setSetting(
   return invoke<void>("set_setting", { scope, key, value });
 }
 
+/**
+ * Every workspace on this machine and whether peers may see it.
+ *
+ * Sharing is a per-workspace setting the sync server reads directly, so this
+ * asks the backend rather than loading each workspace to look at its settings.
+ */
+export function workspaceSharing(): Promise<
+  { id: string; name: string; shared: boolean }[]
+> {
+  return invoke("workspace_sharing");
+}
+
 /** Tells the backend whether closing the window should quit the app. */
 export function setBackgroundMode(enabled: boolean): Promise<void> {
   return invoke<void>("set_background_mode", { enabled });

@@ -1,8 +1,13 @@
 import { Toggle } from "../../shared/components/Toggle";
 import { Input, Select } from "../../shared/components/Field";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { GithubPanel } from "./GithubPanel";
-import { diagnosePeer, listPeerWorkspaces } from "../../shared/lib/api";
+import {
+  diagnosePeer,
+  listPeerWorkspaces,
+  setSetting,
+  workspaceSharing,
+} from "../../shared/lib/api";
 import { SKEW_WARNING_MS, useSync } from "../../shared/state/sync";
 import { useWorkspaces } from "../../shared/state/workspaces";
 import type { WorkspaceMeta } from "../../shared/types";
@@ -56,6 +61,27 @@ export function SyncPanel() {
   // Workspaces each peer is offering, once fetched.
   const [offered, setOffered] = useState<Record<string, WorkspaceMeta[]>>({});
   const [loadingList, setLoadingList] = useState<string | null>(null);
+  /** Which workspaces this machine offers, and whether each is offered. */
+  const [sharing, setSharing] = useState<
+    { id: string; name: string; shared: boolean }[]
+  >([]);
+
+  const refreshSharing = useCallback(() => {
+    workspaceSharing()
+      .then(setSharing)
+      .catch(() => setSharing([]));
+  }, []);
+
+  useEffect(refreshSharing, [refreshSharing]);
+
+  /** The sync server reads this setting directly, so no restart is needed. */
+  async function setShared(id: string, shared: boolean) {
+    setSharing((list) =>
+      list.map((entry) => (entry.id === id ? { ...entry, shared } : entry)),
+    );
+    await guard(setSetting(id, "syncShared", shared ? "1" : "0"));
+    refreshSharing();
+  }
 
   async function guard(action: Promise<unknown>) {
     setError(null);
@@ -189,6 +215,61 @@ export function SyncPanel() {
                   className={"wrk-field min-w-0 flex-1 font-mono disabled:opacity-50"}
                 />
               </label>
+            </div>
+
+            {/* Which workspaces a paired peer may see. Everything on this
+                machine used to be offered at once, which is more than "share
+                this workspace" ever meant. */}
+            <div className="rounded border border-edge bg-canvas">
+              <div className="flex items-center gap-2 border-b border-edge px-3 py-1.5">
+                <span className="text-[11px] font-semibold text-muted">
+                  Workspaces peers may see
+                </span>
+                <span className="ml-auto text-[11px] text-muted">
+                  {sharing.filter((entry) => entry.shared).length} of{" "}
+                  {sharing.length}
+                </span>
+              </div>
+              {sharing.length === 0 ? (
+                <p className="px-3 py-2 text-[11px] text-muted">
+                  No workspaces yet.
+                </p>
+              ) : (
+                <div className="divide-y divide-edge">
+                  {sharing.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className="flex items-center gap-2 px-3 py-1.5"
+                    >
+                      <span
+                        className={`min-w-0 flex-1 truncate text-xs ${
+                          entry.shared ? "text-ink" : "text-muted"
+                        }`}
+                      >
+                        {entry.name}
+                        {entry.id === active?.id && (
+                          <span className="ml-1.5 text-[10px] text-brand">
+                            open
+                          </span>
+                        )}
+                      </span>
+                      <Toggle
+                        checked={entry.shared}
+                        onChange={(next) => setShared(entry.id, next)}
+                        title={
+                          entry.shared
+                            ? "Peers can list and sync this workspace"
+                            : "Hidden from peers, and refused if one asks for it by id"
+                        }
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="border-t border-edge px-3 py-1.5 text-[11px] leading-relaxed text-muted">
+                Takes effect immediately — a peer that already knows a
+                workspace’s id is refused too, not just kept off the list.
+              </p>
             </div>
 
             {server.running && (

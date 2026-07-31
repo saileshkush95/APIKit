@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
@@ -741,15 +741,78 @@ pub fn list_workspaces(db: State<Db>) -> Result<Vec<WorkspaceMeta>, String> {
 }
 
 /// Workspace list for a peer that is choosing what to pair with.
-pub fn workspace_list(conn: &Connection) -> Result<Vec<WorkspaceMeta>, String> {
+/// Key of the per-workspace setting that decides whether peers may see it.
+pub const SYNC_SHARED_KEY: &str = "syncShared";
+
+/// Whether this workspace is offered to sync peers.
+///
+/// A setting rather than a column, and one that is never part of a sync
+/// payload: a peer must not be able to flip it by pushing a row. Absent counts
+/// as shared, so a machine that was already syncing keeps working after an
+/// upgrade — turning one off is a decision the user makes, not one an update
+/// makes for them.
+pub fn workspace_shared(conn: &Connection, id: &str) -> Result<bool, String> {
+    let value: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE scope = ?1 AND key = ?2",
+            params![id, SYNC_SHARED_KEY],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(to_err)?;
+    Ok(value.as_deref() != Some("0"))
+}
+
+/// The workspaces a peer is allowed to see. Everything else stays private to
+/// this machine even while the sync server is running.
+pub fn workspace_list_shared(conn: &Connection) -> Result<Vec<WorkspaceMeta>, String> {
     let mut stmt = conn
-        .prepare("SELECT id, name FROM workspaces WHERE deleted = 0 ORDER BY position")
+        .prepare(
+            "SELECT w.id, w.name FROM workspaces w
+             LEFT JOIN settings s ON s.scope = w.id AND s.key = ?1
+             WHERE w.deleted = 0 AND COALESCE(s.value, '1') != '0'
+             ORDER BY w.position",
+        )
         .map_err(to_err)?;
     let rows = stmt
-        .query_map([], |row| {
+        .query_map(params![SYNC_SHARED_KEY], |row| {
             Ok(WorkspaceMeta {
                 id: row.get(0)?,
                 name: row.get(1)?,
+            })
+        })
+        .map_err(to_err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(to_err)?;
+    Ok(rows)
+}
+
+/// Every workspace and whether it is shared, for the sync panel.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSharing {
+    pub id: String,
+    pub name: String,
+    pub shared: bool,
+}
+
+#[tauri::command]
+pub fn workspace_sharing(db: State<Db>) -> Result<Vec<WorkspaceSharing>, String> {
+    let conn = db.0.lock().map_err(to_err)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT w.id, w.name, COALESCE(s.value, '1') FROM workspaces w
+             LEFT JOIN settings s ON s.scope = w.id AND s.key = ?1
+             WHERE w.deleted = 0 ORDER BY w.position",
+        )
+        .map_err(to_err)?;
+    let rows = stmt
+        .query_map(params![SYNC_SHARED_KEY], |row| {
+            let shared: String = row.get(2)?;
+            Ok(WorkspaceSharing {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                shared: shared != "0",
             })
         })
         .map_err(to_err)?
@@ -2181,6 +2244,60 @@ pub fn apply(conn: &mut Connection, payload: &SyncPayload) -> Result<ApplyReport
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Sharing decides what a peer is allowed to see, so its default and its
+    /// two directions are worth pinning down.
+    #[test]
+    fn workspace_is_shared_until_it_is_turned_off() {
+        let conn = memory_db();
+        conn.execute(
+            "INSERT INTO workspaces (id, name, position, updated_at) VALUES ('w2', 'Private', 1, 1)",
+            [],
+        )
+        .expect("second workspace");
+
+        // No setting at all: a workspace that predates this keeps syncing.
+        assert!(workspace_shared(&conn, "w").expect("read"));
+        assert_eq!(workspace_list_shared(&conn).expect("list").len(), 2);
+
+        let off = |id: &str, value: &str| {
+            conn.execute(
+                "INSERT INTO settings (scope, key, value) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value",
+                params![id, SYNC_SHARED_KEY, value],
+            )
+            .expect("setting");
+        };
+
+        off("w2", "0");
+        assert!(!workspace_shared(&conn, "w2").expect("read"));
+        let listed = workspace_list_shared(&conn).expect("list");
+        assert_eq!(listed.len(), 1, "an unshared workspace is not offered");
+        assert_eq!(listed[0].id, "w");
+
+        // And back on again.
+        off("w2", "1");
+        assert!(workspace_shared(&conn, "w2").expect("read"));
+        assert_eq!(workspace_list_shared(&conn).expect("list").len(), 2);
+
+        // A deleted workspace is never offered, shared or not.
+        conn.execute("UPDATE workspaces SET deleted = 1 WHERE id = 'w2'", [])
+            .expect("delete");
+        assert_eq!(workspace_list_shared(&conn).expect("list").len(), 1);
+    }
+
+    #[test]
+    fn sharing_of_one_workspace_does_not_affect_another() {
+        let conn = memory_db();
+        conn.execute(
+            "INSERT INTO settings (scope, key, value) VALUES ('other', ?1, '0')",
+            params![SYNC_SHARED_KEY],
+        )
+        .expect("setting");
+        // The setting is scoped, so an unrelated workspace's flag is not read
+        // for this one.
+        assert!(workspace_shared(&conn, "w").expect("read"));
+    }
 
     fn memory_db() -> Connection {
         let conn = Connection::open_in_memory().expect("open");

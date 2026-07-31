@@ -138,6 +138,7 @@ pub fn run() {
             sync::start_sync_server,
             sync::stop_sync_server,
             sync::sync_server_status,
+            store::workspace_sharing,
             sync::ping_peer,
             sync::sync_with_peer,
             sync::list_peer_workspaces,

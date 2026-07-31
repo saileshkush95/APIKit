@@ -237,7 +237,9 @@ async fn route(
                     )
                 }
             };
-            crate::store::workspace_list(&conn)
+            // Only the workspaces the user chose to share; the rest stay
+            // private to this machine even while the server is running.
+            crate::store::workspace_list_shared(&conn)
         };
         return match listed {
             Ok(workspaces) => (
@@ -331,6 +333,13 @@ async fn route(
                     "this peer has no workspace with id {} — pick one of its workspaces to sync",
                     request.workspace_id
                 ));
+            }
+            // Checked here and not only on the listing: a peer that once knew
+            // the id could otherwise keep syncing it after it was unshared.
+            // `apply` and `snapshot` are both scoped to this id, so refusing
+            // here closes both directions at once.
+            if known && !crate::store::workspace_shared(&conn, &request.workspace_id)? {
+                return Err("that workspace is not shared from this machine".to_string());
             }
         }
 

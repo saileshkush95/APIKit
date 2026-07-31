@@ -51,7 +51,8 @@ function emptyConfig(workspace: string): Stored {
 export function GithubPanel() {
   const workspaceId = useWorkspaceId();
   const { active } = useWorkspaces();
-  const { tree, setTree } = useCollection();
+  const { tree, setTree, collectionDefaults, setCollectionDefaults } =
+    useCollection();
   const {
     environments,
     collectionVariables,
@@ -136,6 +137,7 @@ export function GithubPanel() {
         tree,
         environments,
         collectionVariables,
+        collectionDefaults,
       }),
     );
   }
@@ -266,6 +268,9 @@ export function GithubPanel() {
                 }
                 if (document.collectionVariables) {
                   setCollectionVariables(document.collectionVariables);
+                }
+                if (document.collectionDefaults) {
+                  setCollectionDefaults(document.collectionDefaults);
                 }
                 remember(file.sha);
                 setStatus(
