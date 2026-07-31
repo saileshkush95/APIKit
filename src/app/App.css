@@ -339,6 +339,152 @@ body {
     background-color: color-mix(in oklab, var(--color-brand) 14%, transparent);
   }
 
+  /* The rich docs editor ------------------------------------------------------
+   Tiptap renders a contenteditable div, so this is the box that has to look
+   like a field: the shell draws the border and the focus ring, because focus
+   lands on the editable child rather than on the shell itself. */
+  .wrk-doc-shell:focus-within {
+    border-color: var(--color-brand);
+  }
+
+  .wrk-doc {
+    min-height: 100%;
+    padding: 0.625rem;
+    outline: none;
+    font-size: 0.75rem;
+    line-height: 1.6;
+  }
+
+  /* Tailwind's preflight strips list and quote styling, and the editor's own
+   nodes carry no classes to hang the `.wrk-markdown` rules on. */
+  .wrk-doc ul,
+  .wrk-doc ol {
+    margin: 0.4em 0;
+    padding-left: 1.3em;
+  }
+
+  .wrk-doc ul {
+    list-style: disc;
+  }
+
+  .wrk-doc ol {
+    list-style: decimal;
+  }
+
+  .wrk-doc li p {
+    margin: 0;
+  }
+
+  .wrk-doc blockquote {
+    margin: 0.4em 0;
+    padding-left: 0.7em;
+    border-left: 2px solid var(--color-edge);
+    color: var(--color-muted);
+  }
+
+  .wrk-doc code {
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+    background-color: var(--color-elevated);
+    font-family: var(--font-mono);
+  }
+
+  .wrk-doc pre {
+    margin: 0.5em 0;
+    padding: 0.6em;
+    overflow-x: auto;
+    border: 1px solid var(--color-edge);
+    border-radius: 4px;
+    background-color: var(--color-elevated);
+    font-family: var(--font-mono);
+  }
+
+  /* Nested, so the block does not draw the inline chip's background twice. */
+  .wrk-doc pre code {
+    padding: 0;
+    background: none;
+  }
+
+  .wrk-doc hr {
+    margin: 0.8em 0;
+    border: 0;
+    border-top: 1px solid var(--color-edge);
+  }
+
+  .wrk-doc a {
+    color: var(--color-brand);
+    text-decoration: underline;
+  }
+
+  .wrk-doc img,
+  .wrk-markdown img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+  }
+
+  /* Selected image, so it is clear what Backspace would remove. */
+  .wrk-doc img.ProseMirror-selectednode {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 1px;
+  }
+
+  .wrk-doc mark,
+  .wrk-markdown mark {
+    padding: 0 0.15em;
+    border-radius: 2px;
+    background-color: color-mix(in oklab, var(--color-warn) 45%, transparent);
+    color: inherit;
+  }
+
+  .wrk-doc table,
+  .wrk-markdown table {
+    width: 100%;
+    margin: 0.5em 0;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+
+  .wrk-doc th,
+  .wrk-doc td,
+  .wrk-markdown th,
+  .wrk-markdown td {
+    padding: 0.3em 0.5em;
+    border: 1px solid var(--color-edge);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .wrk-doc th,
+  .wrk-markdown th {
+    background-color: var(--color-elevated);
+    font-weight: 600;
+  }
+
+  /* The cell the caret is in, and a selected range of cells. */
+  .wrk-doc .selectedCell::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: color-mix(in oklab, var(--color-brand) 18%, transparent);
+    pointer-events: none;
+  }
+
+  .wrk-doc td,
+  .wrk-doc th {
+    position: relative;
+  }
+
+  /* The placeholder is drawn rather than filled in, so an empty doc is still an
+   empty doc: nothing here ends up in the saved Markdown. */
+  .wrk-doc p.is-empty:first-child::before {
+    content: attr(data-placeholder);
+    float: left;
+    height: 0;
+    color: var(--color-muted);
+    pointer-events: none;
+  }
+
   /* An undefined variable is sent as literal text, which is easy to miss. */
   .wrk-variable-unknown {
     color: var(--color-warn);
