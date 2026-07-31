@@ -304,6 +304,21 @@ export interface RequestConfig {
   noReferer: boolean;
   /** Skip the shared cookie jar entirely for this request. */
   noCookieJar: boolean;
+
+  /**
+   * Take the headers set on the workspace and on this request's ancestor
+   * folders. On by default: a header put on a folder is meant for the requests
+   * in it, and one that had to be opted into on every request would not be
+   * worth setting there at all.
+   */
+  inheritHeaders: boolean;
+  /**
+   * Names of inherited headers this request drops, lower-cased because header
+   * names are case-insensitive. This is the "unless explicitly excluded" half:
+   * one request can refuse the workspace's `Authorization` without the rest of
+   * the collection losing it.
+   */
+  excludedHeaders: string[];
 }
 
 // --- Application settings ----------------------------------------------------
@@ -426,6 +441,11 @@ export interface WorkspaceExport {
   environments: Environment[];
   /** Workspace-wide variables, resolved under whichever environment is active. */
   collectionVariables?: Variable[];
+  /**
+   * What the collection itself contributes to every request in it: docs, auth,
+   * headers, scripts and request options.
+   */
+  collectionDefaults?: NodeDefaults;
   monitors?: Monitor[];
   mockRoutes?: MockRoute[];
 }
@@ -558,6 +578,8 @@ export function defaultConfig(): RequestConfig {
     maxRedirects: null,
     noReferer: false,
     noCookieJar: false,
+    inheritHeaders: true,
+    excludedHeaders: [],
   };
 }
 
@@ -579,6 +601,10 @@ export function normalizeConfig(config?: Partial<RequestConfig> | null): Request
     graphqlFiles: config.graphqlFiles ?? base.graphqlFiles,
     urlEncoded: config.urlEncoded?.length ? config.urlEncoded : base.urlEncoded,
     params: config.params ?? base.params,
+    // Requests saved before inheritance existed have neither field, and the
+    // spread above would leave them undefined rather than falling back.
+    inheritHeaders: config.inheritHeaders ?? base.inheritHeaders,
+    excludedHeaders: config.excludedHeaders ?? base.excludedHeaders,
   };
 }
 
@@ -628,13 +654,54 @@ export interface SavedRequest extends RequestDraft {
   name: string;
 }
 
-export interface Folder {
+/**
+ * Request options a folder — or the collection — can set for everything inside
+ * it. Null means "not set here", so the search carries on outwards and ends at
+ * the application settings; it is the same tri-state a request already uses.
+ */
+export interface NodeSettings {
+  verifyTls: boolean | null;
+  followRedirects: boolean | null;
+  timeoutMs: number | null;
+  maxRedirects: number | null;
+}
+
+export function defaultNodeSettings(): NodeSettings {
+  return {
+    verifyTls: null,
+    followRedirects: null,
+    timeoutMs: null,
+    maxRedirects: null,
+  };
+}
+
+/**
+ * What a folder, or the collection itself, contributes to the requests inside
+ * it. Every field is optional and absent means "nothing to contribute", which
+ * is what every folder saved before this existed says.
+ */
+export interface NodeDefaults {
+  /** Documentation for the folder or collection, in the same Markdown as a request's. */
+  docs?: string;
+  /** Requests inside whose auth is "inherit" resolve to this. */
+  auth?: Auth;
+  /**
+   * Sent with every request inside, unless the request excludes the name or a
+   * nearer folder sets the same one.
+   */
+  headers?: Header[];
+  /** Runs before each request inside, outermost first, then the request's own. */
+  preScript?: string;
+  /** Runs after each request inside, the request's own first, then outwards. */
+  postScript?: string;
+  settings?: NodeSettings;
+}
+
+export interface Folder extends NodeDefaults {
   kind: "folder";
   id: string;
   name: string;
   children: TreeNode[];
-  /** Requests inside whose auth is "inherit" resolve to this. */
-  auth?: Auth;
 }
 
 /** A collection is a list of these; folders nest arbitrarily deep. */

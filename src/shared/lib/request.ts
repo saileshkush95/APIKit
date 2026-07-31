@@ -3,34 +3,8 @@
 
 import { applyQuery, parseQuery } from "./query";
 import { activeRows } from "./rows";
-import { folderPathTo } from "./tree";
 import { interpolate, resolveDraft, type VarMap, type WireRequest } from "./vars";
-import type { Auth, KeyValue, MultipartPart, RequestDraft, TreeNode } from "../types";
-
-/**
- * Resolves an "inherit" auth against the nearest ancestor folder that defines
- * one. Folders set to "inherit" keep the walk going, "none" counts as unset;
- * with no ancestor defining auth (or an unsaved request) nothing is applied.
- */
-export function resolveAuth(
-  tree: TreeNode[],
-  nodeId: string | null,
-  auth: Auth,
-): Auth {
-  if (auth.type !== "inherit") return auth;
-  if (nodeId) {
-    const ancestors = folderPathTo(tree, nodeId);
-    if (ancestors) {
-      for (let i = ancestors.length - 1; i >= 0; i--) {
-        const parent = ancestors[i].auth;
-        if (parent && parent.type !== "inherit" && parent.type !== "none") {
-          return parent;
-        }
-      }
-    }
-  }
-  return { ...auth, type: "none" };
-}
+import type { KeyValue, MultipartPart, RequestDraft } from "../types";
 
 /** A wire request that may carry a multipart or file body instead of text. */
 export interface BuiltRequest extends WireRequest {

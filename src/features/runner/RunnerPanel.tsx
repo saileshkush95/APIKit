@@ -89,7 +89,7 @@ interface RunnerProps {
 }
 
 export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
-  const { tree } = useCollection();
+  const { tree, collectionDefaults } = useCollection();
   const { vars, active, environments, setVariables } = useEnvironments();
   const { settings } = useSettings();
 
@@ -245,6 +245,7 @@ export function RunnerPanel({ initialTarget }: RunnerProps = {}) {
           settings,
           onVariables: setVariables,
           tree,
+          collectionDefaults,
           cancelId,
         });
         inFlightRef.current = null;

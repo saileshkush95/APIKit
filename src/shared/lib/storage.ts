@@ -17,6 +17,7 @@ export const SETTINGS = {
   loadTests: "loadTests",
   runnerHistory: "runnerHistory",
   collectionVariables: "collectionVariables",
+  collectionDefaults: "collectionDefaults",
   sidebarWidth: "sidebarWidth",
   sidebarCollapsed: "sidebarCollapsed",
 } as const;

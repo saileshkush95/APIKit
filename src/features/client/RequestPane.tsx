@@ -7,6 +7,7 @@ import { CodeDialog } from "./CodeDialog";
 import { CommentsPanel } from "./CommentsPanel";
 import { DocsEditor } from "./DocsEditor";
 import { GrpcSchemaPanel } from "./GrpcSchemaPanel";
+import { InheritedHeaders } from "./InheritedHeaders";
 import { ConnectionEditor } from "./ConnectionEditor";
 import { KeyValueEditor } from "../../shared/components/KeyValueEditor";
 import { RequestSettingsPanel } from "./RequestSettingsPanel";
@@ -22,10 +23,18 @@ import {
   matchHeaders,
 } from "../../shared/lib/headerSuggestions";
 import { buildWireRequest } from "../../shared/lib/request";
+import { printDocs } from "../../shared/lib/docsPrint";
+import { resolveInherited } from "../../shared/lib/inherit";
 import { activeRows, storableRows } from "../../shared/lib/rows";
 import { unresolvedVars } from "../../shared/lib/vars";
-import { formatBytes, methodColor, statusColor } from "../../shared/lib/ui";
+import {
+  formatBytes,
+  methodColor,
+  requestLabel,
+  statusColor,
+} from "../../shared/lib/ui";
 import { useComments } from "../../shared/state/comments";
+import { useCollection } from "../../shared/state/collection";
 import { useEnvironments } from "../../shared/state/environments";
 import {
   HTTP_METHODS,
@@ -197,6 +206,7 @@ export function RequestPane({
   breadcrumb,
 }: Props) {
   const { vars } = useEnvironments();
+  const { tree, collectionDefaults } = useCollection();
   const { forRequest } = useComments();
   const containerRef = useRef<HTMLDivElement>(null);
   /** The two resizable panes; the drag ratio is relative to this box. */
@@ -238,9 +248,14 @@ export function RequestPane({
   const hasBody = tab.config.bodyMode !== "none";
   const hasAuth = tab.config.auth.type !== "none";
 
+  // What actually goes out, inherited headers included — so the Code dialog and
+  // the unresolved-variable warning both describe the real request rather than
+  // the one before inheritance was applied.
+  const wireDraft = { ...tab, ...resolveInherited(tree, tab.sourceId, collectionDefaults, tab) };
+
   // Warn about variables the wire request still references after auth and the
   // body mode have been applied.
-  const missing = unresolvedVars(buildWireRequest(tab, {}), vars);
+  const missing = unresolvedVars(buildWireRequest(wireDraft, {}), vars);
 
   const visibleTabs = tabsFor(protocol);
   const reqTab = visibleTabs.includes(tab.reqTab)
@@ -487,7 +502,7 @@ export function RequestPane({
 
       {showCode && (
         <CodeDialog
-          request={buildWireRequest(tab, vars)}
+          request={buildWireRequest(wireDraft, vars)}
           onClose={() => setShowCode(false)}
         />
       )}
@@ -743,6 +758,14 @@ export function RequestPane({
             />
           )}
           {reqTab === "headers" && (
+            <InheritedHeaders
+              sourceId={tab.sourceId}
+              headers={tab.headers}
+              config={tab.config}
+              onConfigChange={patchConfig}
+            />
+          )}
+          {reqTab === "headers" && (
             <KeyValueEditor
               rows={tab.headers}
               allowDisable
@@ -771,9 +794,25 @@ export function RequestPane({
           )}
           {reqTab === "docs" && (
             <DocsEditor
-              config={tab.config}
-              onChange={patchConfig}
-              requestName={tab.name ?? "Endpoint"}
+              value={tab.config.docs}
+              onChange={(docs) => patchConfig({ docs })}
+              subject={tab.name ?? "Endpoint"}
+              onPrint={() =>
+                printDocs({
+                  kind: "request",
+                  request: {
+                    kind: "request",
+                    id: tab.sourceId ?? tab.id,
+                    name: tab.name ?? requestLabel(tab.url, "New Request"),
+                    method: tab.method,
+                    url: tab.url,
+                    headers: tab.headers,
+                    body: tab.body,
+                    tests: tab.tests,
+                    config: tab.config,
+                  },
+                })
+              }
             />
           )}
           {reqTab === "comments" && (

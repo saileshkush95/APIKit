@@ -5,7 +5,8 @@
 import { sendRequest } from "./api";
 import { runAssertions } from "./assertions";
 import { currentAccessToken } from "./oauth";
-import { buildWireRequest, enforceSecureUrl, resolveAuth } from "./request";
+import { buildWireRequest, enforceSecureUrl } from "./request";
+import { resolveInherited } from "./inherit";
 import { tlsFor } from "./certificates";
 import { activeRows } from "./rows";
 import { runPostScript, runPreScript } from "./scripts";
@@ -17,6 +18,7 @@ import {
   type Auth,
   type HttpRequestSpec,
   type HttpResponseData,
+  type NodeDefaults,
   type SavedRequest,
   type TreeNode,
 } from "../types";
@@ -28,6 +30,11 @@ export interface ExecuteContext {
   onVariables?: (updates: Record<string, string>) => void;
   /** Lets "inherit from parent" auth resolve; omitted, it becomes "none". */
   tree?: TreeNode[];
+  /**
+   * What the collection contributes — headers, auth, scripts, request options.
+   * Omitted, only the folders in `tree` are inherited from.
+   */
+  collectionDefaults?: NodeDefaults;
   /**
    * Handle for `cancelRequest`, so a caller can abort the in-flight send
    * rather than waiting out its timeout.
@@ -63,20 +70,43 @@ export interface ExecuteResult {
 
 export async function executeRequest(
   request: SavedRequest,
-  { vars, settings, onVariables, tree, cancelId, send, resolveToken }: ExecuteContext,
+  {
+    vars,
+    settings,
+    onVariables,
+    tree,
+    collectionDefaults,
+    cancelId,
+    send,
+    resolveToken,
+  }: ExecuteContext,
 ): Promise<ExecuteResult> {
   const transport = send ?? sendRequest;
-  const config = normalizeConfig(request.config);
-  config.auth = resolveAuth(tree ?? [], request.id, config.auth);
+  // Resolved against the tree at send time, so moving a request into another
+  // folder changes what it inherits without touching the request itself.
+  const inherited = resolveInherited(
+    tree ?? [],
+    request.id,
+    collectionDefaults ?? {},
+    { headers: request.headers, config: normalizeConfig(request.config) },
+  );
+  const { config, headers } = inherited;
   // Renews the token first if it has expired, which is why this is awaited
   // before the request is assembled rather than inside it.
   const token = await (resolveToken ?? currentAccessToken)(config.auth, vars);
-  const built = buildWireRequest({ ...request, config }, vars, token);
+  const built = buildWireRequest({ ...request, config, headers }, vars, token);
 
-  const pre = runPreScript(config.preScript, built, vars);
-  onVariables?.(pre.outcome.variables);
+  // Folder and collection scripts wrap the request's own: outside in before,
+  // inside out after, so each level tidies up after what it set up.
+  let wire = built;
+  const written: Record<string, string> = {};
+  for (const source of [...inherited.preScripts, config.preScript]) {
+    const step = runPreScript(source, wire, { ...vars, ...written });
+    wire = step.request;
+    Object.assign(written, step.outcome.variables);
+  }
+  onVariables?.(written);
 
-  const wire = pre.request;
   const started = performance.now();
 
   try {
@@ -97,18 +127,20 @@ export async function executeRequest(
       cancelId,
     });
 
-    const post = runPostScript(config.postScript, response, {
-      ...vars,
-      ...pre.outcome.variables,
-    });
-    onVariables?.(post.variables);
+    const tests = [];
+    for (const source of [config.postScript, ...inherited.postScripts]) {
+      const post = runPostScript(source, response, { ...vars, ...written });
+      Object.assign(written, post.variables);
+      onVariables?.(post.variables);
+      tests.push(...post.tests);
+    }
 
     return {
       status: response.status,
       statusText: response.statusText,
       timeMs: response.timeMs,
       error: null,
-      results: [...runAssertions(request.tests ?? [], response), ...post.tests],
+      results: [...runAssertions(request.tests ?? [], response), ...tests],
       body: response.body,
       headers: response.headers,
     };

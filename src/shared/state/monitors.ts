@@ -193,7 +193,7 @@ export const useMonitorsStore = create<MonitorsStore>()((set, get) => {
       set({ busy: new Set(get().busy).add(monitor.id) });
       get().lastRunAt.set(monitor.id, Date.now());
 
-      const { tree } = useCollectionStore.getState();
+      const { tree, collectionDefaults } = useCollectionStore.getState();
       const environments = useEnvironmentsStore.getState();
       const { settings } = useSettings.getState();
 
@@ -226,6 +226,7 @@ export const useMonitorsStore = create<MonitorsStore>()((set, get) => {
           // none — so a monitor on a folder that carries the credentials
           // reported failures that were not real.
           tree,
+          collectionDefaults,
         });
         totalMs += result.timeMs;
         if (!isHealthy(result)) {

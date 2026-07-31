@@ -10,6 +10,7 @@ import {
   type Auth,
   type Environment,
   type MockRoute,
+  type NodeDefaults,
   type Monitor,
   type Variable,
   type RequestDraft,
@@ -22,6 +23,7 @@ export interface ExportInput {
   tree: TreeNode[];
   environments: Environment[];
   collectionVariables?: Variable[];
+  collectionDefaults?: NodeDefaults;
   monitors?: Monitor[];
   mockRoutes?: MockRoute[];
 }
@@ -115,6 +117,14 @@ export function buildExport(input: ExportInput): WorkspaceExport {
     collectionVariables: (input.collectionVariables ?? []).map((variable) =>
       variable.secret ? { ...variable, value: "" } : variable,
     ),
+    // Headers and scripts are not redacted, for the same reason a request's own
+    // are not: they are part of what the collection *is*, and blanking them
+    // would export something that cannot be run. Auth is, exactly as it is on a
+    // folder — credentials belong in a variable the field refers to.
+    collectionDefaults: input.collectionDefaults && {
+      ...input.collectionDefaults,
+      auth: redactAuth(input.collectionDefaults.auth),
+    },
     monitors: input.monitors,
     mockRoutes: input.mockRoutes,
   };

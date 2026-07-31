@@ -253,6 +253,7 @@ async function main(): Promise<number> {
         vars,
         settings,
         tree,
+        collectionDefaults: document.collectionDefaults ?? {},
         send,
         // The keychain is not reachable outside the app, so a token has to come
         // from the environment as a variable.

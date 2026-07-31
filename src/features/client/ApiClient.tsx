@@ -26,8 +26,8 @@ import { usePersist } from "../../shared/lib/persist";
 import {
   buildWireRequest,
   enforceSecureUrl,
-  resolveAuth,
 } from "../../shared/lib/request";
+import { resolveInherited } from "../../shared/lib/inherit";
 import { tlsFor } from "../../shared/lib/certificates";
 import { currentAccessToken } from "../../shared/lib/oauth";
 import { activeRows } from "../../shared/lib/rows";
@@ -181,6 +181,7 @@ export function ApiClient({ intent }: ApiClientProps) {
   const {
     tree,
     setTree,
+    collectionDefaults,
     ready: collectionReady,
     expanded,
     toggleExpanded,
@@ -462,24 +463,30 @@ export function ApiClient({ intent }: ApiClientProps) {
     const logs: ScriptLogEntry[] = [];
     // "Inherit from parent" resolves against the folder tree at send time,
     // so moving a request re-resolves without touching the request itself.
-    const config = {
-      ...tab.config,
-      auth: resolveAuth(tree, tab.sourceId, tab.config.auth),
-    };
+    // Auth, headers, request options and the surrounding scripts all resolve
+    // against the tree at send time, so moving a request into another folder
+    // changes what it inherits without touching the request itself.
+    const inherited = resolveInherited(tree, tab.sourceId, collectionDefaults, tab);
+    const { config, headers } = inherited;
     const oauth = await currentAccessToken(config.auth, vars);
-    const built = buildWireRequest({ ...tab, config }, vars, oauth);
+    const built = buildWireRequest({ ...tab, config, headers }, vars, oauth);
 
-    // Pre-request script may rewrite anything about the request.
-    const pre = runPreScript(tab.config.preScript, built, vars);
-    logs.push(
-      ...pre.outcome.logs.map((entry) => ({ phase: "pre" as const, ...entry })),
-    );
-    if (pre.outcome.error) {
-      logs.push({ phase: "pre", level: "error", message: pre.outcome.error });
+    // Pre-request scripts may rewrite anything about the request: the folders'
+    // and the collection's from the outside in, then the request's own.
+    let wire = built;
+    const written: Record<string, string> = {};
+    for (const source of [...inherited.preScripts, config.preScript]) {
+      const step = runPreScript(source, wire, { ...vars, ...written });
+      wire = step.request;
+      Object.assign(written, step.outcome.variables);
+      logs.push(
+        ...step.outcome.logs.map((entry) => ({ phase: "pre" as const, ...entry })),
+      );
+      if (step.outcome.error) {
+        logs.push({ phase: "pre", level: "error", message: step.outcome.error });
+      }
     }
-    setVariables(pre.outcome.variables);
-
-    const wire = pre.request;
+    setVariables(written);
     const sentUrl = enforceSecureUrl(wire.url, settings.enforceSecure);
     const sentHeaders = activeRows(wire.headers);
     const sent: SentRequest = {
@@ -518,18 +525,21 @@ export function ApiClient({ intent }: ApiClientProps) {
         cancelId: tab.id,
       });
 
-      // Post-response script runs alongside the declarative assertions.
-      const post = runPostScript(tab.config.postScript, response, {
-        ...vars,
-        ...pre.outcome.variables,
-      });
-      logs.push(
-        ...post.logs.map((entry) => ({ phase: "post" as const, ...entry })),
-      );
-      if (post.error) {
-        logs.push({ phase: "post", level: "error", message: post.error });
+      // Post-response scripts run alongside the declarative assertions: the
+      // request's own first, then outwards through the folders and collection.
+      const scriptTests = [];
+      for (const source of [config.postScript, ...inherited.postScripts]) {
+        const post = runPostScript(source, response, { ...vars, ...written });
+        Object.assign(written, post.variables);
+        logs.push(
+          ...post.logs.map((entry) => ({ phase: "post" as const, ...entry })),
+        );
+        if (post.error) {
+          logs.push({ phase: "post", level: "error", message: post.error });
+        }
+        scriptTests.push(...post.tests);
       }
-      setVariables(post.variables);
+      setVariables(written);
 
       record(tab.name ?? requestLabel(tab.url), draftOf(tab), { response });
 
@@ -557,7 +567,7 @@ export function ApiClient({ intent }: ApiClientProps) {
         },
       });
 
-      const results = [...runAssertions(tab.tests, response), ...post.tests];
+      const results = [...runAssertions(tab.tests, response), ...scriptTests];
       updateTab(tab.id, {
         response,
         results,
@@ -593,14 +603,32 @@ export function ApiClient({ intent }: ApiClientProps) {
     }
   }
 
+  /**
+   * The Headers tab as it goes out, for the transports that take a plain list
+   * rather than going through `buildWireRequest`: gRPC metadata and the
+   * streaming handshake. Inheritance applies to them for the same reason it
+   * applies to a REST send — it is the same tab — and the values are resolved
+   * here because those two paths never reach the interpolation step that the
+   * REST path gets from `buildWireRequest`.
+   */
+  function outgoingHeaders(tab: RequestTab) {
+    return activeRows(
+      resolveInherited(tree, tab.sourceId, collectionDefaults, tab).headers,
+    ).map((row) => ({
+      name: interpolate(row.name, vars),
+      value: interpolate(row.value, vars),
+    }));
+  }
+
   /** A unary gRPC call, rendered into the same response pane. */
   async function sendGrpc(tab: RequestTab) {
     const target = interpolate(tab.url, vars);
     const method = interpolate(tab.config.grpcMethod, vars);
+    const metadata = outgoingHeaders(tab);
     const sent = {
       method: "POST",
       url: `${target}/${method}`,
-      headers: tab.headers,
+      headers: metadata,
       body: tab.body,
     };
     logConsole({
@@ -614,7 +642,7 @@ export function ApiClient({ intent }: ApiClientProps) {
         target,
         method,
         body: interpolate(tab.body, vars),
-        metadata: activeRows(tab.headers),
+        metadata,
         timeoutMs: tab.config.timeoutMs ?? settings.defaultTimeoutMs,
         plaintext: tab.config.grpcPlaintext,
         protoFiles: tab.config.grpcProtoFiles ?? [],
@@ -728,7 +756,7 @@ export function ApiClient({ intent }: ApiClientProps) {
       const sessionId = await streamConnect({
         kind: config.protocol,
         url: enforceSecureUrl(interpolate(tab.url, vars), settings.enforceSecure),
-        headers: activeRows(tab.headers),
+        headers: outgoingHeaders(tab),
         topics: config.mqttTopics
           .split(",")
           .map((topic) => topic.trim())
@@ -861,7 +889,13 @@ export function ApiClient({ intent }: ApiClientProps) {
           ? toOpenApi(name, tree)
           : {
               text: serializeExport(
-                buildExport({ workspace: name, tree, environments, collectionVariables }),
+                buildExport({
+                  workspace: name,
+                  tree,
+                  environments,
+                  collectionVariables,
+                  collectionDefaults,
+                }),
               ),
               filename: suggestFilename(name),
               warnings: [] as string[],

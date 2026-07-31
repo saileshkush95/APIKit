@@ -29,7 +29,9 @@ import {
   updateNode,
   type DropPosition,
 } from "../../shared/lib/tree";
-import { AuthEditor } from "./AuthEditor";
+import { NodeDefaultsDialog } from "./NodeDefaultsDialog";
+import { printDocs } from "../../shared/lib/docsPrint";
+import { defaultsChain } from "../../shared/lib/inherit";
 import {
   EXPORT_FORMATS,
   type ExportFormat,
@@ -38,14 +40,10 @@ import { notify } from "../../shared/lib/notify";
 import { newId } from "../../shared/lib/storage";
 import { methodColor } from "../../shared/lib/ui";
 import { useValueHistory } from "../../shared/lib/valueHistory";
+import { useCollection } from "../../shared/state/collection";
 import { useConfirm } from "../../shared/state/confirm";
-import {
-  defaultAuth,
-  type Auth,
-  type Folder,
-  type SavedRequest,
-  type TreeNode,
-} from "../../shared/types";
+import { useWorkspaces } from "../../shared/state/workspaces";
+import type { Folder, SavedRequest, TreeNode } from "../../shared/types";
 
 interface Props {
   nodes: TreeNode[];
@@ -127,6 +125,19 @@ export function CollectionSidebar({
     };
   }, [exportOpen]);
   const [authFolderId, setAuthFolderId] = useState<string | null>(null);
+  const [collectionOpen, setCollectionOpen] = useState(false);
+  const { collectionDefaults, setCollectionDefaults } = useCollection();
+  const { active: activeWorkspace } = useWorkspaces();
+  const collectionName = activeWorkspace?.name ?? "Collection";
+
+  /** The whole workspace as one printable document. */
+  const printCollection = () =>
+    printDocs({
+      kind: "collection",
+      name: collectionName,
+      defaults: collectionDefaults,
+      tree: nodes,
+    });
   // Resolved from the id each render, so the dialog always edits fresh state.
   const authFolderNode = authFolderId ? findNode(nodes, authFolderId) : null;
   const authFolder =
@@ -534,7 +545,16 @@ export function CollectionSidebar({
       className="flex min-h-0 w-full flex-1 flex-col border-r border-edge bg-panel"
     >
       <div className="flex flex-none items-center gap-1 border-b border-edge px-2 py-1.5">
-        <span className="px-1 text-xs font-semibold text-muted">Collection</span>
+        {/* The collection is a level like a folder is, so it opens the same
+            editor. A label nobody can click is what made it look missing. */}
+        <button
+          onClick={() => setCollectionOpen(true)}
+          title="Collection settings — docs, headers, auth, scripts and options for every request in this workspace"
+          className="flex min-w-0 items-center gap-1 rounded px-1 py-0.5 text-xs font-semibold text-muted hover:bg-elevated hover:text-ink"
+        >
+          <span className="truncate">{collectionName}</span>
+          <span className="flex-none text-[10px] opacity-70">⚙</span>
+        </button>
         <div className="ml-auto flex items-center">
           {/* New items land in the selected folder, or at the root. */}
           <button
@@ -700,6 +720,8 @@ export function CollectionSidebar({
           onDelete={remove}
           onRun={onRun}
           onEditAuth={setAuthFolderId}
+          onEditCollection={() => setCollectionOpen(true)}
+          onPrintCollection={printCollection}
           selectedCount={selectedIds.size}
           onMoveSelected={moveSelected}
           onDuplicateSelected={duplicateSelected}
@@ -707,76 +729,40 @@ export function CollectionSidebar({
         />
       )}
       {authFolder && (
-        <FolderAuthDialog
-          folder={authFolder}
+        <NodeDefaultsDialog
+          title={authFolder.name}
+          commentId={authFolder.id}
+          defaults={authFolder}
+          inherited={defaultsChain(nodes, authFolder.id, collectionDefaults)}
+          onPrint={() => printDocs({ kind: "folder", folder: authFolder })}
           onClose={() => setAuthFolderId(null)}
           onChange={(patch) =>
             onChange(
               updateNode(nodes, authFolder.id, (node) =>
-                isFolder(node)
-                  ? {
-                      ...node,
-                      auth: { ...defaultAuth(), ...(node.auth ?? {}), ...patch },
-                    }
-                  : node,
+                isFolder(node) ? { ...node, ...patch } : node,
               ),
             )
           }
         />
       )}
-    </aside>
-  );
-}
 
-/** Folder-level authorization, inherited by requests set to "inherit". */
-function FolderAuthDialog({
-  folder,
-  onChange,
-  onClose,
-}: {
-  folder: Folder;
-  onChange: (patch: Partial<Auth>) => void;
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-8"
-      onClick={onClose}
-    >
-      <div
-        className="w-[30rem] rounded-lg border border-edge bg-panel p-4 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-2 flex items-center">
-          <span className="min-w-0 truncate text-sm font-semibold text-ink">
-            Authorization — {folder.name}
-          </span>
-          <button
-            onClick={onClose}
-            className="ml-auto rounded px-2 py-1 text-lg leading-none text-muted hover:bg-elevated hover:text-ink"
-            title="Close"
-          >
-            ×
-          </button>
-        </div>
-        <p className="mb-3 text-[11px] leading-relaxed text-muted">
-          Requests in this folder whose authorization is set to “Inherit from
-          parent” use this. Nested folders can inherit it too.
-        </p>
-        <AuthEditor
-          auth={{ ...defaultAuth(), ...(folder.auth ?? {}) }}
-          onChange={onChange}
+      {collectionOpen && (
+        <NodeDefaultsDialog
+          title={collectionName}
+          // The collection has no node of its own, so its comments hang off a
+          // fixed key rather than an id that could collide with a request's.
+          commentId="collection"
+          defaults={collectionDefaults}
+          // The collection is the outermost level; there is nothing above it.
+          inherited={[]}
+          onPrint={() => printCollection()}
+          onClose={() => setCollectionOpen(false)}
+          onChange={(patch) =>
+            setCollectionDefaults({ ...collectionDefaults, ...patch })
+          }
         />
-      </div>
-    </div>
+      )}
+    </aside>
   );
 }
 
@@ -972,6 +958,8 @@ interface ContextMenuProps {
   onDelete: (id: string) => void;
   onRun: (folderId: string | null) => void;
   onEditAuth: (folderId: string) => void;
+  onEditCollection: () => void;
+  onPrintCollection: () => void;
   /** How many rows are highlighted; >1 turns the menu into a bulk menu. */
   selectedCount: number;
   onMoveSelected: (targetId: string | null) => void;
@@ -991,6 +979,8 @@ function ContextMenu({
   onDelete,
   onRun,
   onEditAuth,
+  onEditCollection,
+  onPrintCollection,
   selectedCount,
   onMoveSelected,
   onDuplicateSelected,
@@ -1085,9 +1075,15 @@ function ContextMenu({
   items.push({ label: "New Folder", run: () => onNewFolder(parentId) });
   if (node && isFolder(node)) {
     items.push({ label: "Run folder", run: () => onRun(node.id) });
-    items.push({ label: "Edit Authorization", run: () => onEditAuth(node.id) });
+    items.push({ label: "Folder Settings", run: () => onEditAuth(node.id) });
+    items.push({
+      label: "Export Docs (PDF)",
+      run: () => printDocs({ kind: "folder", folder: node }),
+    });
   } else if (!node) {
     items.push({ label: "Run collection", run: () => onRun(null) });
+    items.push({ label: "Collection Settings", run: onEditCollection });
+    items.push({ label: "Export Docs (PDF)", run: onPrintCollection });
   }
   if (node) {
     items.push({ label: "Rename", run: () => onRename(node.id) });
