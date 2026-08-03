@@ -261,6 +261,58 @@ export function requestIdsIn(node: TreeNode): string[] {
   return node.children.flatMap(requestIdsIn);
 }
 
+/** Requests at the given scope: the root list, or a folder's children. */
+function childrenAt(nodes: TreeNode[], parentId: string | null): TreeNode[] {
+  if (parentId === null) return nodes;
+  const folder = findFolder(nodes, parentId);
+  return folder ? folder.children : [];
+}
+
+/**
+ * The id of a sibling *request* already using `name`, or null when it is free.
+ *
+ * Uniqueness is scoped to a folder so two folders may each hold a "Get Users".
+ * `ignoreId` lets a rename check against its siblings without flagging itself.
+ */
+export function siblingRequestNamed(
+  nodes: TreeNode[],
+  parentId: string | null,
+  name: string,
+  ignoreId?: string,
+): string | null {
+  const trimmed = name.trim();
+  if (trimmed === "") return null;
+  for (const node of childrenAt(nodes, parentId)) {
+    if (isFolder(node)) continue;
+    if (node.id === ignoreId) continue;
+    if (node.name.trim() === trimmed) return node.id;
+  }
+  return null;
+}
+
+/**
+ * A sibling-unique name: `preferred` if it is free, otherwise the first of
+ * `preferred 2`, `preferred 3`, … that is. Used so creating a second blank
+ * request — or duplicating over and over — never collides with an existing one.
+ */
+export function uniqueRequestName(
+  nodes: TreeNode[],
+  parentId: string | null,
+  preferred: string,
+  ignoreId?: string,
+): string {
+  const base = preferred.trim() || "New Request";
+  if (siblingRequestNamed(nodes, parentId, base, ignoreId) === null) return base;
+  let suffix = 2;
+  for (;;) {
+    const candidate = `${base} ${suffix}`;
+    if (siblingRequestNamed(nodes, parentId, candidate, ignoreId) === null) {
+      return candidate;
+    }
+    suffix += 1;
+  }
+}
+
 /** Deep copy with fresh ids, so a duplicate never aliases the original. */
 export function cloneNode(node: TreeNode): TreeNode {
   if (isFolder(node)) {

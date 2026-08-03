@@ -431,6 +431,13 @@ export interface GithubPushResult {
   commitUrl: string;
 }
 
+/** A repository the token can push to, returned by the repo picker. */
+export interface GithubRepo {
+  fullName: string;
+  defaultBranch: string;
+  private: boolean;
+}
+
 /** The document written to disk on export and to GitHub on push. */
 export interface WorkspaceExport {
   format: "webrequestkit";

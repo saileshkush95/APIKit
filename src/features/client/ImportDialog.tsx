@@ -5,12 +5,16 @@ import { importOpenApi, type ImportResult } from "../../shared/lib/openapi";
 import { detectFormat, importPostman } from "../../shared/lib/postman";
 import { defaultAuth } from "../../shared/types";
 import { useSettings } from "../../shared/state/settings";
-import type { Environment, KeyValue, TreeNode } from "../../shared/types";
+import type { Environment, KeyValue, NodeDefaults, TreeNode } from "../../shared/types";
 
 interface Props {
   onClose: () => void;
   /** Adds the imported folders and an environment holding its variables. */
-  onImport: (nodes: TreeNode[], environment: Omit<Environment, "id">) => void;
+  onImport: (
+    nodes: TreeNode[],
+    environment: Omit<Environment, "id">,
+    collectionDefaults?: NodeDefaults,
+  ) => void;
 }
 
 
@@ -26,6 +30,9 @@ function analyseDocument(text: string): ImportResult {
       auth: defaultAuth(),
       warnings: result.warnings,
       operationCount: result.requestCount,
+      ...(result.collectionDefaults
+        ? { collectionDefaults: result.collectionDefaults }
+        : {}),
     };
   }
   return importOpenApi(text);
@@ -72,7 +79,7 @@ export function ImportDialog({ onClose, onImport }: Props) {
   function confirm() {
     if (!result) return;
     const variables: KeyValue[] = result.variables;
-    onImport(result.nodes, { name: result.title, variables });
+    onImport(result.nodes, { name: result.title, variables }, result.collectionDefaults);
     onClose();
   }
 

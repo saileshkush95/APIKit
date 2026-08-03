@@ -23,6 +23,7 @@ import {
   matchHeaders,
 } from "../../shared/lib/headerSuggestions";
 import { buildWireRequest } from "../../shared/lib/request";
+import { validateUrlFor } from "../../shared/lib/urlValidation";
 import { printDocs } from "../../shared/lib/docsPrint";
 import { resolveInherited } from "../../shared/lib/inherit";
 import { activeRows, storableRows } from "../../shared/lib/rows";
@@ -256,6 +257,9 @@ export function RequestPane({
   // Warn about variables the wire request still references after auth and the
   // body mode have been applied.
   const missing = unresolvedVars(buildWireRequest(wireDraft, {}), vars);
+
+  // A URL whose scheme contradicts the protocol cannot be sent or connected.
+  const urlError = validateUrlFor(tab.url, protocol);
 
   const visibleTabs = tabsFor(protocol);
   const reqTab = visibleTabs.includes(tab.reqTab)
@@ -618,7 +622,8 @@ export function RequestPane({
         {streaming ? (
           <button
             onClick={onToggleConnection}
-            disabled={!tab.url}
+            disabled={!tab.url || urlError !== null}
+            title={urlError ?? undefined}
             className={`whitespace-nowrap rounded-md px-5 py-2 font-semibold text-white disabled:cursor-default disabled:opacity-50 ${
               connected ? "bg-err hover:opacity-90" : "bg-brand hover:bg-brand-bright"
             }`}
@@ -628,16 +633,22 @@ export function RequestPane({
         ) : protocol === "webrtc" ? null : (
           <button
             onClick={tab.loading ? onCancel : onSend}
-            disabled={!tab.loading && !tab.url}
+            disabled={!tab.loading && (!tab.url || urlError !== null)}
             className={`whitespace-nowrap rounded-md px-5 py-2 font-semibold text-white disabled:cursor-default disabled:opacity-50 ${
               tab.loading ? "bg-err hover:bg-err/80" : "bg-brand hover:bg-brand-bright"
             }`}
-            title={tab.loading ? "Cancel the request" : "Send (⌘↵)"}
+            title={tab.loading ? "Cancel the request" : urlError ?? "Send (⌘↵)"}
           >
             {tab.loading ? "Cancel" : "Send"}
           </button>
         )}
       </div>
+
+      {urlError && (
+        <div className="mx-4 mb-2 flex-none rounded border border-err/40 bg-err/10 px-2.5 py-1.5 text-[11px] text-err">
+          {urlError}
+        </div>
+      )}
 
       {missing.length > 0 && (
         <div className="mx-4 mb-2 flex-none rounded border border-warn/40 bg-warn/10 px-2.5 py-1.5 text-[11px] text-warn">

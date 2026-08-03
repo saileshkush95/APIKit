@@ -40,6 +40,15 @@ pub struct GithubPushResult {
     pub commit_url: String,
 }
 
+/// A repository the token can push to, for the picker.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubRepo {
+    pub full_name: String,
+    pub default_branch: String,
+    pub private: bool,
+}
+
 fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
@@ -207,6 +216,133 @@ pub async fn github_check(config: GithubConfig) -> Result<String, String> {
             .and_then(|v| v.as_str())
             .unwrap_or("main")
     ))
+}
+
+/// Runs `gh` and returns its stdout on success, or an `Err` with a sentence a
+/// person can act on. Used instead of pasting a token: the token comes from the
+/// account you have already signed into with the GitHub CLI, so the app never
+/// asks you to paste a credential into it.
+fn gh_output(args: &[&str]) -> std::io::Result<std::process::Output> {
+    std::process::Command::new("gh").args(args).output()
+}
+
+/// Asks the GitHub CLI for its current access token. Tautologically `gh` must
+/// be installed and logged in first — the error message says exactly that.
+#[tauri::command]
+pub fn github_gh_token() -> Result<String, String> {
+    // `gh --version` runs whether or not the user is signed in, so it is the
+    // cheap existence check before the call that needs an account.
+    match gh_output(&["--version"]) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(
+                "The GitHub CLI (gh) is not installed. Install it from cli.github.com, then run `gh auth login`. You can also paste a personal access token below instead."
+                    .into(),
+            );
+        }
+        Err(error) => return Err(format!("cannot run the GitHub CLI: {error}")),
+        Ok(_) => {}
+    }
+
+    let output =
+        gh_output(&["auth", "token"]).map_err(|e| format!("cannot run the GitHub CLI: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() { "" } else { &stderr };
+        return Err(format!(
+            "The GitHub CLI is not logged in. Run `gh auth login` and try again — the CLI said: {detail}"
+        ));
+    }
+    let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if token.is_empty() {
+        return Err(
+            "The GitHub CLI returned an empty token. Run `gh auth login` and try again.".into(),
+        );
+    }
+    Ok(token)
+}
+
+/// Lists the repositories the token can push to, newest first — the picker a
+/// user reaches for instead of typing `owner/repo` by hand.
+#[tauri::command]
+pub async fn github_list_repos(config: GithubConfig) -> Result<Vec<GithubRepo>, String> {
+    let response = client()
+        .get(format!("{API}/user/repos"))
+        .bearer_auth(&config.token)
+        .header("accept", "application/vnd.github+json")
+        .query(&[
+            ("affiliation", "owner,collaborator,organization_member"),
+            ("sort", "updated"),
+            ("per_page", "100"),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("cannot reach GitHub: {e}"))?;
+
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(describe(status, &body));
+    }
+
+    let value: Vec<serde_json::Value> =
+        serde_json::from_str(&body).map_err(|e| format!("malformed reply: {e}"))?;
+
+    Ok(value
+        .into_iter()
+        .filter_map(|repo| {
+            let full_name = repo.get("full_name")?.as_str()?.to_string();
+            Some(GithubRepo {
+                full_name,
+                default_branch: repo
+                    .get("default_branch")
+                    .and_then(|branch| branch.as_str())
+                    .unwrap_or("main")
+                    .to_string(),
+                private: repo.get("private").and_then(|p| p.as_bool()).unwrap_or(false),
+            })
+        })
+        .collect())
+}
+
+/// Creates a repository under the account and returns its `owner/name`, so the
+/// user never has to leave the app to set one up.
+#[tauri::command]
+pub async fn github_create_repo(
+    config: GithubConfig,
+    name: String,
+    description: String,
+    private: bool,
+) -> Result<String, String> {
+    let mut payload = serde_json::json!({
+        "name": name.trim(),
+        "private": private,
+    });
+    if !description.trim().is_empty() {
+        payload["description"] = serde_json::Value::String(description.trim().to_string());
+    }
+
+    let response = client()
+        .post(format!("{API}/user/repos"))
+        .bearer_auth(&config.token)
+        .header("accept", "application/vnd.github+json")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("cannot reach GitHub: {e}"))?;
+
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(describe(status, &body));
+    }
+
+    let value: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("malformed reply: {e}"))?;
+    value
+        .get("full_name")
+        .and_then(|entry| entry.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "created the repository, but could not read its name".into())
 }
 
 /// Writes a document to disk, used by the export action.

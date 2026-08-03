@@ -20,6 +20,7 @@ import type {
   GithubConfig,
   GithubFile,
   GithubPushResult,
+  GithubRepo,
   HistoryEntry,
   Monitor,
   MonitorRun,
@@ -238,6 +239,34 @@ export function githubPush(
 /** Verifies the token and that the repository is writable. */
 export function githubCheck(config: GithubConfig): Promise<string> {
   return invoke<string>("github_check", { config });
+}
+
+/**
+ * Asks the GitHub CLI for the access token of the account `gh` is logged in
+ * with, so a user never has to paste a credential into the app.
+ */
+export function githubGhToken(): Promise<string> {
+  return invoke<string>("github_gh_token");
+}
+
+/** Lists the repositories the token can push to, for the picker. */
+export function githubListRepos(config: GithubConfig): Promise<GithubRepo[]> {
+  return invoke<GithubRepo[]>("github_list_repos", { config });
+}
+
+/** Creates a repository and returns its `owner/name`. */
+export function githubCreateRepo(
+  config: GithubConfig,
+  name: string,
+  description: string,
+  privateRepo: boolean,
+): Promise<string> {
+  return invoke<string>("github_create_repo", {
+    config,
+    name,
+    description,
+    private: privateRepo,
+  });
 }
 
 export function writeTextFile(path: string, contents: string): Promise<void> {

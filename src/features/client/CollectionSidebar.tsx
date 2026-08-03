@@ -25,12 +25,20 @@ import {
   removeNode,
   removeNodes,
   requestIdsIn,
+  siblingRequestNamed,
   topmost,
+  uniqueRequestName,
   updateNode,
   type DropPosition,
 } from "../../shared/lib/tree";
 import { NodeDefaultsDialog } from "./NodeDefaultsDialog";
-import { printDocs } from "../../shared/lib/docsPrint";
+import {
+  buildStandaloneHtml,
+  printDocs,
+  type DocsScope,
+} from "../../shared/lib/docsPrint";
+import { writeTextFile } from "../../shared/lib/api";
+import { save } from "@tauri-apps/plugin-dialog";
 import { defaultsChain } from "../../shared/lib/inherit";
 import {
   EXPORT_FORMATS,
@@ -138,6 +146,27 @@ export function CollectionSidebar({
       defaults: collectionDefaults,
       tree: nodes,
     });
+
+  /** Exports a request, folder or the whole collection as a standalone page. */
+  async function exportDocsHtml(scope: DocsScope) {
+    const fileName = `${(scope.kind === "request"
+      ? scope.request.name
+      : scope.kind === "folder"
+        ? scope.folder.name
+        : scope.name
+    )
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "collection"}.html`;
+    const path = await save({
+      title: "Export as HTML",
+      defaultPath: fileName,
+      filters: [{ name: "HTML", extensions: ["html"] }],
+    });
+    if (!path) return;
+    await writeTextFile(path, buildStandaloneHtml(scope));
+    notify("info", "Exported documentation as HTML");
+  }
   // Resolved from the id each render, so the dialog always edits fresh state.
   const authFolderNode = authFolderId ? findNode(nodes, authFolderId) : null;
   const authFolder =
@@ -194,6 +223,18 @@ export function CollectionSidebar({
 
   function rename(id: string, name: string) {
     const trimmed = name.trim();
+    // A request may not share its folder's namespace with another request.
+    if (
+      trimmed !== "" &&
+      siblingRequestNamed(nodes, parentIdOf(nodes, id), trimmed, id)
+    ) {
+      notify(
+        "error",
+        `A request named “${trimmed}” already exists in this folder`,
+      );
+      setRenamingId(null);
+      return;
+    }
     if (trimmed !== "") {
       history.commit(nodes);
       onChange(updateNode(nodes, id, (node) => ({ ...node, name: trimmed })));
@@ -205,7 +246,11 @@ export function CollectionSidebar({
     const node = findNode(nodes, id);
     if (!node) return;
     const copy = cloneNode(node);
-    copy.name = `${node.name} copy`;
+    copy.name = uniqueRequestName(
+      nodes,
+      parentIdOf(nodes, id),
+      `${node.name} copy`,
+    );
     history.commit(nodes);
     // Sits next to the original rather than at the end of the list.
     onChange(moveNode(insertNode(nodes, null, copy), copy.id, id, "after"));
@@ -370,7 +415,11 @@ export function CollectionSidebar({
       const node = findNode(tree, id);
       if (!node) continue;
       const copy = cloneNode(node);
-      copy.name = `${node.name} copy`;
+      copy.name = uniqueRequestName(
+        tree,
+        parentIdOf(tree, id),
+        `${node.name} copy`,
+      );
       tree = moveNode(insertNode(tree, null, copy), copy.id, id, "after");
     }
     onChange(tree);
@@ -722,6 +771,15 @@ export function CollectionSidebar({
           onEditAuth={setAuthFolderId}
           onEditCollection={() => setCollectionOpen(true)}
           onPrintCollection={printCollection}
+          onExportHtml={exportDocsHtml}
+          onExportCollectionHtml={() =>
+            exportDocsHtml({
+              kind: "collection",
+              name: collectionName,
+              defaults: collectionDefaults,
+              tree: nodes,
+            })
+          }
           selectedCount={selectedIds.size}
           onMoveSelected={moveSelected}
           onDuplicateSelected={duplicateSelected}
@@ -960,6 +1018,8 @@ interface ContextMenuProps {
   onEditAuth: (folderId: string) => void;
   onEditCollection: () => void;
   onPrintCollection: () => void;
+  onExportHtml: (scope: DocsScope) => void;
+  onExportCollectionHtml: () => void;
   /** How many rows are highlighted; >1 turns the menu into a bulk menu. */
   selectedCount: number;
   onMoveSelected: (targetId: string | null) => void;
@@ -981,6 +1041,8 @@ function ContextMenu({
   onEditAuth,
   onEditCollection,
   onPrintCollection,
+  onExportHtml,
+  onExportCollectionHtml,
   selectedCount,
   onMoveSelected,
   onDuplicateSelected,
@@ -1080,14 +1142,26 @@ function ContextMenu({
       label: "Export Docs (PDF)",
       run: () => printDocs({ kind: "folder", folder: node }),
     });
+    items.push({
+      label: "Export as HTML",
+      run: () => onExportHtml({ kind: "folder", folder: node }),
+    });
   } else if (!node) {
     items.push({ label: "Run collection", run: () => onRun(null) });
     items.push({ label: "Collection Settings", run: onEditCollection });
     items.push({ label: "Export Docs (PDF)", run: onPrintCollection });
+    items.push({ label: "Export as HTML", run: onExportCollectionHtml });
   }
   if (node) {
     items.push({ label: "Rename", run: () => onRename(node.id) });
     items.push({ label: "Duplicate", run: () => onDuplicate(node.id) });
+    if (!isFolder(node)) {
+      items.push({
+        label: "Export as HTML",
+        run: () =>
+          onExportHtml({ kind: "request", request: node as SavedRequest }),
+      });
+    }
     items.push({
       label: isFolder(node) ? "Delete Folder" : "Delete",
       run: () => onDelete(node.id),

@@ -13,7 +13,13 @@
 import { activeRows } from "./rows";
 import { isFolder } from "./tree";
 import { parseQuery } from "./query";
-import type { Environment, KeyValue, SavedRequest, TreeNode } from "../types";
+import type {
+  Environment,
+  KeyValue,
+  NodeDefaults,
+  SavedRequest,
+  TreeNode,
+} from "../types";
 
 export interface InteropExport {
   text: string;
@@ -22,7 +28,7 @@ export interface InteropExport {
   warnings: string[];
 }
 
-export type ExportFormat = "native" | "postman" | "openapi";
+export type ExportFormat = "native" | "postman" | "openapi" | "html";
 
 export const EXPORT_FORMATS: {
   value: ExportFormat;
@@ -35,6 +41,12 @@ export const EXPORT_FORMATS: {
     label: "APIKit workspace",
     title: "Export workspace",
     hint: "Everything, losslessly — collection, environments, monitors and mock routes. The format GitHub sync uses.",
+  },
+  {
+    value: "html",
+    label: "HTML documentation",
+    title: "Export as an HTML page",
+    hint: "A self-contained page your developers can open or hand to a frontend engineer — docs, methods, URLs, headers, auth. Credentials are described, never exported.",
   },
   {
     value: "postman",
@@ -308,6 +320,10 @@ function postmanItems(nodes: TreeNode[], warnings: string[]): unknown[] {
     isFolder(node)
       ? {
           name: node.name,
+          ...(node.docs?.trim() ? { description: node.docs } : {}),
+          ...(node.headers && node.headers.length > 0
+            ? { header: postmanHeaders(node.headers) }
+            : {}),
           item: postmanItems(node.children, warnings),
           ...(node.auth && node.auth.type !== "inherit" && node.auth.type !== "none"
             ? {
@@ -333,15 +349,28 @@ export function toPostmanCollection(
   workspace: string,
   tree: TreeNode[],
   environment?: Environment,
+  collectionDefaults?: NodeDefaults,
 ): InteropExport {
   const warnings: string[] = [];
+
+  // The workspace's own docs preface the export note, so a team reading the
+  // collection in Postman sees the same documentation as in the app.
+  const description = [
+    collectionDefaults?.docs?.trim() ? collectionDefaults.docs : "",
+    `Exported from APIKit on ${new Date().toISOString().slice(0, 10)}. Credentials typed directly into auth fields have been removed; {{variable}} references are kept.`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   const collection = {
     info: {
       name: workspace,
       schema: POSTMAN_SCHEMA,
-      description: `Exported from APIKit on ${new Date().toISOString().slice(0, 10)}. Credentials typed directly into auth fields have been removed; {{variable}} references are kept.`,
+      description,
     },
+    ...(collectionDefaults?.headers && collectionDefaults.headers.length > 0
+      ? { header: postmanHeaders(collectionDefaults.headers) }
+      : {}),
     item: postmanItems(tree, warnings),
     ...(environment
       ? {

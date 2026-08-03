@@ -10,7 +10,9 @@ import { newId } from "./storage";
 import {
   defaultConfig,
   type Auth,
+  type Folder,
   type KeyValue,
+  type NodeDefaults,
   type SavedRequest,
   type TreeNode,
 } from "../types";
@@ -21,6 +23,12 @@ export interface PostmanImport {
   variables: KeyValue[];
   warnings: string[];
   requestCount: number;
+  /**
+   * What the collection itself contributes — its `info.description` and root
+   * `header` list — so it becomes the workspace's defaults on import, the same
+   * way a request's folder inherits them down.
+   */
+  collectionDefaults?: NodeDefaults;
 }
 
 type Item = Record<string, any>;
@@ -187,12 +195,25 @@ function requestFrom(item: Item, warnings: string[]): SavedRequest {
 function walk(items: Item[], warnings: string[], counter: { n: number }): TreeNode[] {
   return (items ?? []).map((item) => {
     if (Array.isArray(item.item)) {
-      return {
-        kind: "folder" as const,
+      const auth = authOf(item.auth, warnings);
+      const headers = headersOf(item.header);
+      const folder: Folder = {
+        kind: "folder",
         id: newId(),
         name: String(item.name ?? "Folder"),
         children: walk(item.item, warnings, counter),
       };
+      // A folder's own auth and headers inherit down to its requests here,
+      // exactly as they do in Postman — so they must land on the folder, not
+      // be flattened onto each request.
+      if (auth && auth.type !== "none") folder.auth = auth;
+      if (headers.length > 0) folder.headers = headers;
+      const docs =
+        typeof item.description === "string"
+          ? item.description
+          : (item.description?.content ?? "");
+      if (docs.trim() !== "") folder.docs = docs;
+      return folder;
     }
     counter.n += 1;
     return requestFrom(item, warnings);
@@ -219,6 +240,24 @@ export function importPostman(text: string): PostmanImport {
     { name: "", value: "" },
   ];
 
+  // The collection's own description and headers become the workspace
+  // defaults, so they flow to every imported request the same way Postman
+  // applied them to every request in the collection.
+  const rootHeaders = headersOf(spec.header);
+  const collectionDescription =
+    typeof spec.info?.description === "string"
+      ? spec.info.description
+      : (spec.info?.description?.content ?? "");
+  const collectionDefaults: NodeDefaults | undefined =
+    rootHeaders.length > 0 || collectionDescription.trim() !== ""
+      ? {
+          ...(rootHeaders.length > 0 ? { headers: rootHeaders } : {}),
+          ...(collectionDescription.trim() !== ""
+            ? { docs: collectionDescription }
+            : {}),
+        }
+      : undefined;
+
   const collectionAuth = authOf(spec.auth, warnings);
   if (collectionAuth && collectionAuth.type !== "none") {
     warnings.push(
@@ -243,6 +282,7 @@ export function importPostman(text: string): PostmanImport {
     variables,
     warnings,
     requestCount: counter.n,
+    ...(collectionDefaults ? { collectionDefaults } : {}),
   };
 }
 

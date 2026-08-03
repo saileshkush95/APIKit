@@ -39,12 +39,16 @@ import {
   suggestFilename,
 } from "../../shared/lib/exportWorkspace";
 import { newId, SETTINGS, workspaceDataOnce } from "../../shared/lib/storage";
+import { buildStandaloneHtml } from "../../shared/lib/docsPrint";
 import { interpolate } from "../../shared/lib/vars";
 import {
   findRequest,
   insertNode,
   isFolder,
+  parentIdOf,
   pathTo,
+  siblingRequestNamed,
+  uniqueRequestName,
   updateNode,
 } from "../../shared/lib/tree";
 import { requestLabel } from "../../shared/lib/ui";
@@ -182,6 +186,7 @@ export function ApiClient({ intent }: ApiClientProps) {
     tree,
     setTree,
     collectionDefaults,
+    setCollectionDefaults,
     ready: collectionReady,
     expanded,
     toggleExpanded,
@@ -408,7 +413,9 @@ export function ApiClient({ intent }: ApiClientProps) {
   }
 
   function createRequest(parentId: string | null) {
-    const request = blankRequest();
+    const request = blankRequest(
+      uniqueRequestName(tree, parentId, "New Request"),
+    );
     setTree(insertNode(tree, parentId, request));
     if (parentId) toggleExpanded(parentId, true);
     openRequest(request, { keep: true });
@@ -418,14 +425,34 @@ export function ApiClient({ intent }: ApiClientProps) {
   function renameTab(tab: RequestTab, name: string) {
     const trimmed = name.trim();
     if (trimmed === "") return;
-    updateTab(tab.id, { name: trimmed });
-    if (tab.sourceId && findRequest(tree, tab.sourceId)) {
-      setTree(
-        updateNode(tree, tab.sourceId, (node) =>
-          isFolder(node) ? node : { ...node, name: trimmed },
-        ),
-      );
+    if (!tab.sourceId || !findRequest(tree, tab.sourceId)) {
+      updateTab(tab.id, { name: trimmed });
+      return;
     }
+    // Uniqueness is scoped to the request's sibling, so a name already used by
+    // another request in the same folder is refused rather than silently split.
+    if (
+      siblingRequestNamed(
+        tree,
+        parentIdOf(tree, tab.sourceId),
+        trimmed,
+        tab.sourceId,
+      )
+    ) {
+      notify(
+        "error",
+        `A request named “${trimmed}” already exists in this folder`,
+      );
+      const saved = findRequest(tree, tab.sourceId);
+      if (saved) updateTab(tab.id, { name: saved.name });
+      return;
+    }
+    updateTab(tab.id, { name: trimmed });
+    setTree(
+      updateNode(tree, tab.sourceId, (node) =>
+        isFolder(node) ? node : { ...node, name: trimmed },
+      ),
+    );
   }
 
   /** Writes the active tab back to its saved request, creating one if needed. */
@@ -439,7 +466,11 @@ export function ApiClient({ intent }: ApiClientProps) {
       );
       return;
     }
-    const name = tab.name ?? requestLabel(tab.url, "New Request");
+    const name = uniqueRequestName(
+      tree,
+      null,
+      tab.name ?? requestLabel(tab.url, "New Request"),
+    );
     const request: SavedRequest = { ...blankRequest(name), ...draft, name };
     setTree(insertNode(tree, null, request));
     updateTab(tab.id, { sourceId: request.id, name });
@@ -865,7 +896,11 @@ export function ApiClient({ intent }: ApiClientProps) {
   /** Promotes a recorded request into the collection. */
   function saveHistoryEntry(entry: HistoryEntry) {
     const draft = normalizeDraft(entry.request);
-    const name = entry.name || requestLabel(entry.url, "Saved request");
+    const name = uniqueRequestName(
+      tree,
+      null,
+      entry.name || requestLabel(entry.url, "Saved request"),
+    );
     const request: SavedRequest = { ...blankRequest(name), ...draft, name };
     setTree(insertNode(tree, null, request));
     notify("success", `Saved “${name}” to the collection`);
@@ -884,27 +919,49 @@ export function ApiClient({ intent }: ApiClientProps) {
 
     const document =
       format === "postman"
-        ? toPostmanCollection(name, tree, pinned ?? environments[0])
+        ? toPostmanCollection(
+            name,
+            tree,
+            pinned ?? environments[0],
+            collectionDefaults ?? undefined,
+          )
         : format === "openapi"
           ? toOpenApi(name, tree)
-          : {
-              text: serializeExport(
-                buildExport({
-                  workspace: name,
+          : format === "html"
+            ? {
+                text: buildStandaloneHtml({
+                  kind: "collection",
+                  name,
+                  defaults: collectionDefaults ?? {},
                   tree,
-                  environments,
-                  collectionVariables,
-                  collectionDefaults,
                 }),
-              ),
-              filename: suggestFilename(name),
-              warnings: [] as string[],
-            };
+                filename: `${name
+                  .toLowerCase()
+                  .replace(/[^a-z0-9]+/g, "-")
+                  .replace(/^-|-$/g, "") || "collection"}.html`,
+                warnings: [] as string[],
+              }
+            : {
+                text: serializeExport(
+                  buildExport({
+                    workspace: name,
+                    tree,
+                    environments,
+                    collectionVariables,
+                    collectionDefaults,
+                  }),
+                ),
+                filename: suggestFilename(name),
+                warnings: [] as string[],
+              };
 
     const path = await save({
       title: EXPORT_FORMATS.find((entry) => entry.value === format)?.title,
       defaultPath: document.filename,
-      filters: [{ name: "JSON", extensions: ["json"] }],
+      filters:
+        format === "html"
+          ? [{ name: "HTML", extensions: ["html"] }]
+          : [{ name: "JSON", extensions: ["json"] }],
     });
     if (!path) return;
 
@@ -1022,12 +1079,17 @@ export function ApiClient({ intent }: ApiClientProps) {
       {importing && (
         <ImportDialog
           onClose={() => setImporting(false)}
-          onImport={(nodes, environment) => {
+          onImport={(nodes, environment, defaults) => {
             setTree([...tree, ...nodes]);
             // The spec's server URL and auth placeholders become a ready-to-use
             // environment, selected straight away.
             const created = createEnvironment(environment.name);
             updateEnvironment(created.id, { variables: environment.variables });
+            // A Postman collection's own description and headers become the
+            // workspace defaults, so they flow down to the imported requests.
+            if (defaults) {
+              setCollectionDefaults({ ...collectionDefaults, ...defaults });
+            }
           }}
         />
       )}

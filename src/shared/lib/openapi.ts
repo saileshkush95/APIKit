@@ -12,6 +12,7 @@ import {
   type Auth,
   type Folder,
   type KeyValue,
+  type NodeDefaults,
   type SavedRequest,
   type TreeNode,
 } from "../types";
@@ -24,6 +25,11 @@ export interface ImportResult {
   /** Human-readable notes about anything that could not be represented. */
   warnings: string[];
   operationCount: number;
+  /**
+   * Collection-level defaults a document carries (Postman's root description
+   * and headers), applied to the workspace on import.
+   */
+  collectionDefaults?: NodeDefaults;
 }
 
 type Spec = Record<string, any>;

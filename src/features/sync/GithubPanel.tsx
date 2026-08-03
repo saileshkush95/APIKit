@@ -2,11 +2,10 @@ import { Input } from "../../shared/components/Field";
 import { useEffect, useState } from "react";
 import {
   githubCheck,
+  githubCreateRepo,
+  githubGhToken,
+  githubListRepos,
   githubPull,
-  githubPush,
-  secretGet,
-  secretSet,
-  setSetting,
 } from "../../shared/lib/api";
 import {
   buildExport,
@@ -14,34 +13,13 @@ import {
   parseExport,
   serializeExport,
 } from "../../shared/lib/exportWorkspace";
-import { notifyError } from "../../shared/lib/notify";
-import { workspaceDataOnce } from "../../shared/lib/storage";
+import { countRequests } from "../../shared/lib/tree";
 import { useCollection } from "../../shared/state/collection";
 import { useEnvironments } from "../../shared/state/environments";
 import { useConfirm } from "../../shared/state/confirm";
+import { useGithubSync } from "../../shared/state/githubSync";
 import { useWorkspaceId, useWorkspaces } from "../../shared/state/workspaces";
-import type { GithubConfig } from "../../shared/types";
-
-const CONFIG_KEY = "githubConfig";
-const STATE_KEY = "githubState";
-
-
-interface Stored extends GithubConfig {
-  autoPush: boolean;
-}
-
-function emptyConfig(workspace: string): Stored {
-  return {
-    repo: "",
-    branch: "main",
-    path: `webrequestkit/${workspace
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "") || "workspace"}.json`,
-    token: "",
-    autoPush: false,
-  };
-}
+import type { GithubRepo } from "../../shared/types";
 
 /**
  * Commits the workspace to a Git repository as one JSON document, so it can be
@@ -51,6 +29,21 @@ function emptyConfig(workspace: string): Stored {
 export function GithubPanel() {
   const workspaceId = useWorkspaceId();
   const { active } = useWorkspaces();
+  const {
+    config,
+    sha,
+    lastSync,
+    ready,
+    busy,
+    status,
+    error,
+    load,
+    setConfig,
+    setStatus,
+    run,
+    remember,
+    pushDocument,
+  } = useGithubSync();
   const { tree, setTree, collectionDefaults, setCollectionDefaults } =
     useCollection();
   const {
@@ -61,74 +54,35 @@ export function GithubPanel() {
     update: updateEnvironment,
   } = useEnvironments();
 
-  const [config, setConfig] = useState<Stored>(() =>
-    emptyConfig(active?.name ?? "workspace"),
-  );
-  const [sha, setSha] = useState<string | null>(null);
-  const [lastSync, setLastSync] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [ready, setReady] = useState(false);
   const confirm = useConfirm();
+  const workspaceName = active?.name ?? "workspace";
 
+  // Load the persisted config/state for the workspace on entry to the panel.
   useEffect(() => {
-    let cancelled = false;
-    workspaceDataOnce(workspaceId)
-      .then((workspace) => {
-        if (cancelled) return;
-        try {
-          const stored = workspace.settings[CONFIG_KEY];
-          // The token is never in here — see the keychain read below.
-          if (stored) setConfig({ ...(JSON.parse(stored) as Stored), token: "" });
-        } catch {
-          /* keep the defaults */
-        }
-        try {
-          const state = JSON.parse(workspace.settings[STATE_KEY] ?? "{}");
-          setSha(state.sha ?? null);
-          setLastSync(state.lastSync ?? null);
-        } catch {
-          /* keep the defaults */
-        }
-      })
-      .finally(() => !cancelled && setReady(true));
-
-    secretGet(`github.token.${workspaceId}`)
-      .then((stored) => {
-        if (!cancelled && stored) {
-          setConfig((prev) => ({ ...prev, token: stored }));
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
+    load(workspaceId, workspaceName);
   }, [workspaceId]);
 
+  // The repository picker, and the create-a-repo form.
+  const [repos, setRepos] = useState<GithubRepo[] | null>(null);
+  const [repoMenuOpen, setRepoMenuOpen] = useState(false);
+  const [repoQuery, setRepoQuery] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [newRepoName, setNewRepoName] = useState("");
+  const [newRepoDesc, setNewRepoDesc] = useState("");
+  const [newRepoPrivate, setNewRepoPrivate] = useState(true);
+  const pickerRef = { current: null as HTMLDivElement | null };
   useEffect(() => {
-    if (!ready) return;
-    // Everything but the token; that goes to the keychain.
-    const { token, ...rest } = config;
-    setSetting(workspaceId, CONFIG_KEY, JSON.stringify(rest)).catch((e) =>
-      notifyError("Could not save the GitHub settings", e),
-    );
-    secretSet(`github.token.${workspaceId}`, token).catch((e) =>
-      notifyError("Could not store the GitHub token in the keychain", e),
-    );
-  }, [config, ready, workspaceId]);
+    if (!repoMenuOpen) return;
+    function onPointerDown(e: MouseEvent) {
+      if (!pickerRef.current?.contains(e.target as Node)) {
+        setRepoMenuOpen(false);
+      }
+    }
+    window.addEventListener("mousedown", onPointerDown);
+    return () => window.removeEventListener("mousedown", onPointerDown);
+  }, [repoMenuOpen]);
 
-  function remember(nextSha: string | null) {
-    setSha(nextSha);
-    const stamp = new Date().toISOString();
-    setLastSync(stamp);
-    setSetting(
-      workspaceId,
-      STATE_KEY,
-      JSON.stringify({ sha: nextSha, lastSync: stamp }),
-    ).catch(() => {});
-  }
+  const authed = config.token.trim() !== "";
 
   function documentText(): string {
     return serializeExport(
@@ -142,17 +96,47 @@ export function GithubPanel() {
     );
   }
 
-  async function run(label: string, action: () => Promise<void>) {
-    setBusy(label);
-    setError(null);
-    setStatus(null);
-    try {
-      await action();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(null);
-    }
+  /** Loads (or reloads) the repos the token can push to. */
+  async function loadRepos() {
+    setRepoMenuOpen(true);
+    setRepoQuery("");
+    if (repos !== null) return;
+    run("repos", async () => {
+      setRepos(await githubListRepos(config));
+    });
+  }
+
+  const filteredRepos = repoQuery.trim()
+    ? (repos ?? []).filter((repo) =>
+        repo.fullName.toLowerCase().includes(repoQuery.trim().toLowerCase()),
+      )
+    : repos;
+
+  function pickRepo(repo: GithubRepo) {
+    setConfig({
+      ...config,
+      repo: repo.fullName,
+      // Keep the branch in step with the repository's default.
+      branch: repo.defaultBranch || config.branch,
+    });
+    setRepoMenuOpen(false);
+    setStatus(`Selected ${repo.fullName} (default branch ${repo.defaultBranch}).`);
+  }
+
+  async function createRepo() {
+    run("create", async () => {
+      const fullName = await githubCreateRepo(
+        config,
+        newRepoName,
+        newRepoDesc,
+        newRepoPrivate,
+      );
+      setConfig({ ...config, repo: fullName });
+      setCreating(false);
+      setNewRepoName("");
+      setNewRepoDesc("");
+      setStatus(`Created ${newRepoPrivate ? "private" : "public"} repository ${fullName}.`);
+    });
   }
 
   const configured = config.repo.trim() !== "" && config.token.trim() !== "";
@@ -172,17 +156,149 @@ export function GithubPanel() {
       </div>
 
       <div className="flex flex-col gap-3 p-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-1.5 text-xs text-muted">
-            Repository
-            <Input
-              value={config.repo}
-              spellCheck={false}
-              placeholder="owner/repo"
-              onChange={(e) => setConfig({ ...config, repo: e.target.value })}
-              className={"wrk-field w-48 font-mono"}
-            />
-          </label>
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-1.5 text-xs text-muted">
+                Repository
+                <Input
+                  value={config.repo}
+                  spellCheck={false}
+                  placeholder="owner/repo"
+                  onChange={(e) => setConfig({ ...config, repo: e.target.value })}
+                  className={"wrk-field w-48 font-mono"}
+                />
+              </label>
+              <div ref={pickerRef} className="relative">
+                <button
+                  onClick={loadRepos}
+                  disabled={!authed || busy !== null}
+                  className="rounded border border-edge px-2.5 py-1 text-[11px] text-muted hover:border-brand hover:text-ink disabled:opacity-50"
+                  title={
+                    authed
+                      ? "Pick a repository from your GitHub account"
+                      : "Connect a token or the GitHub CLI first"
+                  }
+                >
+                  {busy === "repos" ? "Loading…" : "Browse…"}
+                </button>
+                {repoMenuOpen && (
+                  <div className="absolute left-0 top-full z-50 mt-1 w-80 overflow-hidden rounded-md border border-edge bg-panel shadow-xl">
+                    <input
+                      value={repoQuery}
+                      spellCheck={false}
+                      autoFocus
+                      placeholder="Search your repositories…"
+                      onChange={(e) => setRepoQuery(e.target.value)}
+                      className="w-full border-b border-edge bg-canvas px-3 py-1.5 text-[11px] text-ink outline-none focus:border-brand"
+                    />
+                    <div className="max-h-72 overflow-auto py-1">
+                      {repos === null
+                        ? (
+                          <p className="px-3 py-2 text-[11px] text-muted">
+                            Loading repositories…
+                          </p>
+                        )
+                        : filteredRepos!.length === 0
+                          ? (
+                            <p className="px-3 py-2 text-[11px] text-muted">
+                              {repoQuery.trim()
+                                ? "No repositories match your search."
+                                : "Nothing yet — you can create a repository below."}
+                            </p>
+                          )
+                          : (
+                            filteredRepos!.map((repo) => (
+                              <button
+                                key={repo.fullName}
+                                type="button"
+                                onClick={() => pickRepo(repo)}
+                                className="block w-full px-3 py-1.5 text-left hover:bg-elevated"
+                              >
+                                <span className="block text-[11px] text-ink">
+                                  {repo.fullName}
+                                </span>
+                                <span className="block text-[10px] text-muted">
+                                  {repo.private ? "private" : "public"} · {repo.defaultBranch}
+                                </span>
+                              </button>
+                            ))
+                          )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRepoMenuOpen(false);
+                        setCreating(true);
+                      }}
+                      className="block w-full border-t border-edge px-3 py-1.5 text-left text-[11px] text-brand hover:bg-elevated"
+                    >
+                      + Create a repository…
+                    </button>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setCreating((open) => !open)}
+                disabled={!authed || busy !== null}
+                className="rounded border border-edge px-2.5 py-1 text-[11px] text-muted hover:border-brand hover:text-ink disabled:opacity-50"
+              >
+                Create…
+              </button>
+            </div>
+            {creating && (
+              <div className="flex flex-col gap-2 rounded border border-edge bg-canvas p-2.5">
+                <Input
+                  value={newRepoName}
+                  spellCheck={false}
+                  placeholder="New repository name (e.g. api-collection)"
+                  onChange={(e) => setNewRepoName(e.target.value)}
+                  className={"wrk-field font-mono"}
+                />
+                <Input
+                  value={newRepoDesc}
+                  spellCheck={false}
+                  placeholder="Description (optional)"
+                  onChange={(e) => setNewRepoDesc(e.target.value)}
+                  className={"wrk-field"}
+                />
+                <label className="flex items-center gap-1.5 text-[11px] text-muted">
+                  <input
+                    type="checkbox"
+                    checked={newRepoPrivate}
+                    onChange={(e) => setNewRepoPrivate(e.target.checked)}
+                  />
+                  Private repository (recommended — it will hold the collection)
+                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={createRepo}
+                    disabled={newRepoName.trim() === "" || busy !== null}
+                    className="rounded-md bg-brand px-3 py-1 text-[11px] font-semibold text-white hover:bg-brand-bright disabled:opacity-50"
+                  >
+                    {busy === "create" ? "Creating…" : "Create & use"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCreating(false);
+                      setError(null);
+                    }}
+                    className="rounded px-2 py-1 text-[11px] text-muted hover:text-ink"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+            <p className="text-[11px] leading-relaxed text-muted">
+              Syncing workspace{" "}
+              <span className="font-semibold text-ink">
+                “{active?.name ?? "this workspace"}”
+              </span>{" "}
+              · {countRequests(tree)} request{countRequests(tree) === 1 ? "" : "s"}.
+              Switch workspaces in the app to back a different one.
+            </p>
           <label className="flex items-center gap-1.5 text-xs text-muted">
             Branch
             <Input
@@ -203,17 +319,41 @@ export function GithubPanel() {
           </label>
         </div>
 
-        <label className="flex items-center gap-1.5 text-xs text-muted">
-          Personal access token
-          <Input
-            value={config.token}
-            type="password"
-            spellCheck={false}
-            placeholder="ghp_… (needs repo scope, stored in your keychain)"
-            onChange={(e) => setConfig({ ...config, token: e.target.value })}
-            className={"wrk-field min-w-0 flex-1 font-mono"}
-          />
-        </label>
+        <div className="flex flex-col gap-2">
+          <label className="flex items-center gap-1.5 text-xs text-muted">
+            Personal access token
+            <Input
+              value={config.token}
+              type="password"
+              spellCheck={false}
+              placeholder="ghp_… (needs repo scope, stored in your keychain)"
+              onChange={(e) => setConfig({ ...config, token: e.target.value })}
+              className={"wrk-field min-w-0 flex-1 font-mono"}
+            />
+          </label>
+
+          <button
+            onClick={() =>
+              run("gh", async () => {
+                const token = await githubGhToken();
+                setConfig((prev) => ({ ...prev, token }));
+                const status = await githubCheck({ ...config, token });
+                setStatus(`Connected with the GitHub CLI (gh) — ${status}`);
+              })
+            }
+            disabled={config.repo.trim() === "" || busy !== null}
+            className="self-start rounded border border-brand/50 px-3 py-1.5 text-xs text-brand hover:border-brand hover:bg-brand/5 disabled:opacity-50"
+          >
+            {busy === "gh" ? "Connecting…" : "Connect with GitHub CLI (gh)"}
+          </button>
+          <p className="text-[11px] leading-relaxed text-muted">
+            Rather than pasting a token, the{" "}
+            <span className="font-mono">gh</span> button signs you in with the
+            GitHub account you have already authenticated in the terminal —{" "}
+            <span className="font-mono">gh auth login</span> — and pulls the
+            credential from there, so it never has to be typed into this app.
+          </p>
+        </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -287,13 +427,11 @@ export function GithubPanel() {
           <button
             onClick={() =>
               run("push", async () => {
-                const result = await githubPush(
-                  config,
+                const result = await pushDocument(
                   documentText(),
-                  sha,
                   `Update ${active?.name ?? "workspace"} from WebRequestKit`,
                 );
-                remember(result.sha);
+                if (!result) return;
                 setStatus(
                   result.commitUrl
                     ? `Committed — ${result.commitUrl}`
