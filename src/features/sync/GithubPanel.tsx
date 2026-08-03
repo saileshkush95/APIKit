@@ -31,14 +31,13 @@ export function GithubPanel() {
   const { active } = useWorkspaces();
   const {
     config,
-    sha,
     lastSync,
-    ready,
     busy,
     status,
     error,
     load,
     setConfig,
+    setError,
     setStatus,
     run,
     remember,
@@ -336,7 +335,7 @@ export function GithubPanel() {
             onClick={() =>
               run("gh", async () => {
                 const token = await githubGhToken();
-                setConfig((prev) => ({ ...prev, token }));
+                setConfig({ ...config, token });
                 const status = await githubCheck({ ...config, token });
                 setStatus(`Connected with the GitHub CLI (gh) — ${status}`);
               })

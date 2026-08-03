@@ -8,6 +8,7 @@ import { EnvironmentBar } from "../features/environments/EnvironmentBar";
 import { Tour } from "../features/onboarding/Tour";
 import { WelcomeScreen } from "../features/onboarding/WelcomeScreen";
 import { ConsoleButton, ConsolePanel } from "../features/console/ConsolePanel";
+import { GithubHeaderBadge } from "../features/sync/GithubHeaderBadge";
 import { ThemeToggle } from "../features/settings/ThemeToggle";
 import { WorkspaceSwitcher } from "../features/workspaces/WorkspaceSwitcher";
 import { CommandPalette } from "../shared/components/CommandPalette";
@@ -55,6 +56,7 @@ function RootLayout() {
         <div className="ml-auto flex items-center gap-3 pr-3">
           <WorkspaceSwitcher />
           <EnvironmentBar />
+          <GithubHeaderBadge />
           <button
             onClick={startTour}
             className="flex h-7 w-7 items-center justify-center rounded-md border border-edge text-xs text-muted hover:bg-elevated hover:text-ink"

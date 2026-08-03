@@ -1,6 +1,7 @@
 import { Input, Textarea } from "../../shared/components/Field";
 import { useState } from "react";
-import { sendRequest } from "../../shared/lib/api";
+import { open } from "@tauri-apps/plugin-dialog";
+import { readTextFile, sendRequest } from "../../shared/lib/api";
 import { importOpenApi, type ImportResult } from "../../shared/lib/openapi";
 import { detectFormat, importPostman } from "../../shared/lib/postman";
 import { defaultAuth } from "../../shared/types";
@@ -41,12 +42,36 @@ function analyseDocument(text: string): ImportResult {
 /** Imports an OpenAPI / Swagger / Postman document from a URL or pasted text. */
 export function ImportDialog({ onClose, onImport }: Props) {
   const { settings } = useSettings();
-  const [source, setSource] = useState<"url" | "paste">("url");
+  const [source, setSource] = useState<"url" | "paste" | "file">("url");
   const [url, setUrl] = useState("");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
+
+  async function pickFile() {
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const selected = await open({
+        multiple: false,
+        title: "Choose a Postman collection or OpenAPI document",
+        filters: [
+          { name: "Documents", extensions: ["json", "yaml", "yml"] },
+        ],
+      });
+      if (typeof selected !== "string") return;
+      const contents = await readTextFile(selected);
+      setSource("paste");
+      setText(contents);
+      setResult(analyseDocument(contents));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function analyse() {
     setBusy(true);
@@ -108,6 +133,7 @@ export function ImportDialog({ onClose, onImport }: Props) {
               [
                 ["url", "From URL"],
                 ["paste", "Paste document"],
+                ["file", "From computer"],
               ] as const
             ).map(([key, label]) => (
               <button
@@ -133,6 +159,16 @@ export function ImportDialog({ onClose, onImport }: Props) {
               onKeyDown={(e) => e.key === "Enter" && analyse()}
               className={"wrk-field font-mono"}
             />
+          ) : source === "file" ? (
+            <button
+              onClick={pickFile}
+              disabled={busy}
+              className="flex w-full items-center justify-center gap-2 rounded border border-edge bg-elevated px-4 py-6 text-xs text-muted hover:border-brand hover:text-ink disabled:opacity-50"
+            >
+              {busy
+                ? "Reading…"
+                : "Choose a Postman collection or OpenAPI document"}
+            </button>
           ) : (
             <Textarea
               value={text}
@@ -145,7 +181,9 @@ export function ImportDialog({ onClose, onImport }: Props) {
 
           <button
             onClick={analyse}
-            disabled={busy || (source === "url" ? url === "" : text === "")}
+            disabled={
+              busy || (source === "url" ? url === "" : text === "")
+            }
             className="mt-3 rounded-md bg-brand px-4 py-1.5 text-xs font-semibold text-white hover:bg-brand-bright disabled:opacity-50"
           >
             {busy ? "Reading…" : "Read spec"}
