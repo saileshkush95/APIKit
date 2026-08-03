@@ -69,6 +69,25 @@ body {
   scrollbar-width: thin;
 }
 
+/* Desktop app: a stray click or drag must not leave text highlighted, so
+   nothing is selectable by default. Selection comes back only where it is
+   wanted — fields, the docs/script editors, and code or response blocks you
+   might copy. */
+* {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea,
+[contenteditable],
+pre,
+code,
+.wrk-var-tip {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 /* Rendered Markdown (request docs, comments). */
 .wrk-markdown h2,
 .wrk-markdown h3,

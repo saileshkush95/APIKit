@@ -1,5 +1,7 @@
 // Small UI helpers shared across components.
 
+import { PROTOCOL_LABELS, type Protocol } from "../types";
+
 /** Tailwind text-color class for an HTTP status code. */
 export function statusColor(status: number | null): string {
   if (status === null) return "text-muted";
@@ -40,4 +42,14 @@ export function requestLabel(url: string, fallback = "Untitled Request"): string
   } catch {
     return trimmed.replace(/^https?:\/\//, "");
   }
+}
+
+/**
+ * The short verb shown on a request tab: the HTTP method for REST and
+ * GraphQL, the protocol name (e.g. MQTT, WebSocket, gRPC) for everything
+ * else — those protocols have no HTTP method of their own.
+ */
+export function tabMethod(method: string, protocol: Protocol): string {
+  if (protocol === "rest" || protocol === "graphql") return method;
+  return PROTOCOL_LABELS[protocol];
 }

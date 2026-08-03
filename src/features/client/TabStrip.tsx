@@ -1,4 +1,4 @@
-import { methodColor, requestLabel } from "../../shared/lib/ui";
+import { methodColor, requestLabel, tabMethod } from "../../shared/lib/ui";
 import type { RequestTab } from "../../shared/types";
 
 interface Props {
@@ -40,14 +40,14 @@ export function TabStrip({
                 ? "border-t-2 border-t-brand bg-canvas text-ink"
                 : "border-t-2 border-t-transparent text-muted hover:bg-elevated/60"
             }`}
-            title={`${tab.method} ${tab.url}`}
+            title={`${tabMethod(tab.method, tab.config.protocol)} ${tab.url}`}
           >
             <span
               className={`flex-none font-mono text-[10px] font-bold ${methodColor(
-                tab.method,
+                tabMethod(tab.method, tab.config.protocol),
               )}`}
             >
-              {tab.method.toUpperCase()}
+              {tabMethod(tab.method, tab.config.protocol).toUpperCase()}
             </span>
             <span
               className={`min-w-0 flex-1 truncate ${tab.preview ? "italic" : ""}`}

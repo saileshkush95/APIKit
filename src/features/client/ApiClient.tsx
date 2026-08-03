@@ -72,6 +72,7 @@ import {
   emptySession,
   isStreaming,
   normalizeConfig,
+  type Protocol,
   type RequestDraft,
   type RequestTab,
   type SavedRequest,
@@ -107,17 +108,25 @@ function blankTab(overrides: Partial<RequestTab> = {}): RequestTab {
   };
 }
 
-function blankRequest(name = "New Request"): SavedRequest {
+function blankRequest(
+  name = "New Request",
+  protocol: Protocol = "rest",
+  method = "GET",
+): SavedRequest {
   return {
     kind: "request",
     id: newId(),
     name,
-    method: "GET",
+    method: protocol === "graphql" ? "POST" : method,
     url: "",
     headers: [{ name: "", value: "" }],
     body: "",
     tests: [],
-    config: defaultConfig(),
+    config: {
+      ...defaultConfig(),
+      protocol,
+      ...(protocol === "graphql" ? { bodyMode: "graphql" as const } : {}),
+    },
   };
 }
 
@@ -412,9 +421,15 @@ export function ApiClient({ intent }: ApiClientProps) {
     openTab(opened);
   }
 
-  function createRequest(parentId: string | null) {
+  function createRequest(
+    parentId: string | null,
+    protocol: Protocol = "rest",
+    method = "GET",
+  ) {
     const request = blankRequest(
       uniqueRequestName(tree, parentId, "New Request"),
+      protocol,
+      method,
     );
     setTree(insertNode(tree, parentId, request));
     if (parentId) toggleExpanded(parentId, true);

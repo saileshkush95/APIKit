@@ -40,18 +40,21 @@ import {
 import { writeTextFile } from "../../shared/lib/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { defaultsChain } from "../../shared/lib/inherit";
-import {
-  EXPORT_FORMATS,
-  type ExportFormat,
-} from "../../shared/lib/interop";
+import type { ExportFormat } from "../../shared/lib/interop";
 import { notify } from "../../shared/lib/notify";
 import { newId } from "../../shared/lib/storage";
-import { methodColor } from "../../shared/lib/ui";
+import { methodColor, tabMethod } from "../../shared/lib/ui";
 import { useValueHistory } from "../../shared/lib/valueHistory";
 import { useCollection } from "../../shared/state/collection";
 import { useConfirm } from "../../shared/state/confirm";
 import { useWorkspaces } from "../../shared/state/workspaces";
-import type { Folder, SavedRequest, TreeNode } from "../../shared/types";
+import { NewRequestDialog } from "./NewRequestDialog";
+import {
+  type Folder,
+  type Protocol,
+  type SavedRequest,
+  type TreeNode,
+} from "../../shared/types";
 
 interface Props {
   nodes: TreeNode[];
@@ -64,7 +67,11 @@ interface Props {
   /** Double click: opens a tab that stays. */
   onOpenPermanent: (request: SavedRequest) => void;
   /** Create a blank request in `parentId` and open it in a tab. */
-  onCreateRequest: (parentId: string | null) => void;
+  onCreateRequest: (
+    parentId: string | null,
+    protocol?: Protocol,
+    method?: string,
+  ) => void;
   /** Lets open tabs unbind from requests that no longer exist. */
   onRequestsDeleted: (ids: string[]) => void;
   /** Opens the runner for a folder, or the whole collection when null. */
@@ -115,23 +122,40 @@ export function CollectionSidebar({
   });
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [exportOpen, setExportOpen] = useState(false);
-  const exportRef = useRef<HTMLDivElement>(null);
+  const [newReqTarget, setNewReqTarget] = useState<{
+    parentId: string | null;
+  } | null>(null);
+  const [plusOpen, setPlusOpen] = useState(false);
+  const [plusPos, setPlusPos] = useState({ x: 0, y: 0 });
+  const plusRef = useRef<HTMLDivElement>(null);
+  const plusBtnRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (!exportOpen) return;
-    function onPointerDown(e: MouseEvent) {
-      if (!exportRef.current?.contains(e.target as Node)) setExportOpen(false);
+    if (!plusOpen) return;
+    function onDown(e: MouseEvent) {
+      const target = e.target as Node;
+      if (plusRef.current?.contains(target)) return;
+      if (plusBtnRef.current?.contains(target)) return;
+      setPlusOpen(false);
     }
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setExportOpen(false);
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setPlusOpen(false);
     }
-    window.addEventListener("mousedown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
     return () => {
-      window.removeEventListener("mousedown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
     };
-  }, [exportOpen]);
+  }, [plusOpen]);
+  function togglePlus() {
+    if (plusOpen) {
+      setPlusOpen(false);
+      return;
+    }
+    const rect = plusBtnRef.current?.getBoundingClientRect();
+    setPlusPos({ x: rect?.right ?? 0, y: rect?.bottom ?? 0 });
+    setPlusOpen(true);
+  }
   const [authFolderId, setAuthFolderId] = useState<string | null>(null);
   const [collectionOpen, setCollectionOpen] = useState(false);
   const { collectionDefaults, setCollectionDefaults } = useCollection();
@@ -538,9 +562,8 @@ export function CollectionSidebar({
           onCancelRename={() => setRenamingId(null)}
           onNewRequest={() => {
             onToggleExpanded(node.id, true);
-            onCreateRequest(node.id);
+            setNewReqTarget({ parentId: node.id });
           }}
-          onNewFolder={() => addFolder(node.id)}
           onClick={(e) => {
             // A modified click is a selection gesture and never opens anything.
             if (handleSelectClick(node.id, e)) return;
@@ -605,80 +628,87 @@ export function CollectionSidebar({
           <span className="flex-none text-[10px] opacity-70">⚙</span>
         </button>
         <div className="ml-auto flex items-center">
-          {/* New items land in the selected folder, or at the root. */}
-          <button
-            onClick={() => {
-              if (selectedFolderId) onToggleExpanded(selectedFolderId, true);
-              onCreateRequest(selectedFolderId);
-            }}
-            className="rounded px-1.5 py-0.5 text-muted hover:bg-elevated hover:text-ink"
-            title={
-              selectedFolderId ? "New request in selected folder" : "New request"
-            }
-          >
-            +
-          </button>
-          <button
-            onClick={onImport}
-            className="rounded px-1.5 py-0.5 text-muted hover:bg-elevated hover:text-ink"
-            title="Import an OpenAPI spec or Postman collection"
-          >
-            ↓
-          </button>
-          <div ref={exportRef} className="relative">
+          <div className="flex-none">
             <button
-              onClick={() => setExportOpen((open) => !open)}
+              ref={plusBtnRef}
+              onClick={togglePlus}
               className={`rounded px-1.5 py-0.5 text-muted hover:bg-elevated hover:text-ink ${
-                exportOpen ? "bg-elevated text-ink" : ""
+                plusOpen ? "bg-elevated text-ink" : ""
               }`}
-              title="Export this workspace"
-              aria-haspopup="menu"
-              aria-expanded={exportOpen}
+              title="New request, folder, import or export"
             >
-              ↑
+              +
             </button>
-            {exportOpen && (
+            {plusOpen && (
               <div
-                role="menu"
-                className="absolute right-0 top-full z-50 mt-1 w-72 overflow-hidden rounded-md border border-edge bg-panel py-1 shadow-lg"
+                ref={plusRef}
+                className="fixed z-50 min-w-44 overflow-hidden rounded-md border border-edge bg-elevated py-1 shadow-xl"
+                style={{ top: plusPos.y, right: window.innerWidth - plusPos.x }}
+                onClick={(e) => e.stopPropagation()}
               >
-                {EXPORT_FORMATS.map((entry) => (
-                  <button
-                    key={entry.value}
-                    type="button"
-                    onClick={() => {
-                      setExportOpen(false);
-                      onExport(entry.value);
-                    }}
-                    className="block w-full px-2.5 py-1.5 text-left hover:bg-elevated"
-                  >
-                    <span className="block text-[11px] text-ink">
-                      {entry.label}
-                    </span>
-                    <span className="mt-0.5 block text-[10px] leading-snug text-muted">
-                      {entry.hint}
-                    </span>
-                  </button>
-                ))}
-                <div className="mt-1 border-t border-edge px-2.5 pt-1.5 pb-0.5 text-[10px] leading-snug text-muted">
-                  Credentials typed into auth fields are removed from every
-                  export. <span className="font-mono">{"{{variable}}"}</span>{" "}
-                  references are kept.
-                </div>
+                <button
+                  onClick={() => {
+                    setPlusOpen(false);
+                    setNewReqTarget({ parentId: selectedFolderId });
+                  }}
+                  className="block w-full px-3 py-1 text-left text-xs text-ink hover:bg-panel"
+                >
+                  New Request…
+                </button>
+                <button
+                  onClick={() => {
+                    setPlusOpen(false);
+                    addFolder(selectedFolderId);
+                  }}
+                  className="block w-full px-3 py-1 text-left text-xs text-ink hover:bg-panel"
+                >
+                  New Folder
+                </button>
+                <div className="my-1 border-t border-edge" />
+                <button
+                  onClick={() => {
+                    setPlusOpen(false);
+                    onImport();
+                  }}
+                  className="block w-full px-3 py-1 text-left text-xs text-ink hover:bg-panel"
+                >
+                  Import…
+                </button>
+                <button
+                  onClick={() => {
+                    setPlusOpen(false);
+                    onExport("native");
+                  }}
+                  className="block w-full px-3 py-1 text-left text-xs text-ink hover:bg-panel"
+                >
+                  Export workspace…
+                </button>
+                <button
+                  onClick={() => {
+                    setPlusOpen(false);
+                    printCollection();
+                  }}
+                  className="block w-full px-3 py-1 text-left text-xs text-ink hover:bg-panel"
+                >
+                  Export Docs (PDF)
+                </button>
+                <button
+                  onClick={() => {
+                    setPlusOpen(false);
+                    exportDocsHtml({
+                      kind: "collection",
+                      name: collectionName,
+                      defaults: collectionDefaults,
+                      tree: nodes,
+                    });
+                  }}
+                  className="block w-full px-3 py-1 text-left text-xs text-ink hover:bg-panel"
+                >
+                  Export as HTML
+                </button>
               </div>
             )}
           </div>
-          <button
-            onClick={() => addFolder(selectedFolderId)}
-            className="rounded px-1.5 py-0.5 text-muted hover:bg-elevated hover:text-ink"
-            title={
-              selectedFolderId
-                ? "New folder inside selected folder"
-                : "New folder"
-            }
-          >
-            ⊞
-          </button>
         </div>
       </div>
 
@@ -722,7 +752,7 @@ export function CollectionSidebar({
             <p className="px-3 py-4 text-xs leading-relaxed text-muted">
               {searching
                 ? "No matches."
-                : "No saved requests yet. Use + to add one, or ⊞ for a folder."}
+                : "No saved requests yet. Use + to add one."}
             </p>
           ) : (
             visible.map((node) => renderNode(node, 0))
@@ -744,10 +774,13 @@ export function CollectionSidebar({
               ) : (
                 <span
                   className={`font-mono text-[10px] font-bold ${methodColor(
-                    draggedNode.method,
+                    tabMethod(draggedNode.method, draggedNode.config.protocol),
                   )}`}
                 >
-                  {draggedNode.method.toUpperCase()}
+                  {tabMethod(
+                    draggedNode.method,
+                    draggedNode.config.protocol,
+                  ).toUpperCase()}
                 </span>
               )}
               {draggedNode.name}
@@ -761,7 +794,7 @@ export function CollectionSidebar({
           state={menu}
           nodes={nodes}
           onClose={() => setMenu(null)}
-          onNewRequest={(parentId) => onCreateRequest(parentId)}
+          onNewRequest={(parentId) => setNewReqTarget({ parentId })}
           onNewFolder={addFolder}
           onOpen={(node) => !isFolder(node) && onOpen(node)}
           onRename={setRenamingId}
@@ -780,6 +813,14 @@ export function CollectionSidebar({
               tree: nodes,
             })
           }
+          onImport={() => {
+            setMenu(null);
+            onImport();
+          }}
+          onExport={(format) => {
+            setMenu(null);
+            onExport(format);
+          }}
           selectedCount={selectedIds.size}
           onMoveSelected={moveSelected}
           onDuplicateSelected={duplicateSelected}
@@ -818,6 +859,22 @@ export function CollectionSidebar({
           onChange={(patch) =>
             setCollectionDefaults({ ...collectionDefaults, ...patch })
           }
+        />
+      )}
+
+      {newReqTarget && (
+        <NewRequestDialog
+          parentLabel={
+            newReqTarget.parentId
+              ? findNode(nodes, newReqTarget.parentId)?.name
+              : undefined
+          }
+          onClose={() => setNewReqTarget(null)}
+          onCreate={(protocol, method) => {
+            const parentId = newReqTarget.parentId;
+            if (parentId) onToggleExpanded(parentId, true);
+            onCreateRequest(parentId, protocol, method);
+          }}
         />
       )}
     </aside>
@@ -862,7 +919,6 @@ interface RowProps {
   onCancelRename: () => void;
   onDoubleClick: () => void;
   onNewRequest: () => void;
-  onNewFolder: () => void;
   onClick: (e: React.MouseEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }
@@ -880,7 +936,6 @@ function Row({
   onCancelRename,
   onDoubleClick,
   onNewRequest,
-  onNewFolder,
   onClick,
   onContextMenu,
 }: RowProps) {
@@ -927,7 +982,7 @@ function Row({
             ? "bg-elevated text-ink"
             : "text-muted hover:bg-elevated/60"
       }`}
-      title={isFolder(node) ? node.name : `${node.method} ${node.url}`}
+      title={isFolder(node) ? node.name : `${tabMethod(node.method, node.config.protocol)} ${node.url}`}
     >
       {isFolder(node) ? (
         <span className="w-3 flex-none text-center text-[9px] text-muted">
@@ -944,10 +999,10 @@ function Row({
           // Sized to the method it shows, not to DELETE: a fixed column lined
           // the names up but left "GET" trailing a visible gap.
           className={`flex-none font-mono text-[10px] font-bold ${methodColor(
-            node.method,
+            tabMethod(node.method, node.config.protocol),
           )}`}
         >
-          {node.method.toUpperCase()}
+          {tabMethod(node.method, node.config.protocol).toUpperCase()}
         </span>
       )}
 
@@ -986,17 +1041,6 @@ function Row({
           >
             +
           </button>
-          <button
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              onNewFolder();
-            }}
-            className="px-1 text-[11px] leading-none text-muted hover:text-ink"
-            title="New folder inside this folder"
-          >
-            ⊞
-          </button>
         </span>
       )}
     </div>
@@ -1020,6 +1064,10 @@ interface ContextMenuProps {
   onPrintCollection: () => void;
   onExportHtml: (scope: DocsScope) => void;
   onExportCollectionHtml: () => void;
+  /** Opens the workspace import dialog. */
+  onImport: () => void;
+  /** Exports the workspace to a file in the chosen format. */
+  onExport: (format: ExportFormat) => void;
   /** How many rows are highlighted; >1 turns the menu into a bulk menu. */
   selectedCount: number;
   onMoveSelected: (targetId: string | null) => void;
@@ -1043,6 +1091,8 @@ function ContextMenu({
   onPrintCollection,
   onExportHtml,
   onExportCollectionHtml,
+  onImport,
+  onExport,
   selectedCount,
   onMoveSelected,
   onDuplicateSelected,
@@ -1133,7 +1183,7 @@ function ContextMenu({
   if (node && !isFolder(node)) {
     items.push({ label: "Open", run: () => onOpen(node) });
   }
-  items.push({ label: "New Request", run: () => onNewRequest(parentId) });
+  items.push({ label: "New Request…", run: () => onNewRequest(parentId) });
   items.push({ label: "New Folder", run: () => onNewFolder(parentId) });
   if (node && isFolder(node)) {
     items.push({ label: "Run folder", run: () => onRun(node.id) });
@@ -1149,6 +1199,8 @@ function ContextMenu({
   } else if (!node) {
     items.push({ label: "Run collection", run: () => onRun(null) });
     items.push({ label: "Collection Settings", run: onEditCollection });
+    items.push({ label: "Import…", run: onImport });
+    items.push({ label: "Export workspace…", run: () => onExport("native") });
     items.push({ label: "Export Docs (PDF)", run: onPrintCollection });
     items.push({ label: "Export as HTML", run: onExportCollectionHtml });
   }
