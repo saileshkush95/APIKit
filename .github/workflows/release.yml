@@ -24,7 +24,7 @@ jobs:
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Full history and tags: the notes are built from the commit range
           # since the previous release.
@@ -97,7 +97,7 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -146,7 +146,7 @@ jobs:
       # The CLI runner is the whole point of the JUnit output, and a pipeline
       # cannot install a Tauri bundle to get it. Bundled to plain JS because a
       # CI runner has node, not necessarily bun.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
       - name: Build the CLI runner
         run: |
