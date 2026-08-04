@@ -27,7 +27,7 @@ export type DocsScope =
   | { kind: "collection"; name: string; defaults: NodeDefaults; tree: TreeNode[] };
 
 /** The scheme in play, never the credential itself. */
-function describeAuth(auth: Auth | undefined): string | null {
+export function describeAuth(auth: Auth | undefined): string | null {
   switch (auth?.type) {
     case "bearer":
       return "Bearer token";
@@ -227,36 +227,6 @@ export function buildDocsHtml(scope: DocsScope, generatedAt: string): string {
 }
 
 const ROOT_ID = "wrk-print-root";
-
-/**
- * The same documentation as a self-contained HTML file — a collection, folder
- * or single request a teammate (or a frontend engineer) can open in a browser,
- * save, or hand off without running the app. The print styles ride along so a
- * future "Save as PDF" from the exported page keeps the same look.
- */
-export const STANDALONE_STYLE = `${STYLE}\n  body { background: #f3f4f6; }`;
-
-export function buildStandaloneHtml(scope: DocsScope, now = new Date()): string {
-  const generatedAt = now.toISOString().slice(0, 10);
-  const title =
-    scope.kind === "request"
-      ? scope.request.name
-      : scope.kind === "folder"
-        ? scope.folder.name
-        : scope.name;
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${escapeHtml(title)} — APIKit</title>
-  <style>${STANDALONE_STYLE}</style>
-</head>
-<body>
-  ${buildDocsHtml(scope, generatedAt)}
-</body>
-</html>`;
-}
 
 /**
  * Prints the document, which is where the PDF comes from.

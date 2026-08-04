@@ -32,11 +32,8 @@ import {
   type DropPosition,
 } from "../../shared/lib/tree";
 import { NodeDefaultsDialog } from "./NodeDefaultsDialog";
-import {
-  buildStandaloneHtml,
-  printDocs,
-  type DocsScope,
-} from "../../shared/lib/docsPrint";
+import { printDocs, type DocsScope } from "../../shared/lib/docsPrint";
+import { buildStandaloneHtml } from "../../shared/lib/docsViewer";
 import { writeTextFile } from "../../shared/lib/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { defaultsChain } from "../../shared/lib/inherit";
@@ -46,6 +43,7 @@ import { newId } from "../../shared/lib/storage";
 import { methodColor, tabMethod } from "../../shared/lib/ui";
 import { useValueHistory } from "../../shared/lib/valueHistory";
 import { useCollection } from "../../shared/state/collection";
+import { useEnvironments } from "../../shared/state/environments";
 import { useConfirm } from "../../shared/state/confirm";
 import { useWorkspaces } from "../../shared/state/workspaces";
 import { NewRequestDialog } from "./NewRequestDialog";
@@ -159,6 +157,7 @@ export function CollectionSidebar({
   const [authFolderId, setAuthFolderId] = useState<string | null>(null);
   const [collectionOpen, setCollectionOpen] = useState(false);
   const { collectionDefaults, setCollectionDefaults } = useCollection();
+  const { environments, collectionVariables, activeId } = useEnvironments();
   const { active: activeWorkspace } = useWorkspaces();
   const collectionName = activeWorkspace?.name ?? "Collection";
 
@@ -188,7 +187,10 @@ export function CollectionSidebar({
       filters: [{ name: "HTML", extensions: ["html"] }],
     });
     if (!path) return;
-    await writeTextFile(path, buildStandaloneHtml(scope));
+    await writeTextFile(
+      path,
+      buildStandaloneHtml(scope, { environments, collectionVariables, activeEnvironmentId: activeId }),
+    );
     notify("info", "Exported documentation as HTML");
   }
   // Resolved from the id each render, so the dialog always edits fresh state.

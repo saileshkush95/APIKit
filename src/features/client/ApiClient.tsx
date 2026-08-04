@@ -39,7 +39,7 @@ import {
   suggestFilename,
 } from "../../shared/lib/exportWorkspace";
 import { newId, SETTINGS, workspaceDataOnce } from "../../shared/lib/storage";
-import { buildStandaloneHtml } from "../../shared/lib/docsPrint";
+import { buildStandaloneHtml } from "../../shared/lib/docsViewer";
 import { interpolate } from "../../shared/lib/vars";
 import {
   findRequest,
@@ -944,12 +944,19 @@ export function ApiClient({ intent }: ApiClientProps) {
           ? toOpenApi(name, tree)
           : format === "html"
             ? {
-                text: buildStandaloneHtml({
-                  kind: "collection",
-                  name,
-                  defaults: collectionDefaults ?? {},
-                  tree,
-                }),
+                text: buildStandaloneHtml(
+                  {
+                    kind: "collection",
+                    name,
+                    defaults: collectionDefaults ?? {},
+                    tree,
+                  },
+                  {
+                    environments,
+                    collectionVariables,
+                    activeEnvironmentId,
+                  },
+                ),
                 filename: `${name
                   .toLowerCase()
                   .replace(/[^a-z0-9]+/g, "-")
