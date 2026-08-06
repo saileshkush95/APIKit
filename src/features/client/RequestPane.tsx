@@ -26,6 +26,11 @@ import { buildWireRequest } from "../../shared/lib/request";
 import { validateUrlFor } from "../../shared/lib/urlValidation";
 import { printDocs } from "../../shared/lib/docsPrint";
 import { resolveInherited } from "../../shared/lib/inherit";
+import {
+  defaultLayout,
+  normalizeLayout,
+  rememberLayout,
+} from "../../shared/lib/paneLayout";
 import { activeRows, storableRows } from "../../shared/lib/rows";
 import { unresolvedVars } from "../../shared/lib/vars";
 import {
@@ -44,6 +49,7 @@ import {
   type Header,
   type HttpVersion,
   type Protocol,
+  type PaneLayout,
   type RequestConfig,
   type RequestTab,
   type RequestTabKey,
@@ -81,6 +87,28 @@ const HTTP_VERSIONS: { value: HttpVersion; label: string }[] = [
   { value: "http1", label: "HTTP/1.1" },
   { value: "http2", label: "HTTP/2" },
   { value: "http3", label: "HTTP/3" },
+];
+
+// Divider limits, so neither pane can be dragged away entirely.
+const SPLIT_MIN = 0.15;
+const SPLIT_MAX = 0.85;
+const SPLIT_DEFAULT = 0.5;
+
+/**
+ * A stored divider position, made safe to use as a flex basis. Tabs are
+ * restored from JSON on disk, so anything at all could arrive here.
+ */
+function clampSplit(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return SPLIT_DEFAULT;
+  return Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, value));
+}
+
+// One button each, in reading order: bottom, left, right. The filled half of
+// the icon is where the response goes.
+const LAYOUTS: { value: PaneLayout; icon: string; title: string }[] = [
+  { value: "stacked", icon: "⬓", title: "Response under the request" },
+  { value: "left", icon: "◧", title: "Response left of the request" },
+  { value: "right", icon: "◨", title: "Response right of the request" },
 ];
 
 /** Request tabs relevant to each protocol. */
@@ -212,15 +240,43 @@ export function RequestPane({
   const containerRef = useRef<HTMLDivElement>(null);
   /** The two resizable panes; the drag ratio is relative to this box. */
   const splitRef = useRef<HTMLDivElement>(null);
-  const [split, setSplit] = useState(0.5);
-  // Stacked or side by side. A wide window suits columns — a long response and
-  // a long request body are both easier to read without scrolling.
-  const [layout, setLayout] = useState<"vertical" | "horizontal">(() =>
-    localStorage.getItem("clientLayout") === "horizontal"
-      ? "horizontal"
-      : "vertical",
-  );
-  const columns = layout === "horizontal";
+  // The divider belongs to the request, not the window: `tab.split` carries it,
+  // so switching tabs restores each one's own position and a reload brings them
+  // all back. Mirrored in local state during a drag — a mousemove must not
+  // write to the tab store sixty times a second — and committed on mouse-up.
+  const [split, setSplit] = useState(() => clampSplit(tab.split));
+  const shownTab = useRef(tab.id);
+  if (shownTab.current !== tab.id) {
+    // Adopt the newly shown request's own position during the render that
+    // switches to it. In an effect this would paint one frame at the previous
+    // request's ratio first, which reads as the divider jumping.
+    shownTab.current = tab.id;
+    setSplit(clampSplit(tab.split));
+  }
+  const latestSplit = useRef(split);
+  latestSplit.current = split;
+  const commitSplit = useRef<() => void>(() => {});
+  commitSplit.current = () => {
+    if (latestSplit.current !== tab.split) {
+      onChange({ split: latestSplit.current });
+    }
+  };
+  // Stacked or side by side, and on which side. A wide window suits columns — a
+  // long response and a long request body are both easier to read without
+  // scrolling. Per request, like the divider; a tab that has never been
+  // arranged follows the last choice made anywhere, so opening a request gives
+  // you the arrangement you have been working in rather than a reset.
+  // A tab opened before this setting existed has none of its own; it follows
+  // the default until it is arranged, which stamps one on.
+  const layout = tab.layout ? normalizeLayout(tab.layout) : defaultLayout();
+  const columns = layout !== "stacked";
+  /** Side by side with the response on the left, so the panes run right to left. */
+  const reversed = layout === "left";
+
+  function chooseLayout(next: PaneLayout) {
+    rememberLayout(next);
+    onChange({ layout: next });
+  }
   // Folded away entirely, to give the whole pane to the request. Kept across
   // sends on purpose: the rail carries the status, so a collapsed response
   // still says whether the last send worked, and reopening on every request
@@ -273,28 +329,33 @@ export function RequestPane({
       onClick={() => setResponseCollapsed(true)}
       className="rounded px-1 text-[11px] text-muted hover:bg-elevated hover:text-ink"
       title={
-        columns
-          ? "Minimize the response to the right edge"
-          : "Minimize the response to the bottom"
+        !columns
+          ? "Minimize the response to the bottom"
+          : reversed
+            ? "Minimize the response to the left edge"
+            : "Minimize the response to the right edge"
       }
     >
-      {columns ? "⇥" : "⇩"}
+      {!columns ? "⇩" : reversed ? "⇤" : "⇥"}
     </button>
-    <button
-      onClick={() => {
-        const next = columns ? "vertical" : "horizontal";
-        setLayout(next);
-        localStorage.setItem("clientLayout", next);
-      }}
-      className="rounded px-1 text-[11px] text-muted hover:bg-elevated hover:text-ink"
-      title={
-        columns
-          ? "Stack the response under the request"
-          : "Put the response beside the request"
-      }
-    >
-      {columns ? "⬓" : "◧"}
-    </button>
+    {/* One button per arrangement rather than a cycle: where the response
+        goes is a choice of three, and a control that only says "next" makes
+        you click through the one you did not want to reach the one you did. */}
+    {LAYOUTS.map((option) => (
+      <button
+        key={option.value}
+        onClick={() => chooseLayout(option.value)}
+        aria-pressed={layout === option.value}
+        className={`rounded px-1 text-[11px] ${
+          layout === option.value
+            ? "bg-elevated text-ink"
+            : "text-muted hover:bg-elevated hover:text-ink"
+        }`}
+        title={option.title}
+      >
+        {option.icon}
+      </button>
+    ))}
     </>
   );
 
@@ -327,8 +388,9 @@ export function RequestPane({
 
   /**
    * What is left of the response when it is minimized: a rail on the edge it
-   * occupied — the bottom when stacked, the right when side by side, so the
-   * pane folds away from the request rather than jumping across it.
+   * occupied — the bottom when stacked, and whichever side it was on when side
+   * by side, so the pane folds away from the request rather than jumping across
+   * it.
    *
    * It still reports the last status, time and size. A collapsed response that
    * said nothing would mean minimizing it cost you the one thing worth glancing
@@ -340,13 +402,15 @@ export function RequestPane({
       onClick={() => setResponseCollapsed(false)}
       title="Show the response"
       className={`group flex flex-none items-center gap-2 bg-panel text-[11px] text-muted hover:bg-elevated hover:text-ink ${
-        columns
-          ? "w-7 flex-col justify-start border-l border-edge py-2"
-          : "h-7 justify-start border-t border-edge px-2"
+        !columns
+          ? "h-7 justify-start border-t border-edge px-2"
+          : `w-7 flex-col justify-start border-edge py-2 ${
+              reversed ? "border-r" : "border-l"
+            }`
       }`}
     >
-      <span className={columns ? "text-[10px]" : "text-[10px]"}>
-        {columns ? "⇤" : "⇧"}
+      <span className="text-[10px]">
+        {!columns ? "⇧" : reversed ? "⇥" : "⇤"}
       </span>
       <span
         className={columns ? "[writing-mode:vertical-rl] tracking-wide" : ""}
@@ -420,10 +484,19 @@ export function RequestPane({
           ? null
           : (e.clientY - box.top) / box.height;
       if (ratio === null) return;
-      setSplit(Math.min(0.85, Math.max(0.15, ratio)));
+      // `split` is always the request's share. With the response on the left
+      // the panes run right to left, so the fraction measured from the left
+      // edge is the response's — the request gets what is left of it.
+      const next = clampSplit(reversed ? 1 - ratio : ratio);
+      // The ref, not the state, is what the mouse-up reads: the two can land in
+      // the same frame, and the commit must use the position actually dragged
+      // to rather than the one the last render happened to see.
+      latestSplit.current = next;
+      setSplit(next);
     }
     function onUp() {
       setDragging(false);
+      commitSplit.current();
     }
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -433,7 +506,7 @@ export function RequestPane({
       document.body.style.userSelect = userSelect;
       document.body.style.cursor = cursor;
     };
-  }, [dragging, columns]);
+  }, [dragging, columns, reversed]);
 
   // ⌘S / ⌘↵ / ⌘T are handled once at the window level in `ApiClient`.
 
@@ -664,7 +737,13 @@ export function RequestPane({
       ) : (
         <div
           ref={splitRef}
-          className={`flex min-h-0 min-w-0 flex-1 ${columns ? "flex-row" : "flex-col"}`}
+          className={`flex min-h-0 min-w-0 flex-1 ${
+            !columns
+              ? "flex-col"
+              : reversed
+                ? "flex-row-reverse"
+                : "flex-row"
+          }`}
         >
       {/* Request builder */}
       <div
@@ -890,10 +969,16 @@ export function RequestPane({
             <LoadingResponse onCancel={onCancel} />
           </>
         )}
+        {/* The tab row belongs here too: without it a failed send takes away
+            the arrange and minimize buttons along with it, and the pane
+            changes shape around every error. */}
         {!tab.loading && tab.error && (
-          <div className="m-3 whitespace-pre-wrap rounded-md border border-err bg-err/10 p-3 font-mono text-xs text-err">
-            {tab.error}
-          </div>
+          <>
+            {placeholderTabs}
+            <div className="m-3 whitespace-pre-wrap rounded-md border border-err bg-err/10 p-3 font-mono text-xs text-err">
+              {tab.error}
+            </div>
+          </>
         )}
         {!tab.loading && !tab.error && !tab.response && (
           <>

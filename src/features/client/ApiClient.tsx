@@ -28,6 +28,7 @@ import {
   enforceSecureUrl,
 } from "../../shared/lib/request";
 import { resolveInherited } from "../../shared/lib/inherit";
+import { defaultLayout } from "../../shared/lib/paneLayout";
 import { tlsFor } from "../../shared/lib/certificates";
 import { currentAccessToken } from "../../shared/lib/oauth";
 import { activeRows } from "../../shared/lib/rows";
@@ -97,6 +98,9 @@ function blankTab(overrides: Partial<RequestTab> = {}): RequestTab {
     preview: false,
     reqTab: "params",
     respTab: "body",
+    // Stamped now rather than read as it renders: the arrangement is the
+    // tab's own from the start, so arranging one request never moves another.
+    layout: defaultLayout(),
     response: null,
     error: null,
     loading: false,
@@ -162,6 +166,8 @@ function dehydrate(tab: RequestTab): StoredTab {
     tests: tab.tests,
     config: tab.config,
     reqTab: tab.reqTab,
+    split: tab.split,
+    layout: tab.layout,
   };
 }
 

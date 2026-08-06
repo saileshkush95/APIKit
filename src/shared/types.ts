@@ -714,6 +714,13 @@ export interface Folder extends NodeDefaults {
 /** A collection is a list of these; folders nest arbitrarily deep. */
 export type TreeNode = Folder | SavedRequest;
 
+/**
+ * How the request and response panes are arranged: stacked, or side by side
+ * with the response on either hand — a response is easier to read on the same
+ * side as the screen you keep it near.
+ */
+export type PaneLayout = "stacked" | "right" | "left";
+
 export interface RequestTab extends RequestDraft {
   id: string;
   /** Explicit tab title; `null` means "derive it from the URL". */
@@ -722,6 +729,15 @@ export interface RequestTab extends RequestDraft {
   sourceId: string | null;
   reqTab: RequestTabKey;
   respTab: ResponseTabKey;
+
+  /**
+   * Where the request/response divider sits, as a fraction of the pane. Per
+   * tab, so each request keeps the room it was given rather than inheriting
+   * whatever the last one was dragged to. Absent means the default half.
+   */
+  split?: number;
+  /** Which side the response takes. Absent means "whatever was last chosen". */
+  layout?: PaneLayout;
 
   /**
    * A preview tab is the one opened by a single click: it is replaced by the
@@ -994,6 +1010,10 @@ export interface StoredTab extends Omit<RequestDraft, "config"> {
   name: string | null;
   sourceId: string | null;
   reqTab: RequestTabKey;
+  /** Divider position; clamped on load, since this is opaque stored JSON. */
+  split?: number;
+  /** Pane arrangement; normalized on load, for the same reason. */
+  layout?: PaneLayout;
   /** Persisted as opaque JSON; normalized on load. */
   config: Partial<RequestConfig>;
 }
