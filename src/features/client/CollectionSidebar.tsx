@@ -214,14 +214,44 @@ export function CollectionSidebar({
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
   );
 
+  // Keys for a live selection. All of them are gated on there being one, so
+  // nothing here is in the way of the rest of the app the rest of the time.
   useEffect(() => {
     if (selectedIds.size === 0) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") clearSelection();
+      if (e.key === "Escape") {
+        clearSelection();
+        return;
+      }
+      // The search box and a rename field both sit inside the sidebar, and
+      // Backspace in either means backspace.
+      const target = e.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT")
+      ) {
+        return;
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        void removeSelected();
+        return;
+      }
+      // Extends the selection to everything on screen. Scoped to a selection
+      // that already exists, so ⌘A goes on meaning select-all-text elsewhere.
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        const order = visibleIds();
+        setSelectedIds(new Set(order));
+        setAnchorId(order[0] ?? null);
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedIds.size]);
+  }, [selectedIds, nodes, expanded, query]);
 
   useEffect(() => {
     if (!menu) return;

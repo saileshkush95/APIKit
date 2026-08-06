@@ -383,11 +383,15 @@ function tokenNode(token: Token, key: React.Key, from = 0, to?: number): ReactNo
 /**
  * One line, highlighted, with search matches wrapped in `<mark>`.
  * Returns a single space for an empty line so its row keeps its height.
+ *
+ * `activeAt` is the character offset of the match the viewer has stepped to;
+ * it is drawn solid so it stands out from the other matches on the line.
  */
 export function renderLine(
   line: string,
   lang: HighlightLanguage,
   needle = "",
+  activeAt: number | null = null,
 ): ReactNode {
   if (line === "") return " ";
   const tokens = tokenizeLine(line, lang);
@@ -423,7 +427,14 @@ export function renderLine(
       if (to <= from) continue;
       if (from > cursor) parts.push(tokenNode(token, key++, cursor - start, from - start));
       parts.push(
-        <mark key={key++} className="rounded bg-warn/40 text-ink">
+        <mark
+          key={key++}
+          className={
+            rangeStart === activeAt
+              ? "rounded bg-brand font-medium text-canvas"
+              : "rounded bg-warn/40 text-ink"
+          }
+        >
           {token.text.slice(from - start, to - start)}
         </mark>,
       );

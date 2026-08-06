@@ -172,6 +172,23 @@ export function ResponseViewer({
   const copyMap =
     jsonMap && jsonMap.nodes.length === lines.length ? jsonMap : null;
 
+  // How big each container is, against the line that opens it: how many
+  // elements an array holds, how many keys an object has. Closing lines carry
+  // the same node but no span, so only the opener is labelled.
+  const nodeSizes = useMemo(() => {
+    if (!copyMap) return null;
+    return copyMap.nodes.map((node, line) => {
+      if (copyMap.spans[line] === null) return null;
+      if (Array.isArray(node))
+        return `${node.length} ${node.length === 1 ? "item" : "items"}`;
+      if (node !== null && typeof node === "object") {
+        const keys = Object.keys(node).length;
+        return `${keys} ${keys === 1 ? "key" : "keys"}`;
+      }
+      return null;
+    });
+  }, [copyMap]);
+
   // XML and HTML fold on their elements. Clicking still copies nothing there:
   // a path and a value are JSON ideas.
   const markupSpans = useMemo(
@@ -294,14 +311,40 @@ export function ResponseViewer({
       /* clipboard access can be denied; the click simply does nothing */
     }
   }
-  const matches = useMemo(() => {
-    if (search === "") return 0;
-    return lines.reduce(
-      (total, line) =>
-        total + line.toLowerCase().split(search.toLowerCase()).length - 1,
-      0,
-    );
+  // Every occurrence, in document order, so the search can be walked rather
+  // than only counted. Both ends of the range are needed: the line to scroll
+  // to, and the offset that tells the highlighter which match is the current
+  // one when a line holds several.
+  const hits = useMemo(() => {
+    if (search === "") return [];
+    const needle = search.toLowerCase();
+    const found: { line: number; start: number }[] = [];
+    lines.forEach((text, line) => {
+      const lower = text.toLowerCase();
+      let from = 0;
+      for (;;) {
+        const at = lower.indexOf(needle, from);
+        if (at === -1) break;
+        found.push({ line, start: at });
+        from = at + needle.length;
+      }
+    });
+    return found;
   }, [lines, search]);
+
+  const [hit, setHit] = useState(0);
+  // Typing narrows or widens the results; either way the old position is
+  // meaningless, so each edit starts again from the first match.
+  useEffect(() => {
+    setHit(0);
+  }, [search, lines]);
+  const activeHit = hits[hit] ?? null;
+
+  /** Wraps around at both ends, so ⏎ keeps cycling through the results. */
+  function stepHit(delta: number) {
+    if (hits.length === 0) return;
+    setHit((current) => (current + delta + hits.length) % hits.length);
+  }
 
   const cookies = useMemo(
     () => parseCookies(response.headers),
@@ -551,12 +594,40 @@ export function ResponseViewer({
                       setSearch("");
                       setSearchOpen(false);
                     }
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      stepHit(e.shiftKey ? -1 : 1);
+                    }
                   }}
                   className="w-44 rounded border border-edge bg-panel px-2 py-0.5 text-xs text-ink outline-none focus:border-brand"
                 />
-                <span className="w-16 text-[11px] text-muted">
-                  {search ? `${matches} found` : ""}
+                <span className="w-14 text-[11px] text-muted tabular-nums">
+                  {search
+                    ? hits.length === 0
+                      ? "0 found"
+                      : `${hit + 1} / ${hits.length}`
+                    : ""}
                 </span>
+                <button
+                  // Keeps the caret in the field, so ⏎ still steps after a
+                  // click on the arrows.
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => stepHit(-1)}
+                  disabled={hits.length === 0}
+                  className="rounded px-1 py-0.5 text-[11px] text-muted hover:bg-elevated hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent"
+                  title="Previous match (⇧⏎)"
+                >
+                  ↑
+                </button>
+                <button
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => stepHit(1)}
+                  disabled={hits.length === 0}
+                  className="rounded px-1 py-0.5 text-[11px] text-muted hover:bg-elevated hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent"
+                  title="Next match (⏎)"
+                >
+                  ↓
+                </button>
               </div>
             )}
             <button
@@ -651,8 +722,10 @@ export function ResponseViewer({
               lines={lines}
               wrap={wrap}
               search={search}
+              activeHit={activeHit}
               lang={lang}
               spans={copyMap?.spans ?? markupSpans}
+              sizes={nodeSizes}
               canCopyNodes={copyMap !== null}
               onCopyNode={copyNode}
             />
@@ -861,17 +934,23 @@ function VirtualBody({
   lines,
   wrap,
   search,
+  activeHit,
   lang,
   spans,
+  sizes,
   canCopyNodes,
   onCopyNode,
 }: {
   lines: string[];
   wrap: boolean;
   search: string;
+  /** The match the search has stepped to: scrolled to and drawn solid. */
+  activeHit: { line: number; start: number } | null;
   lang: HighlightLanguage;
   /** JSON bodies: for a container-opening line, its closing line. */
   spans: (number | null)[] | null;
+  /** JSON bodies: "12 items" / "3 keys" against each container's opener. */
+  sizes: (string | null)[] | null;
   /** JSON bodies: clicking a line copies the node on it. */
   canCopyNodes: boolean;
   onCopyNode: (line: number, wantPath: boolean) => void;
@@ -927,6 +1006,50 @@ function VirtualBody({
   // for bodies small enough to afford it.
   const canVirtualize = !wrap || rowCount > 500;
 
+  // Stepping through the search has to bring the match into view — and out of
+  // any fold hiding it, or there would be nothing to bring into view.
+  useEffect(() => {
+    if (!activeHit) return;
+    const line = activeHit.line;
+    if (visible && !visible.includes(line)) {
+      setCollapsed((previous) => {
+        const next = new Set(previous);
+        for (const open of previous) {
+          const close = spans?.[open] ?? null;
+          if (close !== null && open < line && line <= close) next.delete(open);
+        }
+        return next.size === previous.size ? previous : next;
+      });
+      return; // runs again once the fold is open and `visible` has caught up
+    }
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    let top: number;
+    if (canVirtualize) {
+      const row = visible ? visible.indexOf(line) : line;
+      if (row === -1) return;
+      top = row * LINE_HEIGHT;
+    } else {
+      // Wrapped rows have no fixed height to multiply out, but they are all
+      // mounted, so the real one can be measured instead.
+      const row = viewport.querySelector<HTMLElement>(`[data-line="${line}"]`);
+      if (!row) return;
+      top =
+        row.getBoundingClientRect().top -
+        viewport.getBoundingClientRect().top +
+        viewport.scrollTop;
+    }
+    // Already on screen: scrolling would shuffle the view for nothing.
+    const bottom = viewport.scrollTop + viewport.clientHeight - LINE_HEIGHT;
+    if (top >= viewport.scrollTop && top <= bottom) return;
+    // A third of the way down rather than at the very top, so the match keeps
+    // the lines around it — context is most of why you searched.
+    viewport.scrollTo({
+      top: Math.max(0, top - viewport.clientHeight / 3),
+      behavior: "smooth",
+    });
+  }, [activeHit, visible, spans, canVirtualize]);
+
   const first = canVirtualize
     ? Math.max(0, Math.floor(scrollTop / LINE_HEIGHT) - OVERSCAN)
     : 0;
@@ -947,12 +1070,13 @@ function VirtualBody({
   function lineContent(actual: number, wrapped: boolean) {
     const close = spans?.[actual] ?? null;
     const isCollapsed = close !== null && collapsed.has(actual);
+    const size = sizes?.[actual] ?? null;
     return (
       <div
         style={wrapped ? undefined : { height: LINE_HEIGHT }}
         // pl-3 reserves the caret's column: absolutely positioned, it would
         // otherwise sit on top of the line's first characters.
-        className={`relative min-w-0 flex-1 pr-3 pl-3 ${
+        className={`group relative min-w-0 flex-1 pr-3 pl-3 ${
           wrapped ? "break-words whitespace-pre-wrap" : "whitespace-pre"
         } ${canCopyNodes ? "cursor-pointer hover:bg-elevated/60" : ""}`}
         title={
@@ -982,11 +1106,24 @@ function VirtualBody({
             {isCollapsed ? "▸" : "▾"}
           </button>
         )}
-        {renderLine(lines[actual], lang, search)}
+        {renderLine(
+          lines[actual],
+          lang,
+          search,
+          activeHit?.line === actual ? activeHit.start : null,
+        )}
         {isCollapsed && (
           <span className="text-muted select-none">
             {" … "}
+            {size !== null && `${size} `}
             {lines[close].trim()}
+          </span>
+        )}
+        {/* How much is inside, without having to collapse it or count by eye.
+            Only on hover: on every container at once it is a wall of noise. */}
+        {!isCollapsed && size !== null && (
+          <span className="ml-2 hidden text-[11px] text-muted select-none group-hover:inline">
+            {size}
           </span>
         )}
       </div>
@@ -1014,7 +1151,7 @@ function VirtualBody({
         style={{ lineHeight: `${LINE_HEIGHT}px` }}
       >
         {rows.map((actual) => (
-          <div key={actual} className="flex items-stretch">
+          <div key={actual} data-line={actual} className="flex items-stretch">
             {gutterCell(actual)}
             {lineContent(actual, wrap)}
           </div>
