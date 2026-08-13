@@ -380,6 +380,29 @@ export function BodyEditor({
   );
 }
 
+/** Where the variables sit relative to the query. */
+type GqlLayout = "vertical" | "horizontal";
+
+const GQL_LAYOUTS: { value: GqlLayout; icon: string; title: string }[] = [
+  { value: "vertical", icon: "⬓", title: "Variables under the query" },
+  { value: "horizontal", icon: "◨", title: "Variables beside the query" },
+];
+
+/** How tall the variables are stacked, how wide they are beside — never both. */
+function sizeKey(layout: GqlLayout): string {
+  return layout === "horizontal" ? "graphqlVarsWidth" : "graphqlVarsHeight";
+}
+
+/** In pixels, not a fraction of the pane: the pane has no height to take a
+ *  fraction of when it is shorter than the two editors and scrolls instead. */
+function storedSize(layout: GqlLayout): number | null {
+  const stored = Number(localStorage.getItem(sizeKey(layout)));
+  return Number.isFinite(stored) && stored > 0 ? stored : null;
+}
+
+/** Neither editor may be dragged smaller than this. */
+const MIN_SECTION = 72;
+
 /**
  * GraphQL editor with schema-aware help: the endpoint is introspected whenever
  * the URL settles, so the panel documents the live server rather than guessing.
@@ -401,6 +424,96 @@ function GraphqlBody({
   const [error, setError] = useState<string | null>(null);
   const queryRef = useRef<HTMLTextAreaElement | null>(null);
   const lastFetched = useRef<string>("");
+
+  // Side by side suits a wide window — a query and the variables it declares
+  // are read together, and neither has to be scrolled past to reach the other.
+  // Stacked suits a narrow one. The choice is remembered for every request,
+  // since it follows the shape of the window rather than of any one operation.
+  const [layout, setLayout] = useState<GqlLayout>(() =>
+    localStorage.getItem("graphqlEditorLayout") === "horizontal"
+      ? "horizontal"
+      : "vertical",
+  );
+
+  function chooseLayout(next: GqlLayout) {
+    setLayout(next);
+    localStorage.setItem("graphqlEditorLayout", next);
+    // Each arrangement keeps its own size, so turning the editors and turning
+    // them back brings you to what you set rather than to a default.
+    setVarsSize(storedSize(next));
+  }
+  const side = layout === "horizontal";
+
+  // The divider. `null` is "no size chosen": stacked that means the default
+  // band, beside it means an even split.
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [varsSize, setVarsSize] = useState<number | null>(() =>
+    storedSize(layout),
+  );
+  const [dragging, setDragging] = useState(false);
+  const latestSize = useRef<number | null>(varsSize);
+  latestSize.current = varsSize;
+
+  useEffect(() => {
+    if (!dragging) return;
+    // A drag is a pointer gesture, not a text one: without this the mousemove
+    // selects every line it sweeps over.
+    const { userSelect, cursor } = document.body.style;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = side ? "col-resize" : "row-resize";
+
+    function onMove(e: MouseEvent) {
+      const box = rowRef.current?.getBoundingClientRect();
+      if (!box) return;
+      // Measured from the far edge, because that is the edge the variables
+      // keep: the query takes whatever is left.
+      const room = side ? box.width : box.height;
+      const from = side ? box.right - e.clientX : box.bottom - e.clientY;
+      const next = Math.min(Math.max(from, MIN_SECTION), room - MIN_SECTION);
+      if (!Number.isFinite(next)) return;
+      latestSize.current = next;
+      setVarsSize(next);
+    }
+    function onUp() {
+      setDragging(false);
+      // The ref rather than the state: the move and the release can land in the
+      // same frame, and what was dragged to is what should be remembered.
+      if (latestSize.current !== null) {
+        localStorage.setItem(sizeKey(layout), String(Math.round(latestSize.current)));
+      }
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = userSelect;
+      document.body.style.cursor = cursor;
+    };
+  }, [dragging, side, layout]);
+
+  /** Back to the default, the way a double-click resets any divider. */
+  function resetSize() {
+    setVarsSize(null);
+    localStorage.removeItem(sizeKey(layout));
+  }
+
+  // The query takes what is left over, and the variables take what the divider
+  // gave them. They are sized in opposite ways on purpose: a flexible section
+  // with nothing left to give shrinks to nothing, which is how the variables
+  // used to be squeezed away entirely in a short pane with no way to scroll to
+  // what was inside them.
+  const querySection = side
+    ? "flex min-h-[10rem] min-w-0 flex-1 flex-col"
+    : "flex min-h-[8rem] flex-1 flex-col";
+  const varsSection = side
+    ? `flex min-h-[10rem] min-w-0 flex-col ${varsSize === null ? "flex-1" : "flex-none"}`
+    : "flex flex-none flex-col";
+  const varsStyle = side
+    ? varsSize === null
+      ? undefined
+      : { width: varsSize }
+    : { height: varsSize ?? 160 };
 
   // Field names from the introspected schema, offered while typing the query.
   // Deliberately flat — real cursor-context resolution needs a GraphQL parser,
@@ -499,49 +612,109 @@ function GraphqlBody({
 
   return (
     <div className="flex min-h-0 flex-1">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 pr-2">
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex items-center gap-2 pb-1">
-            <span className="text-[11px] font-semibold text-muted">Query</span>
-            {loading && (
-              <span className="text-[10px] text-muted">fetching schema…</span>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                const formatted = beautifyGraphql(config.graphqlQuery);
-                if (!replaceAll(queryRef.current, formatted)) {
-                  onConfigChange({ graphqlQuery: formatted });
-                }
-              }}
-              className="ml-auto text-xs text-brand hover:underline"
-            >
-              Beautify
-            </button>
+      {/* Scrolls once the sections stop fitting, so a short pane hides nothing
+          it cannot be scrolled back to. */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-y-auto pr-2">
+        {/* No `min-h-0` on purpose: the two must keep their own height rather
+            than being squeezed under it, so a pane too short for them scrolls
+            the column instead of drawing them over the attachments. */}
+        <div
+          ref={rowRef}
+          className={`flex flex-1 ${side ? "flex-row" : "flex-col"}`}
+        >
+          <div className={querySection}>
+            <div className="flex flex-none items-center gap-2 pb-1">
+              <span className="text-[11px] font-semibold text-muted">Query</span>
+              {loading && (
+                <span className="text-[10px] text-muted">fetching schema…</span>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  const formatted = beautifyGraphql(config.graphqlQuery);
+                  if (!replaceAll(queryRef.current, formatted)) {
+                    onConfigChange({ graphqlQuery: formatted });
+                  }
+                }}
+                className="ml-auto text-xs text-brand hover:underline"
+              >
+                Beautify
+              </button>
+            </div>
+            <CodeEditor
+              value={config.graphqlQuery}
+              onChange={(graphqlQuery) => onConfigChange({ graphqlQuery })}
+              placeholder={"query {\n  viewer { id }\n}"}
+              className="min-h-0 flex-1"
+              inputRef={queryRef}
+              historyKey="graphql"
+              language="graphql"
+              suggest={suggestQuery}
+              foldable
+            />
           </div>
-          <CodeEditor
-            value={config.graphqlQuery}
-            onChange={(graphqlQuery) => onConfigChange({ graphqlQuery })}
-            placeholder={"query {\n  viewer { id }\n}"}
-            className="min-h-[8rem] flex-1"
-            inputRef={queryRef}
-            historyKey="graphql"
-            language="graphql"
-            suggest={suggestQuery}
-          />
-        </div>
-        <div className="flex min-h-0 flex-col">
-          <div className="pb-1 text-[11px] font-semibold text-muted">
-            Variables
+          {/* Divider. Nothing to see until the pointer is on it: a line
+              between two editors that are already outlined reads as a third
+              border. The area to grab is there either way. */}
+          <div
+            onMouseDown={(e) => {
+              e.preventDefault();
+              setDragging(true);
+            }}
+            onDoubleClick={resetSize}
+            title="Drag to resize, double-click to reset"
+            className={`group relative flex-none select-none ${
+              side ? "mx-1 w-1.5 cursor-col-resize" : "my-1 h-1.5 cursor-row-resize"
+            }`}
+          >
+            <div
+              className={`absolute ${
+                dragging ? "bg-brand" : "bg-transparent group-hover:bg-brand"
+              } ${
+                side
+                  ? "inset-y-0 left-1/2 w-px -translate-x-1/2"
+                  : "inset-x-0 top-1/2 h-px -translate-y-1/2"
+              }`}
+            />
           </div>
-          <CodeEditor
-            value={config.graphqlVariables}
-            onChange={(graphqlVariables) => onConfigChange({ graphqlVariables })}
-            placeholder="{}"
-            className="h-20"
-            language="json"
-            suggest={suggestVariables}
-          />
+          <div className={varsSection} style={varsStyle}>
+            <div className="flex flex-none items-center gap-2 pb-1">
+              <span className="text-[11px] font-semibold text-muted">
+                Variables
+              </span>
+              {/* One button per arrangement rather than a toggle that flips:
+                  which way round they sit is a choice, and it reads as one. */}
+              <div className="ml-auto flex items-center gap-0.5">
+                {GQL_LAYOUTS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => chooseLayout(option.value)}
+                    aria-pressed={layout === option.value}
+                    title={option.title}
+                    className={`rounded px-1 text-[11px] ${
+                      layout === option.value
+                        ? "bg-elevated text-ink"
+                        : "text-muted hover:bg-elevated hover:text-ink"
+                    }`}
+                  >
+                    {option.icon}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <CodeEditor
+              value={config.graphqlVariables}
+              onChange={(graphqlVariables) =>
+                onConfigChange({ graphqlVariables })
+              }
+              placeholder="{}"
+              className="min-h-0 flex-1"
+              language="json"
+              suggest={suggestVariables}
+              foldable
+            />
+          </div>
         </div>
         <GraphqlFiles config={config} onConfigChange={onConfigChange} />
       </div>

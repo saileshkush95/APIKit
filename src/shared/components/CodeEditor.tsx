@@ -2,6 +2,17 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { matchDynamic } from "../lib/dynamicVars";
 import {
+  applyShownEdit,
+  foldRanges,
+  hiddenLines,
+  lineStarts,
+  project,
+  shiftFolds,
+  toFullOffset,
+  toShownOffset,
+  visibleLines,
+} from "../lib/folding";
+import {
   renderHighlighted,
   type HighlightLanguage,
 } from "../lib/highlight";
@@ -43,6 +54,12 @@ interface Props {
    * out, the browser's own undo stack is used unchanged.
    */
   historyKey?: string;
+  /**
+   * Arrows in the gutter that fold each `{...}` and `[...]` block away. Opt-in:
+   * it costs a scan of the text on every keystroke, and it is only worth it
+   * where documents are deep enough to need it.
+   */
+  foldable?: boolean;
 }
 
 const LINE_HEIGHT = 20;
@@ -79,12 +96,79 @@ export function CodeEditor({
   suggest,
   language = "none",
   historyKey,
+  foldable = false,
 }: Props) {
   const ownRef = useRef<HTMLTextAreaElement>(null);
   const textareaRef = inputRef ?? ownRef;
   const gutterRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLPreElement>(null);
   const [lineCount, setLineCount] = useState(1);
+
+  // --- Folding ---------------------------------------------------------------
+  //
+  // A textarea shows exactly the string it holds, so a folded line cannot be
+  // present-but-unseen: it holds the text *minus* the folded lines, and every
+  // edit made in it is mapped back onto the whole in `lib/folding`. Nothing
+  // folded — which is every editor that does not ask for this — makes `shown`
+  // the value itself and each of these an identity.
+  const [folds, setFolds] = useState<Set<number>>(() => new Set());
+  const ranges = useMemo(
+    () => (foldable ? foldRanges(value, language) : new Map<number, number>()),
+    [foldable, value, language],
+  );
+  const fullLines = useMemo(() => value.split("\n"), [value]);
+  const visible = useMemo(
+    () => visibleLines(fullLines.length, hiddenLines(folds, ranges)),
+    [fullLines.length, folds, ranges],
+  );
+  const fullStarts = useMemo(() => lineStarts(value), [value]);
+  const folded = visible.length < fullLines.length;
+  const shown = folded ? project(fullLines, visible) : value;
+  /** Where the caret was, in the full text, while a fold opens or shuts. */
+  const pendingCaret = useRef<number | null>(null);
+
+  /** An edit made in the textarea, written back onto the whole text. */
+  function commit(nextShown: string) {
+    if (!folded) {
+      onChange(nextShown);
+      return;
+    }
+    const edit = applyShownEdit(value, shown, nextShown, visible);
+    setFolds(shiftFolds(folds, edit, foldRanges(edit.text, language)));
+    onChange(edit.text);
+  }
+
+  function toggleFold(line: number) {
+    const element = textareaRef.current;
+    if (element) {
+      pendingCaret.current = toFullOffset(
+        shown,
+        element.selectionStart,
+        visible,
+        fullStarts,
+        value.length,
+      );
+    }
+    setFolds((current) => {
+      const next = new Set(current);
+      if (!next.delete(line)) next.add(line);
+      return next;
+    });
+  }
+
+  // Folding rewrites the textarea, which would otherwise leave the caret at the
+  // end of it. A fold is a view of the text, not an edit to it, so the caret
+  // stays on the character it was on — or, if that has just been folded away,
+  // at the end of the line that swallowed it.
+  useLayoutEffect(() => {
+    const caret = pendingCaret.current;
+    if (caret === null) return;
+    pendingCaret.current = null;
+    const element = textareaRef.current;
+    if (!element) return;
+    const at = toShownOffset(value, caret, visible, fullStarts, shown.length);
+    element.setSelectionRange(at, at);
+  }, [folds]);
 
   const { vars } = useEnvironments();
   const names = useMemo(() => Object.keys(vars).sort(), [vars]);
@@ -109,17 +193,17 @@ export function CodeEditor({
   // Hovering reads the overlay's token rects, so it works wherever the overlay
   // is drawn — that is, any editor with a language set.
   const { hoverProps, tooltip } = useVariableHover(overlayRef);
-  const history = useFieldHistory(historyKey, value, textareaRef, onChange);
+  const history = useFieldHistory(historyKey, shown, textareaRef, commit);
 
-  const highlightOn = language !== "none" && value.length > 0 && value.length <= HIGHLIGHT_LIMIT;
+  const highlightOn = language !== "none" && shown.length > 0 && shown.length <= HIGHLIGHT_LIMIT;
   const overlay = useMemo(
-    () => (highlightOn ? renderHighlighted(value, language) : null),
-    [highlightOn, value, language],
+    () => (highlightOn ? renderHighlighted(shown, language) : null),
+    [highlightOn, shown, language],
   );
 
   useLayoutEffect(() => {
-    setLineCount(value.split("\n").length);
-  }, [value]);
+    setLineCount(shown.split("\n").length);
+  }, [shown]);
 
   // The overlay must wrap at exactly the textarea's content width; a classic
   // scrollbar (Windows/Linux) eats into that width, so it is measured rather
@@ -206,7 +290,7 @@ export function CodeEditor({
 
   function choose(name: string) {
     const element = textareaRef.current;
-    const caret = element?.selectionStart ?? value.length;
+    const caret = element?.selectionStart ?? shown.length;
     if (!completion) return;
 
     setCompletion(null);
@@ -214,7 +298,7 @@ export function CodeEditor({
       splice(name, completion.start, caret);
       return;
     }
-    const result = completeVariable(value, completion.start, caret, name);
+    const result = completeVariable(shown, completion.start, caret, name);
     splice(result.text, result.from, result.to);
   }
 
@@ -244,7 +328,7 @@ export function CodeEditor({
     }
     // The edit still has to happen; only its undo step is lost.
     const caret = caretStart ?? from + text.length;
-    onChange(value.slice(0, from) + text + value.slice(to));
+    commit(shown.slice(0, from) + text + shown.slice(to));
     requestAnimationFrame(() => {
       element?.setSelectionRange(caret, caretEnd ?? caret);
     });
@@ -256,8 +340,8 @@ export function CodeEditor({
     const target = e.currentTarget;
     const start = target.selectionStart;
     const end = target.selectionEnd;
-    const nextChar = value[start] ?? "";
-    const prevChar = value[start - 1] ?? "";
+    const nextChar = shown[start] ?? "";
+    const prevChar = shown[start - 1] ?? "";
 
     // Typing a closer that is already there just moves over it.
     if (start === end && CLOSERS.has(e.key) && nextChar === e.key) {
@@ -269,7 +353,7 @@ export function CodeEditor({
     const closer = PAIRS[e.key];
     if (closer) {
       e.preventDefault();
-      const inner = value.slice(start, end);
+      const inner = shown.slice(start, end);
       // The caret goes inside the pair, keeping any wrapped text selected.
       splice(e.key + inner + closer, start, end, start + 1, start + 1 + inner.length);
       return true;
@@ -286,8 +370,8 @@ export function CodeEditor({
     }
 
     if (e.key === "Enter" && start === end && !completion) {
-      const lineStart = value.lastIndexOf("\n", start - 1) + 1;
-      const indent = /^[ \t]*/.exec(value.slice(lineStart, start))?.[0] ?? "";
+      const lineStart = shown.lastIndexOf("\n", start - 1) + 1;
+      const indent = /^[ \t]*/.exec(shown.slice(lineStart, start))?.[0] ?? "";
       const opensBlock = prevChar === "{" || prevChar === "[" || prevChar === "(";
       if (opensBlock && PAIRS[prevChar] === nextChar) {
         // Caret between an empty pair: put the closer on its own line.
@@ -348,12 +432,38 @@ export function CodeEditor({
     >
       <div
         ref={gutterRef}
-        aria-hidden
-        className="flex-none select-none overflow-hidden border-r border-edge bg-elevated/40 px-2 py-2.5 text-right font-mono text-[12.5px] leading-relaxed text-muted"
+        aria-hidden={!foldable}
+        className={`flex-none select-none overflow-hidden border-r border-edge bg-elevated/40 py-2.5 text-right font-mono text-[12.5px] leading-relaxed text-muted ${
+          foldable ? "pr-2 pl-4" : "px-2"
+        }`}
       >
-        {Array.from({ length: lineCount }, (_, i) => (
-          <div key={i}>{i + 1}</div>
-        ))}
+        {/* The numbers are the flow: they set each row's height, and the
+            textarea's rows are aligned to them by sharing a font and a line
+            height. The arrow is taken out of the flow so that it cannot move a
+            row by so much as a pixel. Folded, the numbers skip — which is what
+            says something is hidden there. */}
+        {foldable
+          ? visible.map((line) => (
+              <div key={line} className="relative">
+                {ranges.has(line) && (
+                  <button
+                    type="button"
+                    /* A fold is a view of the text, not an edit to it, so it
+                       does not take the caret out of the field. */
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => toggleFold(line)}
+                    aria-label={`${folds.has(line) ? "Unfold" : "Fold"} the block on line ${line + 1}`}
+                    className="absolute inset-y-0 -left-3 flex items-center text-[9px] text-muted hover:text-ink"
+                  >
+                    {folds.has(line) ? "▸" : "▾"}
+                  </button>
+                )}
+                <span aria-hidden>{line + 1}</span>
+              </div>
+            ))
+          : Array.from({ length: lineCount }, (_, i) => (
+              <div key={i}>{i + 1}</div>
+            ))}
       </div>
       <div className="relative min-h-0 min-w-0 flex-1" {...hoverProps}>
         {overlay !== null && (
@@ -368,14 +478,14 @@ export function CodeEditor({
         )}
         <textarea
           ref={textareaRef}
-          value={value}
+          value={shown}
           spellCheck={false}
           placeholder={placeholder}
           onChange={(e) => {
-            onChange(e.target.value);
+            commit(e.target.value);
             refresh(e.target.value, e.target.selectionStart ?? 0);
           }}
-          onClick={(e) => refresh(value, e.currentTarget.selectionStart ?? 0)}
+          onClick={(e) => refresh(shown, e.currentTarget.selectionStart ?? 0)}
           onBlur={() => setTimeout(() => setCompletion(null), 120)}
           onKeyDown={handleKeyDown}
           onScroll={(e) => {
