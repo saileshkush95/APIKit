@@ -7,8 +7,9 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use std::process::Command;
 use std::sync::Mutex;
+
+use crate::proc::command;
 
 /// port → application name. Ports are reused over time, but only after the
 /// original connection is long gone, so a stale hit is rare and harmless.
@@ -17,7 +18,7 @@ static CACHE: Mutex<Option<HashMap<u16, String>>> = Mutex::new(None);
 #[cfg(target_os = "macos")]
 fn owner_of(port: u16) -> Option<String> {
     // -Fc prints one line per field; the command name line starts with 'c'.
-    let output = Command::new("lsof")
+    let output = command("lsof")
         .args(["-nP", "-Fc", &format!("-iTCP:{port}")])
         .output()
         .ok()?;
@@ -29,7 +30,7 @@ fn owner_of(port: u16) -> Option<String> {
 #[cfg(target_os = "windows")]
 fn owner_of(port: u16) -> Option<String> {
     // netstat -ano maps the port to a PID; tasklist turns that into a name.
-    let output = Command::new("netstat").args(["-ano", "-p", "TCP"]).output().ok()?;
+    let output = command("netstat").args(["-ano", "-p", "TCP"]).output().ok()?;
     let listing = String::from_utf8_lossy(&output.stdout);
     let needle = format!(":{port} ");
     let pid = listing
@@ -38,7 +39,7 @@ fn owner_of(port: u16) -> Option<String> {
         .and_then(|line| line.split_whitespace().last())?
         .to_owned();
 
-    let output = Command::new("tasklist")
+    let output = command("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
         .output()
         .ok()?;
@@ -48,7 +49,7 @@ fn owner_of(port: u16) -> Option<String> {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn owner_of(port: u16) -> Option<String> {
-    let output = Command::new("ss")
+    let output = command("ss")
         .args(["-tnp", &format!("sport = :{port}")])
         .output()
         .ok()?;

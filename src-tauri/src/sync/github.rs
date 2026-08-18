@@ -223,7 +223,7 @@ pub async fn github_check(config: GithubConfig) -> Result<String, String> {
 /// account you have already signed into with the GitHub CLI, so the app never
 /// asks you to paste a credential into it.
 fn gh_output(args: &[&str]) -> std::io::Result<std::process::Output> {
-    std::process::Command::new("gh").args(args).output()
+    crate::proc::command("gh").args(args).output()
 }
 
 /// Asks the GitHub CLI for its current access token. Tautologically `gh` must
@@ -394,7 +394,7 @@ pub(crate) fn base64_encode(input: &[u8]) -> String {
     out
 }
 
-fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
     let mut lookup = [255u8; 256];
     for (index, byte) in ALPHABET.iter().enumerate() {
         lookup[*byte as usize] = index as u8;

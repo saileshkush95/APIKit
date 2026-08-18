@@ -12,6 +12,7 @@ mod app;
 mod auth;
 mod mock;
 mod net;
+mod proc;
 mod proxy;
 mod store;
 mod sync;

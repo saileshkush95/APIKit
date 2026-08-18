@@ -74,6 +74,9 @@ hudsucker = "0.23"
 
 # CA / leaf certificate generation for TLS interception
 rcgen = { version = "0.13", features = ["pem"] }
+# Certificate validity windows. Apple caps TLS leaves at 398 days, so the dates
+# have to be computed rather than left at rcgen's century-wide default.
+time = "0.3"
 
 # Workspace storage (collections, environments, tabs)
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -95,3 +98,8 @@ rand = "0.9"
 protox = "0.9.1"
 tokio-stream = "0.1.19"
 http = "1.5.0"
+
+[dev-dependencies]
+# Reads back the certificates the proxy signs, so the extensions Apple requires
+# are asserted against a real parse rather than trusted to stay put.
+x509-parser = "0.16"

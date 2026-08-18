@@ -8,8 +8,11 @@ things:
 1. **Proxy configured** → this machine's IP and the proxy port (default `8080`).
 2. **CA certificate installed and trusted** → otherwise HTTPS sites fail to load.
 
-Start the proxy from the **Proxy** tab, then use **Export CA certificate** to get
-the `.pem` file (its path is shown next to the button).
+Start the proxy from the **Proxy** tab. On a phone or another machine, point it
+at the proxy and then open **`http://apikit.setup`** — the proxy serves its own
+certificate there, so no file server, cable, or extra tool is involved. On this
+computer, **Export CA certificate** gives you the `.pem` directly (its path is
+shown next to the button).
 
 > Only intercept traffic on devices and networks you own or are authorised to
 > test. Remove the CA certificate when you are done — a trusted CA that anyone
@@ -145,28 +148,32 @@ Leave "Bypass proxy for" empty while testing.
 
 ### 2. Get the certificate onto the phone
 
-Easiest route, no cables: with the proxy running and the phone already
-configured above, open `http://apikit.setup` — actually, simplest is to serve
-the file from this computer:
+Open **`http://apikit.setup`** in the phone's browser. The proxy answers that
+hostname itself and hands over its own certificate — no file server, no cable,
+and nothing extra installed on the computer. The download starts on its own.
 
-```sh
-# in the folder holding the exported certificate
-python3 -m http.server 8000
-```
+Type the `http://` part. Without it, browsers treat `apikit.setup` as a search
+term rather than an address.
 
-Then browse to `http://<computer-ip>:8000/` on the phone and tap the `.pem`
-file. Alternatively email it to yourself or copy it over USB. If Android
-refuses to open a `.pem`, rename it to `.crt` first.
+If the phone is not pointed at the proxy yet, browse to the proxy's own address
+instead — `http://<computer-ip>:8080/` — which serves the same page. That also
+covers the case where a browser insists on searching for the name.
 
 ### 3. Install it as a CA
 
 Settings → **Security & privacy** → More security settings → **Encryption &
 credentials** → *Install a certificate* → **CA certificate** → *Install anyway*
-(confirming the warning) → pick the file.
+(confirming the warning) → pick `apikit-ca.crt` from **Downloads**.
 
-The exact path varies by manufacturer; searching Settings for "certificate"
-finds it on every device. Success looks like a persistent "Network may be
-monitored" notice — that is expected while the CA is installed.
+The setup page has a button that jumps straight to security settings, and shows
+the certificate's SHA-256 so you can check it is the one APIKit is using.
+
+Android 11 and later deliberately refuse to let a web page install a CA on your
+behalf, so this trip through Settings cannot be automated away — downloading the
+file is as far as any tool can take it. The exact path varies by manufacturer;
+searching Settings for "certificate" finds it on every device. Success looks
+like a persistent "Network may be monitored" notice — that is expected while the
+CA is installed.
 
 ### 4. Android 7+ : apps must opt in to user CAs
 
@@ -198,7 +205,7 @@ and reference it from the manifest:
 strict. Third-party apps you did not build cannot be intercepted this way —
 that is by design, not a bug in APIKit.
 
-### Emulator
+### Emulator — the one case that can be fully automated
 
 The emulator reaches the host at **`10.0.2.2`**, not the LAN IP:
 
@@ -206,8 +213,25 @@ The emulator reaches the host at **`10.0.2.2`**, not the LAN IP:
 emulator -avd <name> -http-proxy http://10.0.2.2:8080
 ```
 
-Install the CA the same way (drag the file onto the emulator window), and note
-that a cold boot or wipe removes it again.
+An emulator image *without* Play Store has a writable system partition, so the
+CA can go into the **system** store — where even apps that ignore user CAs will
+trust it, with no `network_security_config` and no tapping through Settings:
+
+```sh
+curl -o apikit-ca.pem http://10.0.2.2:8080/apikit-ca.pem
+# Android looks up CA files by a hash of the subject, not by name
+hash=$(openssl x509 -inform PEM -subject_hash_old -in apikit-ca.pem -noout)
+adb root && adb remount
+adb push apikit-ca.pem /system/etc/security/cacerts/$hash.0
+adb shell chmod 644 /system/etc/security/cacerts/$hash.0
+adb reboot
+```
+
+A cold boot or wipe removes it again. On a Play Store image `adb remount` fails
+and there is no way in — use a Google APIs image instead.
+
+For a physical device, `adb push apikit-ca.pem /sdcard/Download/` saves the
+browser step, but the install itself still has to happen in Settings.
 
 ---
 
@@ -228,16 +252,20 @@ shown in the Proxy tab (e.g. `192.168.1.5:8080`).
 ### 2. Download the certificate
 
 With the proxy now configured, open **Safari** (this must be Safari — Chrome
-cannot install profiles) and fetch the certificate. Serving it from this
-computer is the least fiddly way:
+cannot install profiles) and go to:
 
-```sh
-# in the folder holding the exported certificate
-python3 -m http.server 8000
+```
+http://<computer-ip>:8080/
 ```
 
-Browse to `http://<computer-ip>:8000/` and tap the `.pem` file. AirDrop works
-too. iOS will say "Profile Downloaded".
+The proxy serves its own certificate there, so nothing has to be running on the
+computer. iOS will say "Profile Downloaded".
+
+`http://apikit.setup` reaches the same page, but prefer the address form on
+iOS: Safari rewrites typed hostnames to HTTPS, and nothing here can be served
+over HTTPS — the certificate that would sign it is the one you are collecting.
+The proxy refuses that tunnel so Safari drops back to HTTP, but an IP with an
+explicit port skips the round trip entirely.
 
 ### 3. Install the profile
 

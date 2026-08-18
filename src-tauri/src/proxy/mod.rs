@@ -8,9 +8,11 @@
 //! time the proxy runs. The user installs/trusts that CA so the proxy can sign
 //! per-host leaf certificates on the fly.
 
-// The OS proxy settings this engine points at itself, and the lookup that
-// names the app behind a connection.
+// The OS proxy settings this engine points at itself, the lookup that names
+// the app behind a connection, and the page the proxy serves for itself.
 pub mod apps;
+pub mod ca;
+pub mod setup;
 pub mod system;
 
 use std::net::SocketAddr;
@@ -21,7 +23,6 @@ use std::sync::{Arc, Mutex};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hudsucker::{
-    certificate_authority::RcgenAuthority,
     hyper::{header, Request, Response},
     rustls::crypto::aws_lc_rs,
     Body, HttpContext, HttpHandler, Proxy, RequestOrResponse,
@@ -287,6 +288,8 @@ struct CaptureHandler {
     shared: Arc<ProxyShared>,
     pending: Option<Flow>,
     started_at: Option<u64>,
+    /// The certificate hand-out the proxy answers for itself.
+    setup: setup::SetupSite,
 }
 
 impl HttpHandler for CaptureHandler {
@@ -315,6 +318,33 @@ impl HttpHandler for CaptureHandler {
             let pq = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
             format!("https://{host}{pq}")
         };
+
+        // Answered here rather than forwarded: this is the proxy talking about
+        // itself. It has to come before capture, because returning a response
+        // from `handle_request` skips `handle_response` — a flow recorded now
+        // would sit unpaired and swallow the next real response on this
+        // connection.
+        if self.setup.claims(&host, uri.scheme().is_some()) {
+            // A browser that upgraded the address to HTTPS asks for a tunnel
+            // before it sends anything. We cannot terminate that tunnel with a
+            // certificate the device trusts — not trusting it yet is the whole
+            // reason it is here — and answering the CONNECT itself would look
+            // like an open tunnel and leave the client handshaking against a
+            // web page. Refusing outright is what sends it back to plain HTTP,
+            // where the page is waiting.
+            if parts.method == hudsucker::hyper::Method::CONNECT {
+                return setup::refuse_tunnel().into();
+            }
+            let path = uri.path().to_owned();
+            // The client's identity decides how the certificate is handed over:
+            // Safari installs it, everything else downloads it.
+            let agent = parts
+                .headers
+                .get(header::USER_AGENT)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default();
+            return self.setup.respond(&path, agent).into();
+        }
 
         let mut bytes = collect_body(body).await;
         let mut parts = parts;
@@ -532,13 +562,19 @@ fn generate_ca() -> Result<(String, String), String> {
     Ok((cert.pem(), key_pair.serialize_pem()))
 }
 
-fn build_authority(cert_pem: &str, key_pem: &str) -> Result<RcgenAuthority, String> {
+/// Builds the authority that signs a leaf per intercepted host.
+///
+/// Deliberately not hudsucker's `RcgenAuthority`: its leaves carry nothing but
+/// a subject alternative name, which leaves out several things Apple's
+/// published requirements for TLS server certificates ask for. See
+/// `ca::SigningAuthority`.
+fn build_authority(cert_pem: &str, key_pem: &str) -> Result<ca::SigningAuthority, String> {
     let key_pair = KeyPair::from_pem(key_pem).map_err(|e| e.to_string())?;
     let ca_cert = CertificateParams::from_ca_cert_pem(cert_pem)
         .map_err(|e| e.to_string())?
         .self_signed(&key_pair)
         .map_err(|e| e.to_string())?;
-    Ok(RcgenAuthority::new(
+    Ok(ca::SigningAuthority::new(
         key_pair,
         ca_cert,
         1_000,
@@ -571,6 +607,9 @@ pub async fn start_proxy(
         shared: state.shared.clone(),
         pending: None,
         started_at: None,
+        // Resolved once: a request must not pay for certificate parsing or an
+        // interface lookup.
+        setup: setup::SetupSite::new(&cert_pem, port),
     };
 
     // LAN mode lets phones and other machines on the network use the proxy;

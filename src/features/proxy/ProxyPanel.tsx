@@ -181,14 +181,18 @@ export function ProxyPanel() {
 
   useEffect(() => {
     proxyStatus().then(setStatus).catch(() => {});
-    getFlows().then(setFlows).catch(() => {});
+    // Newest first: the list is watched live, and the request you just made is
+    // the one you are looking for.
+    getFlows()
+      .then((captured) => setFlows(captured.slice().reverse()))
+      .catch(() => {});
 
     const unlistenHold = onProxyHold((held) =>
       setHeldQueue((prev) => [...prev, held]),
     );
 
     const unlistenPromise = onProxyFlow((flow) => {
-      setFlows((prev) => [...prev, flow]);
+      setFlows((prev) => [flow, ...prev]);
       setStatus((s) => ({ ...s, flowCount: s.flowCount + 1 }));
     });
 
@@ -465,7 +469,19 @@ export function ProxyPanel() {
                 . This computer is configured automatically.
               </li>
               <li>
-                Install &amp; trust the CA certificate on disk at:
+                On that device, open{" "}
+                <code className="rounded bg-elevated px-1.5 font-mono text-ink">
+                  http://apikit.setup
+                </code>{" "}
+                — the proxy hands over its own certificate there, so nothing
+                needs copying. Before the proxy is configured,{" "}
+                <code className="rounded bg-elevated px-1.5 font-mono text-ink">
+                  http://{lanAddress}:{status.port ?? port}/
+                </code>{" "}
+                serves the same page.
+              </li>
+              <li>
+                On this computer, the certificate is on disk at:
                 <br />
                 <code className="rounded bg-elevated px-1.5 font-mono text-ink">
                   {certPath}

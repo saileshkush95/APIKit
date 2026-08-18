@@ -127,14 +127,15 @@ function guides(host: string, port: number): Record<Platform, Guide> {
       ],
       certificate: [
         {
-          title: "Get the file onto the phone",
-          detail: `Serve it from the folder holding the exported certificate, then browse to http://${host}:8000/ on the phone. Email or USB work too. Rename .pem to .crt if Android refuses to open it.`,
-          code: "python3 -m http.server 8000",
+          title: "Open http://apikit.setup in the phone's browser",
+          detail:
+            "The proxy serves the certificate itself, so nothing has to be installed on this computer to hand it over. The download starts on its own; type the http:// part or the browser will search for the name instead.",
+          code: `http://${host}:${port}/ works too, before the proxy is even configured`,
         },
         {
           title: "Security & privacy → Encryption & credentials",
           detail:
-            "Install a certificate → CA certificate → Install anyway → pick the file. Searching Settings for “certificate” finds it on any device. A persistent “Network may be monitored” notice afterwards is expected.",
+            "Install a certificate → CA certificate → Install anyway → pick apikit-ca.crt from Downloads. Searching Settings for “certificate” finds it on any device; the page has a shortcut button too. Android 11 and later will not let a page install a CA for you — this trip through Settings is deliberate. A persistent “Network may be monitored” notice afterwards is expected.",
         },
         {
           title: "Android 7+ : apps ignore user CAs by default",
@@ -163,9 +164,10 @@ function guides(host: string, port: number): Record<Platform, Guide> {
       ],
       certificate: [
         {
-          title: "Download it in Safari (not Chrome)",
-          detail: `Only Safari can install profiles. Serve the certificate from this computer and open http://${host}:8000/ on the device; AirDrop works too. iOS will say “Profile Downloaded”.`,
-          code: "python3 -m http.server 8000",
+          title: "Open this address in Safari (not Chrome)",
+          detail:
+            "Only Safari can install profiles. The proxy serves the certificate itself, so no file server is needed here. iOS will say “Profile Downloaded”. Prefer the address form over http://apikit.setup: Safari rewrites typed hostnames to HTTPS, which cannot work for the page handing out the certificate you do not have yet.",
+          code: `http://${host}:${port}/`,
         },
         {
           title: "Settings → Profile Downloaded → Install",

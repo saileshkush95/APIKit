@@ -93,11 +93,13 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-process",
  "tauri-plugin-updater",
+ "time",
  "tokio",
  "tokio-stream",
  "tokio-tungstenite",
  "tonic",
  "url",
+ "x509-parser",
 ]
 
 [[package]]

@@ -3,9 +3,11 @@
 //! a trip through system preferences.
 
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
+
 use tauri::Manager;
+
+use crate::proc::command;
 
 /// Whether this process turned the system proxy on, so exit can turn it back
 /// off — a machine left pointing at a dead proxy has no working network.
@@ -42,7 +44,7 @@ pub fn heal_on_startup(app: &tauri::AppHandle) {
 }
 
 fn run(program: &str, args: &[&str]) -> Result<(), String> {
-    let output = Command::new(program)
+    let output = command(program)
         .args(args)
         .output()
         .map_err(|e| format!("could not run {program}: {e}"))?;
@@ -55,7 +57,7 @@ fn run(program: &str, args: &[&str]) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn apply(enable: bool, port: u16) -> Result<(), String> {
-    let output = Command::new("networksetup")
+    let output = command("networksetup")
         .arg("-listallnetworkservices")
         .output()
         .map_err(|e| format!("could not run networksetup: {e}"))?;
@@ -149,7 +151,7 @@ fn apply(enable: bool, port: u16) -> Result<(), String> {
 pub fn ca_trusted(cert_path: String) -> bool {
     #[cfg(target_os = "macos")]
     {
-        Command::new("security")
+        command("security")
             .args(["verify-cert", "-c", &cert_path])
             .output()
             .map(|output| output.status.success())
@@ -158,7 +160,7 @@ pub fn ca_trusted(cert_path: String) -> bool {
     #[cfg(target_os = "windows")]
     {
         let _ = &cert_path;
-        Command::new("certutil")
+        command("certutil")
             .args(["-user", "-store", "Root"])
             .output()
             .map(|output| String::from_utf8_lossy(&output.stdout).contains("APIKit CA"))
