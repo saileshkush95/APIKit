@@ -61,10 +61,11 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+// Mirrors `method_allows_body` in the Rust client: only TRACE is excluded, so a
+// snippet generated from a GET-with-a-body sends the same bytes the app does.
 function hasBody(request: WireRequest): boolean {
   return (
-    request.body.trim() !== "" &&
-    !["GET", "HEAD"].includes(request.method.toUpperCase())
+    request.body.trim() !== "" && request.method.toUpperCase() !== "TRACE"
   );
 }
 

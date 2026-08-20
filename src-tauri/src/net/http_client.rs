@@ -216,7 +216,9 @@ pub async fn send_request(
         }
         req = req.body(bytes);
     } else if let Some(body) = spec.body {
-        // Only attach a body for methods that conventionally carry one.
+        // A body is only ever non-empty here because one was typed, so an
+        // unusual pairing like GET-with-a-body is a deliberate test rather than
+        // a leftover, and goes out the way curl and Postman send it.
         if !body.is_empty() && method_allows_body(&method) {
             req = req.body(body);
         }
@@ -380,9 +382,34 @@ async fn build_multipart(
     Ok(form)
 }
 
+/// Whether a body may go out with `method`.
+///
+/// Only TRACE is refused, because RFC 9110 forbids content there outright and a
+/// server that echoes the request back would reflect it at the client. GET and
+/// HEAD are allowed: their bodies have no defined meaning, but finding out what
+/// a given server does with one is exactly the kind of thing this tool is for,
+/// and dropping it silently made the same request behave differently here than
+/// in the curl the user pasted it from.
 fn method_allows_body(method: &reqwest::Method) -> bool {
-    !matches!(
-        *method,
-        reqwest::Method::GET | reqwest::Method::HEAD | reqwest::Method::TRACE
-    )
+    *method != reqwest::Method::TRACE
+}
+
+#[cfg(test)]
+mod body_rules {
+    use super::method_allows_body;
+    use reqwest::Method;
+
+    #[test]
+    fn a_typed_body_survives_an_unusual_method() {
+        // The pairing curl and Postman both send, and the one this used to drop.
+        assert!(method_allows_body(&Method::GET));
+        assert!(method_allows_body(&Method::HEAD));
+        assert!(method_allows_body(&Method::DELETE));
+        assert!(method_allows_body(&Method::OPTIONS));
+    }
+
+    #[test]
+    fn trace_never_carries_content() {
+        assert!(!method_allows_body(&Method::TRACE));
+    }
 }
