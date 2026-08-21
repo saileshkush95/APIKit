@@ -172,6 +172,22 @@ export function rootTypes(
   });
 }
 
+/** Scalars every schema has, so listing them as browsable types is noise. */
+const BUILT_IN_SCALARS = new Set(["String", "Int", "Float", "Boolean", "ID"]);
+
+/**
+ * Every type worth browsing, alphabetically.
+ *
+ * Introspection meta-types are already gone by parse time. The built-in scalars
+ * go here instead of there because they are still needed as field types — it is
+ * only a row of their own, in a list of what this schema defines, that is noise.
+ */
+export function browsableTypes(schema: GraphqlSchema): SchemaType[] {
+  return schema.types
+    .filter((type) => type.name !== "" && !BUILT_IN_SCALARS.has(type.name))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** Every field name in the schema, for editor suggestions. */
 export function suggestionIndex(schema: GraphqlSchema): SchemaField[] {
   const seen = new Set<string>();
@@ -187,7 +203,6 @@ export function suggestionIndex(schema: GraphqlSchema): SchemaField[] {
   return out;
 }
 
-/** Markdown summary of the schema, used to seed a request's Docs tab. */
 /**
  * Formats a query: every brace boundary on its own line, two-space indent.
  * Strings, comments and argument lists are left untouched, and fields the
@@ -257,6 +272,7 @@ export function beautifyGraphql(source: string): string {
   return lines.join("\n");
 }
 
+/** Markdown summary of the schema, used to seed a request's Docs tab. */
 export function schemaToMarkdown(schema: GraphqlSchema): string {
   const lines: string[] = ["# Schema", ""];
   for (const { label, type } of rootTypes(schema)) {
