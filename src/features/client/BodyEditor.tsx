@@ -51,6 +51,16 @@ const LANGUAGES: { value: RawLanguage; label: string }[] = [
   { value: "javascript", label: "JavaScript" },
 ];
 
+/** Every schema has these, whether or not it says so. */
+const BUILT_IN_SCALAR_NAMES = ["Boolean", "Float", "ID", "Int", "String"];
+
+/** The kinds a variable may be declared as, and what to call each one. */
+const INPUT_KIND_LABELS: Record<string, string> = {
+  SCALAR: "scalar",
+  ENUM: "enum",
+  INPUT_OBJECT: "input",
+};
+
 const EDITOR_LANGUAGE: Record<RawLanguage, HighlightLanguage> = {
   json: "json",
   text: "none",
@@ -426,6 +436,7 @@ function GraphqlBody({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const queryRef = useRef<HTMLTextAreaElement | null>(null);
+  const varsRef = useRef<HTMLTextAreaElement | null>(null);
   const lastFetched = useRef<string>("");
 
   // Side by side suits a wide window — a query and the variables it declares
@@ -520,7 +531,9 @@ function GraphqlBody({
 
   // Field names from the introspected schema, offered while typing the query.
   // Deliberately flat — real cursor-context resolution needs a GraphQL parser,
-  // and a filtered flat list is already most of the value.
+  // and a filtered flat list is already most of the value. The one place that
+  // is not good enough is a variable's type, where a field name is never the
+  // answer and the schema knows exactly what is.
   const suggestQuery = useMemo(() => {
     if (!schema) return undefined;
     const entries: Suggestion[] = [];
@@ -537,18 +550,44 @@ function GraphqlBody({
     for (const keyword of ["query", "mutation", "subscription", "fragment"]) {
       if (!seen.has(keyword)) entries.push({ name: keyword });
     }
+
+    // What a variable may be declared as. An OBJECT cannot be one: a variable
+    // is input, and only scalars, enums and input objects travel that way. The
+    // built-in scalars are added by hand because a schema lists a type only if
+    // something in it uses that type, and `Boolean` is easy to leave unused.
+    const typeNames = new Map<string, string>(
+      BUILT_IN_SCALAR_NAMES.map((name) => [name, "scalar"]),
+    );
+    for (const type of schema.types) {
+      const label = INPUT_KIND_LABELS[type.kind];
+      if (label && type.name !== "" && !type.name.startsWith("__")) {
+        typeNames.set(type.name, label);
+      }
+    }
+    const types: Suggestion[] = [...typeNames]
+      .map(([name, detail]) => ({ name, detail }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
     return (value: string, caret: number) => {
-      const match = /[A-Za-z_][A-Za-z0-9_]*$/.exec(value.slice(0, caret));
-      if (!match) return null;
-      const query = match[0].toLowerCase();
-      const items = entries.filter(
+      const before = value.slice(0, caret);
+      // `query Foo($id: ` and anything typed after it. Brackets and bangs are
+      // part of the type being written, so `[Str` is still this position — and
+      // an empty match is deliberate: right after the colon is exactly when
+      // the list of what may go there is most wanted.
+      const declaring =
+        /\$[A-Za-z_][A-Za-z0-9_]*\s*:\s*[[!]*([A-Za-z_][A-Za-z0-9_]*)?$/.exec(
+          before,
+        );
+      const typed = declaring
+        ? (declaring[1] ?? "")
+        : (/[A-Za-z_][A-Za-z0-9_]*$/.exec(before)?.[0] ?? null);
+      if (typed === null) return null;
+      const query = typed.toLowerCase();
+      const items = (declaring ? types : entries).filter(
         (entry) =>
-          entry.name.toLowerCase().startsWith(query) &&
-          entry.name !== match[0],
+          entry.name.toLowerCase().startsWith(query) && entry.name !== typed,
       );
-      return items.length > 0
-        ? { items, start: caret - match[0].length }
-        : null;
+      return items.length > 0 ? { items, start: caret - typed.length } : null;
     };
   }, [schema]);
 
@@ -731,9 +770,25 @@ function GraphqlBody({
               <span className="text-[11px] font-semibold text-muted">
                 Variables
               </span>
+              {/* The query has had one of these all along. Variables are JSON
+                  rather than GraphQL, so it is the JSON formatter — which
+                  leaves the text alone when it will not parse, the same as
+                  the query's does. */}
+              <button
+                type="button"
+                onClick={() => {
+                  const formatted = beautify(config.graphqlVariables, "json");
+                  if (!replaceAll(varsRef.current, formatted)) {
+                    onConfigChange({ graphqlVariables: formatted });
+                  }
+                }}
+                className="ml-auto text-xs text-brand hover:underline"
+              >
+                Beautify
+              </button>
               {/* One button per arrangement rather than a toggle that flips:
                   which way round they sit is a choice, and it reads as one. */}
-              <div className="ml-auto flex items-center gap-0.5">
+              <div className="flex items-center gap-0.5">
                 {GQL_LAYOUTS.map((option) => (
                   <button
                     key={option.value}
@@ -759,6 +814,7 @@ function GraphqlBody({
               }
               placeholder="{}"
               className="min-h-0 flex-1"
+              inputRef={varsRef}
               language="json"
               suggest={suggestVariables}
               foldable
