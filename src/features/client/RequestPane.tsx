@@ -82,6 +82,24 @@ const PROTOCOLS: Protocol[] = [
   "webrtc",
 ];
 
+/**
+ * The only two methods GraphQL is defined over: POST for anything, and GET for
+ * queries, where the operation rides in the query string and a cache can keep
+ * the answer. Nothing else has a meaning there, so nothing else is offered.
+ */
+const GRAPHQL_METHODS = ["POST", "GET"];
+
+/**
+ * A request that arrived from an import with some other method keeps it in the
+ * list rather than showing an empty box until the picker is touched.
+ */
+function methodsFor(protocol: Protocol, current: string): readonly string[] {
+  if (protocol !== "graphql") return HTTP_METHODS;
+  return GRAPHQL_METHODS.includes(current)
+    ? GRAPHQL_METHODS
+    : [current, ...GRAPHQL_METHODS];
+}
+
 const HTTP_VERSIONS: { value: HttpVersion; label: string }[] = [
   { value: "auto", label: "Auto" },
   { value: "http1", label: "HTTP/1.1" },
@@ -451,10 +469,12 @@ export function RequestPane({
   }
 
   function switchProtocol(next: Protocol) {
-    // GraphQL requests are POSTs with a GraphQL body; the rest keep theirs.
+    // GraphQL requests carry a GraphQL body, and POST is the method that can
+    // always carry one; a GET already on the request is kept, since it is the
+    // other half of what GraphQL allows.
     if (next === "graphql") {
       patchConfig({ protocol: next, bodyMode: "graphql" });
-      onChange({ method: "POST" });
+      if (!GRAPHQL_METHODS.includes(tab.method)) onChange({ method: "POST" });
       return;
     }
     patchConfig({
@@ -622,7 +642,7 @@ export function RequestPane({
             onChange={(e) => onChange({ method: e.target.value })}
             className={`wrk-field mono lg w-28 font-bold ${methodColor(tab.method)}`}
           >
-            {HTTP_METHODS.map((m) => (
+            {methodsFor(protocol, tab.method).map((m) => (
               <option key={m} value={m} className="text-ink">
                 {m}
               </option>

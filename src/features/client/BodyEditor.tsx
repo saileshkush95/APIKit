@@ -15,6 +15,8 @@ import {
 import { notify, notifyError } from "../../shared/lib/notify";
 import { beautify } from "../../shared/lib/request";
 import { replaceAll } from "../../shared/lib/textEdit";
+import { interpolate, referencedVars } from "../../shared/lib/vars";
+import { useEnvironments } from "../../shared/state/environments";
 import { useSettings } from "../../shared/state/settings";
 import type { BodyMode, Header, RawLanguage, RequestConfig } from "../../shared/types";
 
@@ -419,6 +421,7 @@ function GraphqlBody({
   headers: Header[];
 }) {
   const { settings } = useSettings();
+  const { vars } = useEnvironments();
   const [schema, setSchema] = useState<GraphqlSchema | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -567,13 +570,28 @@ function GraphqlBody({
     return items.length > 0 ? { items, start: caret - match[1].length } : null;
   }
 
+  // Introspection travels the same wire as the request, so it needs the same
+  // substitution first: `{{baseUrl}}/graphql` is not an address until the
+  // environment has been applied, which is why a URL that ran fine came back
+  // with no schema the moment it was written with a variable in it.
+  const endpoint = useMemo(() => interpolate(url, vars), [url, vars]);
+  const wireHeaders = useMemo(
+    () =>
+      headers.map((header) => ({
+        ...header,
+        name: interpolate(header.name, vars),
+        value: interpolate(header.value, vars),
+      })),
+    [headers, vars],
+  );
+
   async function fetchSchema(target: string) {
     if (target.trim() === "") return;
     lastFetched.current = target;
     setLoading(true);
     setError(null);
     try {
-      const result = await introspect(target, headers, {
+      const result = await introspect(target, wireHeaders, {
         timeoutMs: settings.defaultTimeoutMs,
         verifyTls: settings.verifyTls,
       });
@@ -592,10 +610,23 @@ function GraphqlBody({
 
   // Debounced so introspection does not fire on every keystroke in the URL.
   useEffect(() => {
-    if (url.trim() === "" || url === lastFetched.current) return;
-    const timer = setTimeout(() => fetchSchema(url), 700);
+    if (endpoint.trim() === "" || endpoint === lastFetched.current) return;
+    const missing = referencedVars(endpoint);
+    if (missing.length > 0) {
+      // Sending it anyway fails with a transport error that names the literal
+      // braces and not the variable behind them, which reads as a broken
+      // endpoint rather than an environment that is not selected yet.
+      lastFetched.current = "";
+      setSchema(null);
+      setLoading(false);
+      setError(
+        `No value for ${missing.map((name) => `{{${name}}}`).join(", ")} in the active environment.`,
+      );
+      return;
+    }
+    const timer = setTimeout(() => fetchSchema(endpoint), 700);
     return () => clearTimeout(timer);
-  }, [url]);
+  }, [endpoint]);
 
   function insert(field: Parameters<typeof fieldSnippet>[0]) {
     const snippet = fieldSnippet(field);
@@ -723,7 +754,7 @@ function GraphqlBody({
         schema={schema}
         loading={loading}
         error={error}
-        onRefresh={() => fetchSchema(url)}
+        onRefresh={() => fetchSchema(endpoint)}
         onInsert={insert}
       />
     </div>

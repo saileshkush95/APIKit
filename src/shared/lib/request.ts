@@ -102,7 +102,19 @@ export function buildWireRequest(
         (file) => file.variable.trim() !== "" && file.filePath.trim() !== "",
       );
 
-      if (files.length > 0) {
+      if (draft.method.toUpperCase() === "GET") {
+        // GraphQL over GET carries the operation in the query string rather
+        // than a body — that is the form servers accept there, and the reason
+        // to pick it at all, since a GET is what a cache can store. Uploads
+        // are POST-only by the multipart spec, so any files are left behind.
+        url = applyQuery(url, [
+          ...parseQuery(url),
+          { name: "query", value: config.graphqlQuery },
+          ...(Object.keys(variables).length > 0
+            ? [{ name: "variables", value: JSON.stringify(variables) }]
+            : []),
+        ]);
+      } else if (files.length > 0) {
         // GraphQL multipart request spec: an `operations` part with null
         // placeholders, a `map` part pointing at them, then the files.
         for (const file of files) {
