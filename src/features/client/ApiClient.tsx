@@ -1005,6 +1005,24 @@ export function ApiClient({ intent }: ApiClientProps) {
     }
   }
 
+  // A tab carries its own name so that an unsaved one can have any name at
+  // all, which left it holding the old one after its saved request was renamed
+  // from the sidebar. The name is not part of `draftOf`, so following the tree
+  // here cannot make a tab look unsaved.
+  useEffect(() => {
+    setTabs((prev) => {
+      let changed = false;
+      const next = prev.map((tab) => {
+        if (!tab.sourceId) return tab;
+        const saved = findRequest(tree, tab.sourceId);
+        if (!saved || saved.name === tab.name) return tab;
+        changed = true;
+        return { ...tab, name: saved.name };
+      });
+      return changed ? next : prev;
+    });
+  }, [tree]);
+
   // Tabs unbind rather than vanish when their saved request is deleted, so
   // in-flight edits are never lost.
   const unbindTabs = useCallback((ids: string[]) => {

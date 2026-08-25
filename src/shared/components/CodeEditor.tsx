@@ -318,10 +318,20 @@ export function CodeEditor({
     caretEnd = caretStart,
   ) {
     const element = textareaRef.current;
+    // Only where the caret is being placed somewhere other than after the
+    // insert. Completions are worked out from the input event, which fires
+    // before that move — auto-closing a quote leaves the caret reported past
+    // the pair when what is being typed starts between it — and a caller that
+    // wants the default position (`choose`, above) has just closed the list
+    // and must not have it reopened underneath the word it inserted.
+    const recomplete = (at: number) => {
+      if (caretStart !== undefined && element) refresh(element.value, at);
+    };
     if (typeInto(element, text, from, to)) {
       if (caretStart !== undefined) {
         requestAnimationFrame(() => {
           element?.setSelectionRange(caretStart, caretEnd ?? caretStart);
+          recomplete(caretStart);
         });
       }
       return;
@@ -331,6 +341,7 @@ export function CodeEditor({
     commit(shown.slice(0, from) + text + shown.slice(to));
     requestAnimationFrame(() => {
       element?.setSelectionRange(caret, caretEnd ?? caret);
+      recomplete(caret);
     });
   }
 
@@ -347,6 +358,7 @@ export function CodeEditor({
     if (start === end && CLOSERS.has(e.key) && nextChar === e.key) {
       e.preventDefault();
       target.setSelectionRange(start + 1, start + 1);
+      refresh(shown, start + 1);
       return true;
     }
 

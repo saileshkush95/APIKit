@@ -8,6 +8,7 @@ import {
   setSetting,
   workspaceSharing,
 } from "../../shared/lib/api";
+import { notifyError } from "../../shared/lib/notify";
 import { SKEW_WARNING_MS, useSync } from "../../shared/state/sync";
 import { useWorkspaces } from "../../shared/state/workspaces";
 import type { WorkspaceMeta } from "../../shared/types";
@@ -19,6 +20,47 @@ function ago(ms: number | null): string {
   if (seconds < 60) return `${seconds}s ago`;
   if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
   return `${Math.round(seconds / 3600)}h ago`;
+}
+
+/**
+ * The app's copy affordance: the glyph becomes a tick for long enough to be
+ * seen and no longer. `label` turns it into a button with words, for the one
+ * that takes the whole block rather than a single line.
+ */
+function CopyButton({
+  value,
+  title,
+  label,
+}: {
+  value: string;
+  title: string;
+  label?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch (e) {
+      notifyError("Could not copy", e);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title={title}
+      className="flex flex-none items-center gap-1 rounded px-1 text-xs text-muted hover:bg-elevated hover:text-ink"
+    >
+      <span>{copied ? "✓" : "⧉"}</span>
+      {label && (
+        <span className="text-[11px]">{copied ? "Copied" : label}</span>
+      )}
+    </button>
+  );
 }
 
 type SyncSection = "lan" | "github" | "about";
@@ -65,6 +107,14 @@ export function SyncPanel() {
   const [sharing, setSharing] = useState<
     { id: string; name: string; shared: boolean }[]
   >([]);
+
+  // What the other machine has to be told, in one paste. Labelled rather than
+  // bare, since it usually arrives in a chat window with nothing around it to
+  // say which line is which.
+  const peerDetails = [
+    ...server.addresses.map((address) => `Address: ${address}:${server.port}`),
+    `Token: ${token}`,
+  ].join("\n");
 
   const refreshSharing = useCallback(() => {
     workspaceSharing()
@@ -274,16 +324,38 @@ export function SyncPanel() {
 
             {server.running && (
               <div className="rounded border border-edge bg-canvas px-3 py-2">
-                <div className="text-[11px] text-muted">
-                  On the other machine, add a peer with:
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-muted">
+                    On the other machine, add a peer with:
+                  </span>
+                  {/* One button for the whole block, because an address on
+                      its own is not enough to pair with and neither is a
+                      token: what gets sent to the other machine is both. */}
+                  <CopyButton
+                    value={peerDetails}
+                    title="Copy every address and the token"
+                    label="Copy all"
+                  />
                 </div>
                 {server.addresses.map((address) => (
-                  <div key={address} className="font-mono text-xs text-ink">
-                    {address}:{server.port}
+                  <div key={address} className="flex items-center gap-1">
+                    <span className="font-mono text-xs text-ink">
+                      {address}:{server.port}
+                    </span>
+                    {/* Per address as well as all together: which one the
+                        other machine can reach depends on its network, so
+                        the choice is theirs to make one at a time. */}
+                    <CopyButton
+                      value={`${address}:${server.port}`}
+                      title="Copy this address"
+                    />
                   </div>
                 ))}
-                <div className="mt-1 font-mono text-xs text-ink">
-                  token: {token}
+                <div className="mt-1 flex items-center gap-1">
+                  <span className="font-mono text-xs text-ink">
+                    token: {token}
+                  </span>
+                  <CopyButton value={token} title="Copy the pairing token" />
                 </div>
               </div>
             )}

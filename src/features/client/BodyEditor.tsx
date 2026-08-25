@@ -561,13 +561,31 @@ function GraphqlBody({
       ),
     ].map((match) => ({ name: match[1], detail: match[2] }));
     if (declared.length === 0) return null;
-    const match = /"([A-Za-z0-9_]*)$/.exec(value.slice(0, caret));
+
+    // Wherever a key can go: at the start of the object, after a comma, or
+    // part-way through one already being typed — the opening quote optional,
+    // since the list is most wanted at the moment there is nothing typed yet.
+    // Past the colon is a value, and the names were the wrong answer there.
+    const match = /[{,]\s*(")?([A-Za-z0-9_]*)$/.exec(value.slice(0, caret));
     if (!match) return null;
-    const query = match[1].toLowerCase();
-    const items = declared.filter((entry) =>
-      entry.name.toLowerCase().startsWith(query),
+    const [, quote, typed] = match;
+
+    // A key already written is not worth offering a second time.
+    const used = new Set(
+      [...value.matchAll(/"([A-Za-z0-9_]+)"\s*:/g)].map((entry) => entry[1]),
     );
-    return items.length > 0 ? { items, start: caret - match[1].length } : null;
+    const query = typed.toLowerCase();
+    const items = declared
+      .filter(
+        (entry) =>
+          !used.has(entry.name) && entry.name.toLowerCase().startsWith(query),
+      )
+      // Without a quote already open there is nothing to insert into, so the
+      // whole key goes in — `{` becomes `{"code"` rather than `{code`.
+      .map((entry) =>
+        quote ? entry : { name: `"${entry.name}"`, detail: entry.detail },
+      );
+    return items.length > 0 ? { items, start: caret - typed.length } : null;
   }
 
   // Introspection travels the same wire as the request, so it needs the same
