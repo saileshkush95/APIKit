@@ -102,6 +102,24 @@ pub struct StoredTab {
     pub tests: serde_json::Value,
     #[serde(default)]
     pub config: serde_json::Value,
+    /// Which response tab was open. Defaulted, so a tab written by an older
+    /// build still loads.
+    #[serde(default)]
+    pub resp_tab: String,
+    /// The last response, and the request that produced it. Opaque here: the
+    /// front end decides what is small enough to be worth keeping, and sends
+    /// null for the rest.
+    #[serde(default)]
+    pub response: serde_json::Value,
+    #[serde(default)]
+    pub sent: serde_json::Value,
+    /// Divider position and pane arrangement. The front end has always sent
+    /// these; there was nowhere here to put them, so every restart handed the
+    /// tab back its defaults.
+    #[serde(default)]
+    pub split: Option<f64>,
+    #[serde(default)]
+    pub layout: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -322,6 +340,11 @@ CREATE TABLE IF NOT EXISTS tabs (
     req_tab      TEXT NOT NULL,
     tests        TEXT NOT NULL DEFAULT '[]',
     config       TEXT NOT NULL DEFAULT '{}',
+    resp_tab     TEXT NOT NULL DEFAULT 'body',
+    response     TEXT NOT NULL DEFAULT 'null',
+    sent         TEXT NOT NULL DEFAULT 'null',
+    split        REAL,
+    layout       TEXT,
     position     INTEGER NOT NULL
 );
 
@@ -503,6 +526,11 @@ fn migrate(conn: &Connection) -> Result<(), String> {
         "ALTER TABLE tabs ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE tabs ADD COLUMN tests TEXT NOT NULL DEFAULT '[]'",
         "ALTER TABLE tabs ADD COLUMN config TEXT NOT NULL DEFAULT '{}'",
+        "ALTER TABLE tabs ADD COLUMN resp_tab TEXT NOT NULL DEFAULT 'body'",
+        "ALTER TABLE tabs ADD COLUMN response TEXT NOT NULL DEFAULT 'null'",
+        "ALTER TABLE tabs ADD COLUMN sent TEXT NOT NULL DEFAULT 'null'",
+        "ALTER TABLE tabs ADD COLUMN split REAL",
+        "ALTER TABLE tabs ADD COLUMN layout TEXT",
         "ALTER TABLE mock_routes ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE monitors ADD COLUMN method TEXT NOT NULL DEFAULT 'GET'",
         "ALTER TABLE monitors ADD COLUMN url TEXT NOT NULL DEFAULT ''",
@@ -1137,33 +1165,7 @@ pub fn load_workspace_data(db: State<Db>, workspace_id: String) -> Result<Worksp
         .collect::<Result<Vec<_>, _>>()
         .map_err(to_err)?;
 
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, name, source_id, method, url, headers, body, req_tab, tests, config
-             FROM tabs WHERE workspace_id = ?1 ORDER BY position",
-        )
-        .map_err(to_err)?;
-    let tabs = stmt
-        .query_map(params![workspace_id], |row| {
-            let headers: String = row.get(5)?;
-            let tests_raw: String = row.get(8)?;
-            let config_raw: String = row.get(9)?;
-            Ok(StoredTab {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                source_id: row.get(2)?,
-                method: row.get(3)?,
-                url: row.get(4)?,
-                headers: serde_json::from_str(&headers).unwrap_or_default(),
-                body: row.get(6)?,
-                req_tab: row.get(7)?,
-                tests: parse_json(&tests_raw, empty_array()),
-                config: parse_json(&config_raw, empty_object()),
-            })
-        })
-        .map_err(to_err)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(to_err)?;
+    let tabs = read_tabs(&conn, &workspace_id)?;
 
     let mock_routes = read_mock_routes(&conn, &workspace_id)?;
 
@@ -1358,13 +1360,65 @@ pub fn save_tabs(
 ) -> Result<(), String> {
     let mut conn = db.0.lock().map_err(to_err)?;
     let tx = conn.transaction().map_err(to_err)?;
-    tx.execute("DELETE FROM tabs WHERE workspace_id = ?1", params![workspace_id])
+    write_tabs(&tx, &workspace_id, &tabs)?;
+    tx.commit().map_err(to_err)
+}
+
+/// The open tabs of a workspace, in the order they sit in the strip.
+pub fn read_tabs(conn: &Connection, workspace_id: &str) -> Result<Vec<StoredTab>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, source_id, method, url, headers, body, req_tab, tests, config,
+                    resp_tab, response, sent, split, layout
+             FROM tabs WHERE workspace_id = ?1 ORDER BY position",
+        )
+        .map_err(to_err)?;
+    let tabs = stmt
+        .query_map(params![workspace_id], |row| {
+            let headers: String = row.get(5)?;
+            let tests_raw: String = row.get(8)?;
+            let config_raw: String = row.get(9)?;
+            let response_raw: String = row.get(11)?;
+            let sent_raw: String = row.get(12)?;
+            Ok(StoredTab {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                source_id: row.get(2)?,
+                method: row.get(3)?,
+                url: row.get(4)?,
+                headers: serde_json::from_str(&headers).unwrap_or_default(),
+                body: row.get(6)?,
+                req_tab: row.get(7)?,
+                tests: parse_json(&tests_raw, empty_array()),
+                config: parse_json(&config_raw, empty_object()),
+                resp_tab: row.get(10)?,
+                response: parse_json(&response_raw, serde_json::Value::Null),
+                sent: parse_json(&sent_raw, serde_json::Value::Null),
+                split: row.get(13)?,
+                layout: row.get(14)?,
+            })
+        })
+        .map_err(to_err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(to_err)?;
+    Ok(tabs)
+}
+
+/// Replaces a workspace's open tabs with `tabs`. The caller owns the
+/// transaction, so the delete and the writes land together or not at all.
+pub fn write_tabs(
+    conn: &Connection,
+    workspace_id: &str,
+    tabs: &[StoredTab],
+) -> Result<(), String> {
+    conn.execute("DELETE FROM tabs WHERE workspace_id = ?1", params![workspace_id])
         .map_err(to_err)?;
     for (position, tab) in tabs.iter().enumerate() {
-        tx.execute(
+        conn.execute(
             "INSERT INTO tabs
-               (id, workspace_id, name, source_id, method, url, headers, body, req_tab, tests, config, position)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+               (id, workspace_id, name, source_id, method, url, headers, body, req_tab, tests, config,
+                resp_tab, response, sent, split, layout, position)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 tab.id,
                 workspace_id,
@@ -1377,12 +1431,17 @@ pub fn save_tabs(
                 tab.req_tab,
                 json_text(&tab.tests, "[]"),
                 json_text(&tab.config, "{}"),
+                if tab.resp_tab.is_empty() { "body" } else { &tab.resp_tab },
+                json_text(&tab.response, "null"),
+                json_text(&tab.sent, "null"),
+                tab.split,
+                tab.layout,
                 position as i64
             ],
         )
         .map_err(to_err)?;
     }
-    tx.commit().map_err(to_err)
+    Ok(())
 }
 
 pub fn read_mock_routes(conn: &Connection, workspace_id: &str) -> Result<Vec<MockRoute>, String> {
@@ -2309,6 +2368,76 @@ mod tests {
         )
         .expect("workspace");
         conn
+    }
+
+    /// Tabs are the one thing every restart is judged by, and what they carry
+    /// has grown: the response last read, the tab it was read on, the divider.
+    /// A column added to the write and forgotten in the read loses exactly that
+    /// silently, so the round trip is pinned down here rather than noticed.
+    #[test]
+    fn a_tab_comes_back_as_it_was_left() {
+        let conn = memory_db();
+        let tab = StoredTab {
+            id: "t1".into(),
+            name: Some("Sidebar".into()),
+            source_id: Some("r1".into()),
+            method: "POST".into(),
+            url: "https://example.com/graphql".into(),
+            headers: vec![Header {
+                name: "Content-Type".into(),
+                value: "application/json".into(),
+            }],
+            body: "{\"query\":\"{ me { id } }\"}".into(),
+            req_tab: "body".into(),
+            tests: empty_array(),
+            config: serde_json::json!({ "bodyMode": "graphql" }),
+            resp_tab: "headers".into(),
+            response: serde_json::json!({ "status": 200, "body": "{\"ok\":true}" }),
+            sent: serde_json::json!({ "method": "POST" }),
+            split: Some(0.62),
+            layout: Some("right".into()),
+        };
+        write_tabs(&conn, "w", std::slice::from_ref(&tab)).expect("write");
+
+        let read = read_tabs(&conn, "w").expect("read");
+        assert_eq!(read.len(), 1);
+        let back = &read[0];
+        assert_eq!(back.url, tab.url);
+        assert_eq!(back.req_tab, "body");
+        assert_eq!(back.resp_tab, "headers", "the response tab that was open");
+        assert_eq!(back.response["status"], 200, "the response itself");
+        assert_eq!(back.sent["method"], "POST");
+        assert_eq!(back.split, Some(0.62), "the divider position");
+        assert_eq!(back.layout.as_deref(), Some("right"));
+
+        // Writing replaces rather than accumulates, and order is the strip's.
+        let second = StoredTab { id: "t2".into(), ..tab.clone() };
+        write_tabs(&conn, "w", &[second, tab.clone()]).expect("rewrite");
+        let read = read_tabs(&conn, "w").expect("read");
+        assert_eq!(read.len(), 2, "the first write is gone, not added to");
+        assert_eq!(read[0].id, "t2");
+        assert_eq!(read[1].id, "t1");
+    }
+
+    /// A tab written before responses were kept has no such columns, and must
+    /// still open.
+    #[test]
+    fn a_tab_from_an_older_build_still_opens() {
+        let conn = memory_db();
+        conn.execute(
+            "INSERT INTO tabs (id, workspace_id, name, source_id, method, url, headers, body,
+                               req_tab, position)
+             VALUES ('old', 'w', NULL, NULL, 'GET', 'https://example.com', '[]', '', 'params', 0)",
+            [],
+        )
+        .expect("legacy row");
+
+        let read = read_tabs(&conn, "w").expect("read");
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].url, "https://example.com");
+        assert_eq!(read[0].resp_tab, "body", "the column's default");
+        assert!(read[0].response.is_null(), "no response was ever stored");
+        assert_eq!(read[0].split, None);
     }
 
     fn request(id: &str, name: &str) -> TreeNode {

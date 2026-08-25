@@ -9,6 +9,7 @@ import { SIDEBAR_DEFAULT, SidebarShell } from "./SidebarShell";
 import { TabStrip } from "./TabStrip";
 import {
   cancelRequest,
+  loadWorkspaceData,
   onStreamEvent,
   onStreamStatus,
   saveTabs,
@@ -84,6 +85,16 @@ import {
   type TreeNode,
 } from "../../shared/types";
 
+/**
+ * Workspaces this component has already restored in this session — see the
+ * effect that reads them. Module-level on purpose: it has to outlive the
+ * component, which is the whole point.
+ */
+const restoredWorkspaces = new Set<string>();
+
+/** The last `intent.at` acted on, for the same reason. */
+let handledIntent: number | null = null;
+
 function blankTab(overrides: Partial<RequestTab> = {}): RequestTab {
   return {
     id: newId(),
@@ -134,6 +145,32 @@ function blankRequest(
   };
 }
 
+/**
+ * How much response is worth carrying across a restart. Every tab is rewritten
+ * on every debounced save, so a large body would be copied into the database
+ * again and again for the one restart in a hundred that reads it back — and a
+ * download of any size would make typing in another tab feel heavy.
+ */
+const MAX_STORED_RESPONSE = 512 * 1024;
+
+/**
+ * The response to write down, if any — and always with the tab that was open
+ * on it and the request that produced it. All three or none: a response tab
+ * pointing at a response that was not kept opens on an empty pane, which reads
+ * as the response having been lost rather than never stored.
+ */
+function storedResponse(
+  tab: RequestTab,
+): Pick<StoredTab, "respTab" | "response" | "sent"> {
+  const kept =
+    tab.response !== null &&
+    tab.response.body.length + (tab.response.bodyBase64?.length ?? 0) <=
+      MAX_STORED_RESPONSE;
+  return kept
+    ? { respTab: tab.respTab, response: tab.response, sent: tab.sent }
+    : { respTab: "body", response: null, sent: null };
+}
+
 function hydrate(stored: StoredTab): RequestTab {
   return {
     ...stored,
@@ -143,12 +180,13 @@ function hydrate(stored: StoredTab): RequestTab {
     tests: stored.tests ?? [],
     config: normalizeConfig(stored.config),
     preview: false,
-    respTab: "body",
-    response: null,
+    respTab: stored.respTab ?? "body",
+    response: stored.response ?? null,
+    sent: stored.sent ?? null,
     error: null,
+    // Never restored as in flight: whatever was running died with the process.
     loading: false,
     results: [],
-    sent: null,
     scriptLogs: [],
     stream: emptySession(),
   };
@@ -168,6 +206,7 @@ function dehydrate(tab: RequestTab): StoredTab {
     reqTab: tab.reqTab,
     split: tab.split,
     layout: tab.layout,
+    ...storedResponse(tab),
   };
 }
 
@@ -239,7 +278,16 @@ export function ApiClient({ intent }: ApiClientProps) {
     // them into the workspace being switched *to*.
     setReady(false);
 
-    workspaceDataOnce(workspaceId)
+    // `workspaceDataOnce` holds the read it did at startup so that the several
+    // providers do not race on separate loads. That snapshot is right exactly
+    // once. This component is a route, so it unmounts on every navigation away
+    // from the client and restores again on the way back — from the snapshot,
+    // which handed back whatever was open when the app launched and then wrote
+    // that over everything opened since. Second time round, read the database.
+    const first = !restoredWorkspaces.has(workspaceId);
+    restoredWorkspaces.add(workspaceId);
+
+    (first ? workspaceDataOnce(workspaceId) : loadWorkspaceData(workspaceId))
       .then((workspace) => {
         if (cancelled) return;
         const restored = workspace.tabs.map(hydrate);
@@ -845,10 +893,14 @@ export function ApiClient({ intent }: ApiClientProps) {
   }
 
   useEffect(() => {
-    if (!intent) return;
+    // `at` changes each time, so asking twice works — but the ask stays in the
+    // URL after it is answered, and this component remounts on every return to
+    // the client. Without remembering which one was acted on, coming back from
+    // Settings opened another blank request, every time.
+    if (!intent || handledIntent === intent.at) return;
+    handledIntent = intent.at;
     if (intent.kind === "import") setImporting(true);
     else createRequest(null);
-    // `at` changes each time, so asking twice works.
   }, [intent?.at]);
 
   // A request handed over from another view — a flow captured by the proxy.

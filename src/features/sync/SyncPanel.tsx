@@ -421,14 +421,18 @@ export function SyncPanel() {
                 Math.abs(peer.lastSkewMs) > SKEW_WARNING_MS;
               return (
                 <div key={peer.id} className="border-b border-edge px-4 py-3">
-                  <div className="flex flex-wrap items-center gap-2">
+                  {/* One line, always. Wrapping dropped Test and Sync onto a
+                      row of their own, which read as a second peer — and the
+                      two long fields are the ones with room to give, so they
+                      take the squeeze instead of the buttons. */}
+                  <div className="flex items-center gap-2">
                     <input
                       value={peer.name}
                       spellCheck={false}
                       onChange={(e) =>
                         updatePeer(peer.id, { name: e.target.value })
                       }
-                      className="w-32 rounded border border-transparent bg-transparent px-1 py-0.5 text-xs font-semibold text-ink outline-none hover:border-edge focus:border-brand"
+                      className="w-24 min-w-0 flex-none rounded border border-transparent bg-transparent px-1 py-0.5 text-xs font-semibold text-ink outline-none hover:border-edge focus:border-brand"
                     />
                     <Input
                       value={peer.host}
@@ -437,7 +441,7 @@ export function SyncPanel() {
                       onChange={(e) =>
                         updatePeer(peer.id, { host: e.target.value })
                       }
-                      className={"wrk-field w-48 font-mono"}
+                      className={"wrk-field w-48 min-w-24 flex-auto font-mono"}
                     />
                     <Input
                       value={peer.token}
@@ -446,16 +450,18 @@ export function SyncPanel() {
                       onChange={(e) =>
                         updatePeer(peer.id, { token: e.target.value })
                       }
-                      className={"wrk-field w-40 font-mono"}
+                      className={"wrk-field w-40 min-w-20 flex-auto font-mono"}
                     />
-                    <Toggle
-                      checked={peer.enabled}
-                      onChange={(enabled) => updatePeer(peer.id, { enabled })}
-                      label="Auto"
-                      title="Include in auto-sync and Sync all"
-                    />
+                    <div className="flex-none">
+                      <Toggle
+                        checked={peer.enabled}
+                        onChange={(enabled) => updatePeer(peer.id, { enabled })}
+                        label="Auto"
+                        title="Include in auto-sync and Sync all"
+                      />
+                    </div>
 
-                    <div className="ml-auto flex items-center gap-2">
+                    <div className="ml-auto flex flex-none items-center gap-2">
                       <button
                         onClick={() => probe(peer.id, peer.host, peer.token)}
                         disabled={probing === peer.id || peer.host === ""}
@@ -466,7 +472,7 @@ export function SyncPanel() {
                       <button
                         onClick={() => guard(syncPeer(peer.id))}
                         disabled={syncing || peer.host === ""}
-                        className="rounded-md bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-bright disabled:opacity-50"
+                        className="rounded-md bg-brand px-3 py-1 text-xs font-semibold whitespace-nowrap text-white hover:bg-brand-bright disabled:opacity-50"
                       >
                         {syncing ? "Syncing…" : "Sync"}
                       </button>

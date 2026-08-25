@@ -59,7 +59,10 @@ export function EnvironmentManager({ onClose }: Props) {
       onClick={onClose}
     >
       <div
-        className="flex h-[26rem] w-[46rem] overflow-hidden rounded-lg border border-edge bg-panel shadow-2xl"
+        // Sized to the window rather than fixed: this one holds a table of
+        // values — URLs, tokens — and 46rem left the value column too narrow to
+        // read one, with the room to widen it sitting unused either side.
+        className="flex h-[min(85vh,44rem)] w-[min(94vw,76rem)] overflow-hidden rounded-lg border border-edge bg-panel shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Environment list */}

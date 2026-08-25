@@ -147,9 +147,27 @@ export const useSyncStore = create<SyncStore>()((set, get) => {
       // rather than beside the collection.
       try {
         const stored = await secretGet(`sync.token.${workspaceId}`);
-        set({ token: stored || randomToken() });
-      } catch {
+        if (stored) {
+          set({ token: stored });
+        } else {
+          // Writing it here is what makes it a pairing token rather than a
+          // fresh one every start. Generated, it was only ever held in memory
+          // and nothing but editing the field by hand ever wrote it down — so
+          // each restart dealt a new one and every peer already paired with
+          // the old one was turned away.
+          const fresh = randomToken();
+          set({ token: fresh });
+          await secretSet(`sync.token.${workspaceId}`, fresh);
+        }
+      } catch (e) {
+        // Said out loud rather than swallowed: a token that cannot be stored
+        // is one that changes on every restart, and silence about that is
+        // what makes it look like the pairing itself is broken.
         set({ token: randomToken() });
+        notifyError(
+          "Could not reach the keychain — this pairing token will not survive a restart",
+          e,
+        );
       }
 
       syncServerStatus()

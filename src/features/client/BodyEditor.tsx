@@ -13,6 +13,7 @@ import {
   type GraphqlSchema,
 } from "../../shared/lib/graphql";
 import { notify, notifyError } from "../../shared/lib/notify";
+import { activeRows } from "../../shared/lib/rows";
 import { beautify } from "../../shared/lib/request";
 import { replaceAll } from "../../shared/lib/textEdit";
 import { interpolate, referencedVars } from "../../shared/lib/vars";
@@ -415,9 +416,44 @@ function storedSize(layout: GqlLayout): number | null {
 /** Neither editor may be dragged smaller than this. */
 const MIN_SECTION = 72;
 
+// Stacked, with nothing dragged, the variables band follows what is in it. A
+// fixed height was too short for anything real — a handful of variables sat
+// inside their own scrollbar with the room to show them going unused — and
+// simply making it taller would spend that room on the `{}` most requests
+// have. The floor keeps an empty object from looking like a bug; the ceiling
+// keeps a long one from pushing the query off the top.
+const VARS_MIN = 180;
+const VARS_MAX = 480;
+/** Matches the editor's own line height and padding, in `CodeEditor`. */
+const VARS_LINE = 20;
+
+function fittedHeight(text: string): number {
+  const lines = text.split("\n").length;
+  return Math.min(VARS_MAX, Math.max(VARS_MIN, lines * VARS_LINE + 20));
+}
+
 /**
- * GraphQL editor with schema-aware help: the endpoint is introspected whenever
- * the URL settles, so the panel documents the live server rather than guessing.
+ * Schemas already introspected this session, by the endpoint and headers that
+ * produced them. This editor unmounts whenever another request is opened, so
+ * without it switching back and forth paid for the whole introspection again
+ * each time — and on a real API that is hundreds of types over the network.
+ * The headers are part of the key because they decide which schema comes back:
+ * the same URL under two tenants is two different APIs.
+ */
+const schemaCache = new Map<string, GraphqlSchema>();
+
+function schemaKey(endpoint: string, headers: Header[]): string {
+  return JSON.stringify([
+    endpoint,
+    activeRows(headers).map((header) => [header.name, header.value]),
+  ]);
+}
+
+/**
+ * GraphQL editor with schema-aware help: the endpoint is introspected when it
+ * is first seen, so the panel documents the live server rather than guessing.
+ * It is a reference rather than a live view — the refresh button is what says
+ * "the server has moved on".
  */
 function GraphqlBody({
   config,
@@ -432,12 +468,36 @@ function GraphqlBody({
 }) {
   const { settings } = useSettings();
   const { vars } = useEnvironments();
-  const [schema, setSchema] = useState<GraphqlSchema | null>(null);
+
+  // Introspection travels the same wire as the request, so it needs the same
+  // substitution first: `{{baseUrl}}/graphql` is not an address until the
+  // environment has been applied, which is why a URL that ran fine came back
+  // with no schema the moment it was written with a variable in it.
+  const endpoint = useMemo(() => interpolate(url, vars), [url, vars]);
+  const wireHeaders = useMemo(
+    () =>
+      headers.map((header) => ({
+        ...header,
+        name: interpolate(header.name, vars),
+        value: interpolate(header.value, vars),
+      })),
+    [headers, vars],
+  );
+  const cacheKey = useMemo(
+    () => schemaKey(endpoint, wireHeaders),
+    [endpoint, wireHeaders],
+  );
+
+  // Seeded from the cache so that reopening a request shows its schema in the
+  // first frame, with no spinner and no request.
+  const [schema, setSchema] = useState<GraphqlSchema | null>(
+    () => schemaCache.get(cacheKey) ?? null,
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const queryRef = useRef<HTMLTextAreaElement | null>(null);
   const varsRef = useRef<HTMLTextAreaElement | null>(null);
-  const lastFetched = useRef<string>("");
+  const lastFetched = useRef<string>(schema ? cacheKey : "");
 
   // Side by side suits a wide window — a query and the variables it declares
   // are read together, and neither has to be scrolled past to reach the other.
@@ -506,7 +566,7 @@ function GraphqlBody({
     };
   }, [dragging, side, layout]);
 
-  /** Back to the default, the way a double-click resets any divider. */
+  /** Back to fitting the variables, the way a double-click resets any divider. */
   function resetSize() {
     setVarsSize(null);
     localStorage.removeItem(sizeKey(layout));
@@ -527,7 +587,7 @@ function GraphqlBody({
     ? varsSize === null
       ? undefined
       : { width: varsSize }
-    : { height: varsSize ?? 160 };
+    : { height: varsSize ?? fittedHeight(config.graphqlVariables) };
 
   // Field names from the introspected schema, offered while typing the query.
   // Deliberately flat — real cursor-context resolution needs a GraphQL parser,
@@ -627,24 +687,10 @@ function GraphqlBody({
     return items.length > 0 ? { items, start: caret - typed.length } : null;
   }
 
-  // Introspection travels the same wire as the request, so it needs the same
-  // substitution first: `{{baseUrl}}/graphql` is not an address until the
-  // environment has been applied, which is why a URL that ran fine came back
-  // with no schema the moment it was written with a variable in it.
-  const endpoint = useMemo(() => interpolate(url, vars), [url, vars]);
-  const wireHeaders = useMemo(
-    () =>
-      headers.map((header) => ({
-        ...header,
-        name: interpolate(header.name, vars),
-        value: interpolate(header.value, vars),
-      })),
-    [headers, vars],
-  );
-
   async function fetchSchema(target: string) {
     if (target.trim() === "") return;
-    lastFetched.current = target;
+    const key = schemaKey(target, wireHeaders);
+    lastFetched.current = key;
     setLoading(true);
     setError(null);
     try {
@@ -652,12 +698,17 @@ function GraphqlBody({
         timeoutMs: settings.defaultTimeoutMs,
         verifyTls: settings.verifyTls,
       });
+      schemaCache.set(key, result);
       setSchema(result);
-      // Seed empty docs with the server's own schema summary.
+      // Seed empty docs with the server's own schema summary. Only on a real
+      // fetch: doing it on a cache hit would rewrite the request every time it
+      // was opened, and an edit nobody made is worse than empty docs.
       if (config.docs.trim() === "") {
         onConfigChange({ docs: schemaToMarkdown(result) });
       }
     } catch (e) {
+      // The cached schema, if any, is now known to be wrong about this server.
+      schemaCache.delete(key);
       setSchema(null);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -667,7 +718,14 @@ function GraphqlBody({
 
   // Debounced so introspection does not fire on every keystroke in the URL.
   useEffect(() => {
-    if (endpoint.trim() === "" || endpoint === lastFetched.current) return;
+    if (endpoint.trim() === "" || cacheKey === lastFetched.current) return;
+    const cached = schemaCache.get(cacheKey);
+    if (cached) {
+      lastFetched.current = cacheKey;
+      setSchema(cached);
+      setError(null);
+      return;
+    }
     const missing = referencedVars(endpoint);
     if (missing.length > 0) {
       // Sending it anyway fails with a transport error that names the literal
@@ -683,7 +741,7 @@ function GraphqlBody({
     }
     const timer = setTimeout(() => fetchSchema(endpoint), 700);
     return () => clearTimeout(timer);
-  }, [endpoint]);
+  }, [cacheKey]);
 
   function insert(field: Parameters<typeof fieldSnippet>[0]) {
     const snippet = fieldSnippet(field);

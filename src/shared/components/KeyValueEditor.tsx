@@ -355,10 +355,17 @@ export function KeyValueEditor({
                   />
                 </th>
               )}
-              <th className={`${HEAD} w-1/3`}>{keyPlaceholder}</th>
+              {/* A quarter each to the name and the description, and the rest
+                  to the value. Sharing the width evenly gave a name like
+                  `token` room it had nothing to do with while the token itself
+                  was cut off — and it is the values that are long: URLs, JWTs,
+                  content types. */}
+              <th className={`${HEAD} w-1/4`}>{keyPlaceholder}</th>
               {allowFiles && <th className={`${HEAD} w-24`}>Type</th>}
               {valueColumn && <th className={HEAD}>{valuePlaceholder}</th>}
-              {descriptionColumn && <th className={HEAD}>Description</th>}
+              {descriptionColumn && (
+                <th className={`${HEAD} w-1/4`}>Description</th>
+              )}
               {allowSecrets && (
                 <th
                   className={`${HEAD} w-12 text-center`}

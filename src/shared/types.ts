@@ -1004,12 +1004,22 @@ export interface SentRequest {
   parts?: { name: string; value: string; fileName?: string }[];
 }
 
-/** The persisted slice of a tab — response state is deliberately transient. */
+/** The persisted slice of a tab. */
 export interface StoredTab extends Omit<RequestDraft, "config"> {
   id: string;
   name: string | null;
   sourceId: string | null;
   reqTab: RequestTabKey;
+  /** Absent in tabs written before responses were kept. */
+  respTab?: ResponseTabKey;
+  /**
+   * The last response and the request that produced it, so a restart lands
+   * back on what was being read rather than on an empty pane. Null when there
+   * was none, or when it was too large to be worth carrying across — see
+   * `MAX_STORED_RESPONSE`.
+   */
+  response?: HttpResponseData | null;
+  sent?: SentRequest | null;
   /** Divider position; clamped on load, since this is opaque stored JSON. */
   split?: number;
   /** Pane arrangement; normalized on load, for the same reason. */
