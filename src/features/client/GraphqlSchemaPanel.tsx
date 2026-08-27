@@ -436,6 +436,51 @@ function Empty({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * A type reference with its decoration picked out. `!` is the difference
+ * between an argument you may leave off and one the server rejects you for,
+ * and at one flat colour it vanishes into the name it is attached to.
+ */
+function TypeName({ type }: { type: string }) {
+  return (
+    <>
+      {type.split(/([[\]!])/).map((part, i) =>
+        part === "!" ? (
+          <span key={i} className="text-warn">
+            !
+          </span>
+        ) : part === "[" || part === "]" ? (
+          <span key={i} className="text-muted">
+            {part}
+          </span>
+        ) : (
+          <span key={i}>{part}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+/** A type, coloured as one and clickable through to its own page. */
+function TypeLink({
+  type,
+  onOpenType,
+}: {
+  type: string;
+  onOpenType: (name: string) => void;
+}) {
+  const bare = type.replace(/[[\]!]/g, "");
+  return (
+    <button
+      onClick={() => onOpenType(bare)}
+      className="text-left font-mono text-[11px] break-words text-redirect hover:underline"
+      title={`Open ${bare}`}
+    >
+      <TypeName type={type} />
+    </button>
+  );
+}
+
 function FieldRow({
   field,
   onInsert,
@@ -445,34 +490,44 @@ function FieldRow({
   onInsert: (field: SchemaField) => void;
   onOpenType: (name: string) => void;
 }) {
-  // Strip list/non-null decoration to get a type worth opening.
-  const bare = field.type.replace(/[[\]!]/g, "");
-
   return (
     <div className="group border-b border-edge/60 py-1">
-      <div className="flex items-baseline gap-1.5">
+      <div className="flex items-baseline gap-1">
         <button
           onClick={() => onInsert(field)}
-          className="font-mono text-[11px] text-ink hover:text-brand"
+          className="font-mono text-[11px] break-words text-ink hover:text-brand"
           title="Insert into query"
         >
           {field.name}
         </button>
-        <button
-          onClick={() => onOpenType(bare)}
-          className="font-mono text-[10px] text-muted hover:text-brand"
-          title={`Open ${bare}`}
-        >
-          {field.type}
-        </button>
+        <span className="font-mono text-[11px] text-muted">:</span>
+        <TypeLink type={field.type} onOpenType={onOpenType} />
       </div>
-      {field.args.length > 0 && (
-        <div className="font-mono text-[10px] text-muted">
-          ({field.args.map((arg) => `${arg.name}: ${arg.type}`).join(", ")})
+
+      {/* One argument to a line, each token its own colour, rather than the
+          single grey signature this used to print. On a mutation the argument
+          *is* the field — its input type is the page you actually want to
+          open, and its description is usually the only documentation there
+          is — and none of that survives being run together at one weight. */}
+      {field.args.map((arg) => (
+        <div key={arg.name} className="mt-0.5 pl-3">
+          <div className="flex items-baseline gap-1">
+            <span className="font-mono text-[11px] break-words text-brand">
+              {arg.name}
+            </span>
+            <span className="font-mono text-[11px] text-muted">:</span>
+            <TypeLink type={arg.type} onOpenType={onOpenType} />
+          </div>
+          {arg.description && (
+            <div className="text-[10px] leading-snug text-muted">
+              {arg.description}
+            </div>
+          )}
         </div>
-      )}
+      ))}
+
       {field.description && (
-        <div className="text-[10px] leading-snug text-muted">
+        <div className="mt-0.5 text-[10px] leading-snug text-muted">
           {field.description}
         </div>
       )}
